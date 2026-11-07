@@ -1,0 +1,76 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    # Lista explícita (sem env_file): o container só recebe o que usa.
+    # Variáveis do pipeline (SUPABASE_ACCESS_TOKEN etc.) nunca chegam aqui.
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL}
+      SUPABASE_JWT_ISSUER: ${SUPABASE_JWT_ISSUER}
+      SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      PERMITIR_AUTOAUTORIZACAO: ${PERMITIR_AUTOAUTORIZACAO:-false}
+      URL_ACEITE_CONVITE: ${URL_ACEITE_CONVITE:-}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+      N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:-}
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/saude', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+# Sub-rede fixa: o nginx do frontend só confia em CF-Connecting-IP vindo desta faixa
+# (set_real_ip_from em frontend/nginx.conf). Ver docs/deploy-ip-real.md.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.88.0/24

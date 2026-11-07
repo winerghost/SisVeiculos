@@ -1,0 +1,44 @@
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Supabase CLI
+supabase/.temp/
+supabase/.branches/
+
+# Testes / Playwright
+playwright-report/
+test-results/
+
+# Claude Code local
+.claude/settings.local.json
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# Auditoria de seguranca: descreve vulnerabilidades exploraveis. Nao versionar
+# (nem em repositorio privado) ate as correcoes serem aplicadas.
+docs/security-audit/

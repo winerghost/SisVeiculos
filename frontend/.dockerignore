@@ -1,0 +1,10 @@
+.env
+.env.*
+node_modules
+.next
+out
+**/__pycache__
+playwright-report
+test-results
+e2e
+*.log

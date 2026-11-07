@@ -1,0 +1,180 @@
+"""Rotas sob /api. Só traduzem HTTP <-> services; nenhuma regra de negócio aqui."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from flask import Blueprint, g, jsonify, request
+
+from app.auth.decoradores import requer_auth
+from app.errors import RequisicaoInvalida
+from app.extensions import chave_usuario, deps, limiter
+from app.services.checklist import ServicoChecklist
+from app.services.perfis import montar_eu
+from app.services.requisicoes import ServicoRequisicoes
+from app.services.veiculos import ServicoVeiculos
+
+api = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _limite_escrita() -> str:
+    return deps().config.limite_escrita
+
+
+def _req() -> ServicoRequisicoes:
+    return ServicoRequisicoes(
+        deps().repo,
+        permitir_autoautorizacao=deps().config.permitir_autoautorizacao,
+        notificador=deps().notificador,
+    )
+
+
+def _checklist() -> ServicoChecklist:
+    d = deps()
+    return ServicoChecklist(
+        d.repo,
+        d.armazenamento,
+        _req(),
+        max_urls_upload=d.config.max_urls_upload_por_momento,
+        notificador=d.notificador,
+    )
+
+
+def _inteiro(nome: str, padrao: int) -> int:
+    bruto = request.args.get(nome)
+    if bruto is None:
+        return padrao
+    try:
+        return int(bruto)
+    except ValueError:
+        raise RequisicaoInvalida(f"O parâmetro '{nome}' deve ser um número inteiro.") from None
+
+
+@api.get("/saude")
+@limiter.exempt
+def saude() -> Any:
+    return jsonify({"status": "ok"})
+
+
+@api.get("/eu")
+@requer_auth()
+def eu() -> Any:
+    return jsonify(montar_eu(g.perfil, deps().repo.ler_configuracoes()))
+
+
+@api.get("/veiculos")
+@requer_auth()
+def listar_veiculos() -> Any:
+    return jsonify({"itens": ServicoVeiculos(deps().repo).listar()})
+
+
+@api.get("/requisicoes")
+@requer_auth()
+def listar_requisicoes() -> Any:
+    resultado = _req().listar(
+        g.perfil,
+        status=request.args.get("status"),
+        limite=_inteiro("limite", 50),
+        offset=_inteiro("offset", 0),
+    )
+    return jsonify(resultado)
+
+
+@api.post("/requisicoes")
+@requer_auth()
+@limiter.limit(_limite_escrita)
+def criar_requisicao() -> Any:
+    corpo = request.get_json(silent=True)
+    return jsonify(_req().criar(g.perfil, corpo)), 201
+
+
+@api.get("/requisicoes/<requisicao_id>")
+@requer_auth()
+def obter_requisicao(requisicao_id: str) -> Any:
+    svc = _req()
+    return jsonify(svc.apresentar(g.perfil, svc.obter(g.perfil, requisicao_id)))
+
+
+def _acao(acao: str, requisicao_id: str, *, com_corpo: bool = False) -> Any:
+    corpo = request.get_json(silent=True) if com_corpo else None
+    return jsonify(_req().executar(acao, g.perfil, requisicao_id, corpo))
+
+
+@api.post("/requisicoes/<requisicao_id>/autorizar")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_escrita)
+def autorizar(requisicao_id: str) -> Any:
+    return _acao("autorizar", requisicao_id)
+
+
+@api.post("/requisicoes/<requisicao_id>/negar")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_escrita)
+def negar(requisicao_id: str) -> Any:
+    return _acao("negar", requisicao_id)
+
+
+@api.post("/requisicoes/<requisicao_id>/saida")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_escrita)
+def registrar_saida(requisicao_id: str) -> Any:
+    return _acao("registrar_saida", requisicao_id, com_corpo=True)
+
+
+@api.post("/requisicoes/<requisicao_id>/chegada")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_escrita)
+def registrar_chegada(requisicao_id: str) -> Any:
+    return _acao("registrar_chegada", requisicao_id, com_corpo=True)
+
+
+@api.post("/requisicoes/<requisicao_id>/cancelar")
+@requer_auth()  # solicitante cancela a própria; o service decide pelo dono e pelo estado
+@limiter.limit(_limite_escrita)
+def cancelar(requisicao_id: str) -> Any:
+    return _acao("cancelar", requisicao_id)
+
+
+# -- Checklist (recurso opcional; regra em services/checklist.py) ------------------------
+def _limite_upload() -> str:
+    return deps().config.limite_upload_fotos
+
+
+def _limite_upload_ip() -> str:
+    return deps().config.limite_upload_fotos_ip
+
+
+def _limite_leitura_fotos() -> str:
+    return deps().config.limite_leitura_fotos
+
+
+def _limite_leitura_fotos_ip() -> str:
+    return deps().config.limite_leitura_fotos_ip
+
+
+# Rotas de fotos: limite por usuário autenticado (chave `usuario:<id>`) + limite por IP como
+# segunda camada. A autenticação (`requer_auth`) é o decorator mais externo, então `g.perfil`
+# já existe quando o limite decorado é avaliado.
+@api.post("/requisicoes/<requisicao_id>/checklist/<momento>/fotos")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_upload_ip)
+@limiter.limit(_limite_upload, key_func=chave_usuario)
+def solicitar_upload_foto(requisicao_id: str, momento: str) -> Any:
+    corpo = request.get_json(silent=True)
+    return jsonify(_checklist().solicitar_upload(g.perfil, requisicao_id, momento, corpo)), 201
+
+
+@api.post("/requisicoes/<requisicao_id>/checklist/<momento>")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_escrita)
+def registrar_checklist(requisicao_id: str, momento: str) -> Any:
+    corpo = request.get_json(silent=True)
+    return jsonify(_checklist().registrar(g.perfil, requisicao_id, momento, corpo)), 201
+
+
+@api.get("/requisicoes/<requisicao_id>/checklist")
+@requer_auth()  # o service decide: solicitante alheio 404, dono 403, staff vê
+@limiter.limit(_limite_leitura_fotos_ip)
+@limiter.limit(_limite_leitura_fotos, key_func=chave_usuario)
+def obter_checklist(requisicao_id: str) -> Any:
+    return jsonify(_checklist().listar(g.perfil, requisicao_id))

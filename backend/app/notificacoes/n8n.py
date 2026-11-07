@@ -1,0 +1,224 @@
+"""Integração com o webhook do n8n: só notifica; nenhuma resposta dele é lida para decidir.
+
+Garantias:
+- Desligado por padrão: sem URL ou sem token o notificador é um no-op.
+- Assíncrono e best-effort: fila em memória + uma thread; `notificar` nunca bloqueia nem lança.
+- Entrega at-most-once por processo (se o processo cair, eventos na fila se perdem).
+- Payload mínimo, montado por allowlist (sem nome, e-mail, trajeto, placa, km, fotos, ids de
+  pessoas). Ver `montar_payload`.
+- Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
+- Assinatura: `X-Assinatura: sha256=HMAC(token, "<timestamp>.<corpo>")` e `X-Timestamp`
+  (segundos Unix) para o n8n rejeitar replay; também `Authorization: Bearer <token>`.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import ipaddress
+import json
+import logging
+import threading
+import time
+import uuid
+from collections import deque
+from datetime import UTC, datetime
+from typing import Any, Protocol
+from urllib.parse import urlsplit
+
+import httpx
+
+log = logging.getLogger(__name__)
+
+VERSAO_PAYLOAD = 1
+EVENTOS = frozenset(
+    {
+        "requisicao.criada",
+        "requisicao.autorizada",
+        "requisicao.negada",
+        "requisicao.saida",
+        "requisicao.chegada",
+        "requisicao.cancelada",
+        "checklist.registrado",
+    }
+)
+# Campos da requisição que podem sair daqui (nenhum identifica pessoa).
+_CAMPOS_REQ = ("status", "veiculo_id", "unidade")
+_HOSTS_PROIBIDOS = frozenset({"localhost", "localhost.localdomain", "ip6-localhost"})
+_SUFIXOS_PROIBIDOS = (".localhost", ".local", ".internal", ".intranet", ".lan", ".home.arpa")
+_MSG_PUBLICO = "N8N_WEBHOOK_URL deve apontar para um host público."
+
+
+class Notificador(Protocol):
+    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+        """Nunca bloqueia e nunca lança."""
+        ...
+
+    def fechar(self) -> None: ...
+
+
+class NotificadorNulo:
+    """No-op (integração desligada)."""
+
+    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+        return None
+
+    def fechar(self) -> None:
+        return None
+
+
+def _como_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return None
+
+
+def validar_url_webhook(url: str) -> None:
+    """Exige https e host público (anti-SSRF). Só mensagens genéricas, sem eco da URL."""
+    try:
+        partes = urlsplit(url)
+        host = (partes.hostname or "").lower().rstrip(".")
+        _ = partes.port  # lança ValueError se a porta for inválida
+    except ValueError:
+        raise RuntimeError("N8N_WEBHOOK_URL inválida.") from None
+    if partes.scheme != "https" or not host:
+        raise RuntimeError("N8N_WEBHOOK_URL deve usar https://.")
+    if partes.username is not None or partes.password is not None:
+        raise RuntimeError("N8N_WEBHOOK_URL não pode conter credenciais.")
+    ip = _como_ip(host)
+    if ip is not None:
+        if not ip.is_global or ip.is_multicast:
+            raise RuntimeError(_MSG_PUBLICO)
+        return
+    if host in _HOSTS_PROIBIDOS or host.endswith(_SUFIXOS_PROIBIDOS) or "." not in host:
+        raise RuntimeError(_MSG_PUBLICO)
+
+
+def montar_payload(evento: str, requisicao: dict[str, Any]) -> dict[str, Any]:
+    """Payload mínimo por allowlist: nada além destes campos sai do backend."""
+    return {
+        "evento": evento,
+        "requisicao_id": requisicao.get("id"),
+        **{c: requisicao.get(c) for c in _CAMPOS_REQ},
+        "ocorrido_em": datetime.now(UTC).isoformat(),
+        "versao": VERSAO_PAYLOAD,
+    }
+
+
+class N8nWebhook:
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        *,
+        timeout: float = 3.0,
+        tentativas: int = 2,
+        backoff: float = 0.5,
+        max_fila: int = 100,
+        cliente: httpx.Client | None = None,
+    ) -> None:
+        # httpx registra a URL completa em INFO; ela contém o segredo do caminho do webhook.
+        for nome in ("httpx", "httpcore"):
+            logging.getLogger(nome).setLevel(logging.WARNING)
+        self._url = url
+        self._token = token
+        self._tentativas = max(1, tentativas)
+        self._backoff = backoff
+        self._max_fila = max(1, max_fila)
+        self._cliente = cliente or httpx.Client(timeout=timeout, follow_redirects=False)
+        self._fila: deque[tuple[str, bytes]] = deque()
+        self._cond = threading.Condition()
+        self._parar = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.descartados = 0  # contador: fila cheia (sem PII)
+        self.falhas = 0  # entregas desistidas após as tentativas
+
+    def __repr__(self) -> str:  # nunca expõe URL nem token
+        return "N8nWebhook()"
+
+    # -- API pública ---------------------------------------------------------------
+    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+        try:
+            if evento not in EVENTOS or self._parar.is_set():
+                return
+            corpo = json.dumps(
+                montar_payload(evento, requisicao), separators=(",", ":"), ensure_ascii=False
+            ).encode()
+            with self._cond:
+                if len(self._fila) >= self._max_fila:
+                    self._fila.popleft()  # descarta o mais antigo
+                    self.descartados += 1
+                    log.warning("n8n: fila cheia, evento antigo descartado")
+                self._fila.append((evento, corpo))
+                self._iniciar_thread()
+                self._cond.notify()
+        except Exception as exc:  # noqa: BLE001 - best-effort: nunca propaga
+            log.warning("n8n: falha ao enfileirar (%s)", type(exc).__name__)
+
+    def fechar(self, espera: float = 2.0) -> None:
+        """Encerra o worker; descarta o que restar na fila."""
+        self._parar.set()
+        with self._cond:
+            self._cond.notify_all()
+        t = self._thread
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=espera)
+        try:
+            self._cliente.close()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("n8n: erro ao fechar cliente (%s)", type(exc).__name__)
+
+    # -- worker --------------------------------------------------------------------
+    def _iniciar_thread(self) -> None:  # chamado com o lock; thread criada sob demanda (fork)
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._loop, name="n8n-webhook", daemon=True)
+            self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            with self._cond:
+                while not self._fila and not self._parar.is_set():
+                    self._cond.wait()
+                if self._parar.is_set():
+                    return
+                evento, corpo = self._fila.popleft()
+            self._entregar(evento, corpo)
+
+    def _entregar(self, evento: str, corpo: bytes) -> None:
+        entrega_id = str(uuid.uuid4())
+        for tentativa in range(1, self._tentativas + 1):
+            try:
+                resp = self._cliente.post(
+                    self._url, content=corpo, headers=self._cabecalhos(corpo, entrega_id)
+                )
+                if resp.status_code < 400:  # a resposta não é lida
+                    return
+                motivo = f"HTTP {resp.status_code // 100}xx"
+            except Exception as exc:  # noqa: BLE001
+                motivo = type(exc).__name__
+            if tentativa < self._tentativas:
+                if self._parar.wait(self._backoff * tentativa):
+                    return
+            else:
+                self.falhas += 1
+                log.warning("n8n: entrega desistida evento=%s motivo=%s", evento, motivo)
+
+    def _cabecalhos(self, corpo: bytes, entrega_id: str) -> dict[str, str]:
+        ts = str(int(time.time()))  # novo a cada tentativa (janela anti-replay)
+        mac = hmac.new(self._token.encode(), ts.encode() + b"." + corpo, hashlib.sha256)
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._token}",
+            "X-Timestamp": ts,
+            "X-Assinatura": "sha256=" + mac.hexdigest(),
+            "X-Entrega-Id": entrega_id,
+        }
+
+
+def criar_notificador(url: str, token: str) -> Notificador:
+    """No-op sem URL ou sem token; senão valida a URL (anti-SSRF) e cria o webhook."""
+    if not url or not token:
+        return NotificadorNulo()
+    validar_url_webhook(url)
+    return N8nWebhook(url, token)

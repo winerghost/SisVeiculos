@@ -1,0 +1,45 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+/* Tokens da AGU (CLAUDE.md e docs/mockups/README.md). */
+@theme {
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+
+  --color-primaria: #0f3d75;
+  --color-primaria-fg: #ffffff;
+  --color-foco: #1a5fb4;
+  --color-erro: #b3261e;
+  --color-erro-fundo: #fdf0ef;
+  --color-texto: #0e1b2e;
+  --color-texto-2: #55627a;
+  --color-fundo: #f4f6f9;
+  --color-borda: #dde3ec;
+  --color-borda-campo: #8493ab;
+  --color-sucesso: #0a5a3a;
+
+  --radius-padrao: 8px;
+  --spacing-alvo: 44px;
+}
+
+html {
+  background: var(--color-fundo);
+  color: var(--color-texto);
+}
+
+body {
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+}
+
+/* Foco visível em todo elemento interativo (WCAG 2.4.7). */
+:focus-visible {
+  outline: 3px solid var(--color-foco);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

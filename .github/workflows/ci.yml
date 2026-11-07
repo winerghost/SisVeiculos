@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detectar:
+    runs-on: ubuntu-24.04
+    outputs:
+      backend: ${{ steps.d.outputs.backend }}
+      frontend: ${{ steps.d.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: d
+        run: |
+          [ -f backend/app/__init__.py ] && echo "backend=true" >> "$GITHUB_OUTPUT" || echo "backend=false" >> "$GITHUB_OUTPUT"
+          [ -f frontend/package.json ] && echo "frontend=true" >> "$GITHUB_OUTPUT" || echo "frontend=false" >> "$GITHUB_OUTPUT"
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Obrigatório apenas se o repositório for de uma organização GitHub
+          # (licença gratuita em gitleaks.io); em conta pessoal pode ficar vazio.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # Testes de banco (RLS, grants, SECURITY DEFINER, km, checklist, concorrencia) contra
+  # um Supabase LOCAL efemero. Nunca usa secrets nem conecta a projeto remoto.
+  banco:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # Executa em PR para main ou push em main; so quando supabase/** ou o workflow mudam.
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Detectar mudancas relevantes
+        id: mudou
+        env:
+          EVENTO: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ANTES_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          base="$BASE_SHA"
+          [ "$EVENTO" = "push" ] && base="$ANTES_SHA"
+          git fetch --no-tags --depth=1 origin "$base" 2>/dev/null || true
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "Base indisponivel; rodando por seguranca."
+            echo "rodar=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only "$base" HEAD | grep -qE '^(supabase/|\.github/workflows/ci\.yml$)'; then
+            echo "rodar=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Sem mudancas em supabase/** ou no workflow; pulando."
+            echo "rodar=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Instalar Supabase CLI
+        if: steps.mudou.outputs.rodar == 'true'
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: 3.0.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.mudou.outputs.rodar == 'true'
+        with:
+          python-version: "3.12"
+      - name: Dependencias dos testes (venv, versoes fixadas)
+        if: steps.mudou.outputs.rodar == 'true'
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-banco"
+          "$RUNNER_TEMP/venv-banco/bin/pip" install --require-virtualenv -r supabase/tests/requirements.txt
+      # Apenas o necessario: db (Postgres), gotrue (cria o schema auth/auth.users) e
+      # storage-api (cria storage.buckets/objects). O resto fica de fora.
+      # start ja aplica TODAS as migrations em ordem; db reset garante banco limpo e
+      # reaplica tudo (mesmo caminho que o dev local usa).
+      - name: Subir Supabase local e aplicar migrations
+        if: steps.mudou.outputs.rodar == 'true'
+        run: |
+          supabase start -x realtime,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          supabase db reset --local --no-seed
+      - name: Testes de banco
+        if: steps.mudou.outputs.rodar == 'true'
+        env:
+          # Credenciais padrao FIXAS e publicas do Supabase local (nao e segredo).
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: >
+          "$RUNNER_TEMP/venv-banco/bin/python" -m pytest supabase/tests
+          -c supabase/tests/pytest.ini --rootdir supabase/tests
+          -m db_local -p no:xdist -p no:cacheprovider -ra
+      - name: Parar containers
+        if: always()
+        run: supabase stop --no-backup || true
+
+  backend:
+    needs: detectar
+    if: needs.detectar.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      # Regras S (bandit); asserts e senhas fictícias em testes são aceitos.
+      - run: >
+          ruff check --select S
+          --extend-per-file-ignores "tests/*:S101"
+          --extend-per-file-ignores "tests/*:S105"
+          --extend-per-file-ignores "tests/*:S106"
+          .
+      - run: black --check .
+      - run: pytest
+      - run: pip-audit -r requirements.txt
+
+  frontend:
+    needs: detectar
+    if: needs.detectar.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+      - run: npm audit --audit-level=high
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  trivy:
+    needs: detectar
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Trivy fs (dependências, IaC, segredos)
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Build imagem backend
+        if: needs.detectar.outputs.backend == 'true'
+        run: docker build -t sisveiculos-backend:ci backend
+      - name: Trivy imagem backend
+        if: needs.detectar.outputs.backend == 'true'
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          image-ref: sisveiculos-backend:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Build imagem frontend
+        if: needs.detectar.outputs.frontend == 'true'
+        run: >
+          docker build -t sisveiculos-frontend:ci
+          --build-arg NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co
+          --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder
+          frontend
+      - name: Trivy imagem frontend
+        if: needs.detectar.outputs.frontend == 'true'
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          image-ref: sisveiculos-frontend:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true

@@ -1,0 +1,394 @@
+import type { Page, Route } from '@playwright/test';
+
+// API fake da administração e do aceite de convite (contrato em backend/app/rotas/admin.py e
+// convites.py). As regras daqui existem só para o teste: o front real nunca as calcula.
+const ADMIN_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const ANA_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const CONVIDADO_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const VEICULO_ID = '11111111-1111-4111-8111-111111111111';
+
+interface Usuario {
+  id: string;
+  nome: string;
+  unidade: string;
+  role: string;
+  ativo: boolean;
+  email: string;
+}
+
+export interface OpcoesAdmin {
+  /** Responde 410 convite_expirado no aceite. */
+  conviteExpirado?: boolean;
+  /** Aceite sem `nome` responde 400 pedindo o campo (conta do Auth sem nome). */
+  exigirNome?: boolean;
+  /** Código do 400 do aceite sem nome (padrão: o novo `nome_obrigatorio`). */
+  codigoNome?: string;
+  /** As coleções não trazem `criar` em acoes_permitidas. */
+  semCriar?: boolean;
+  /** A listagem de usuários com busca devolve `busca_parcial: true`. */
+  buscaParcial?: boolean;
+  /** O primeiro reenvio de convite responde 429 reenvio_muito_recente. */
+  reenvioRecente?: boolean;
+  /** Fatores TOTP já cadastrados no Supabase (para a tela de MFA). */
+  fatores?: number;
+  /** /api/eu do admin responde 403 mfa_requerido até a verificação do cadastro terminar. */
+  exigirMfa?: boolean;
+}
+
+const erro = (route: Route, status: number, codigo: string, mensagem: string) =>
+  route.fulfill({ status, json: { erro: { codigo, mensagem } } });
+
+export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
+  const usuarios: Usuario[] = [
+    {
+      id: ADMIN_ID,
+      nome: 'Marcos Silva',
+      unidade: 'UEA',
+      role: 'admin',
+      ativo: true,
+      email: 'admin@agu.gov.br',
+    },
+    {
+      id: ANA_ID,
+      nome: 'Ana Souza',
+      unidade: 'UEA',
+      role: 'autorizador',
+      ativo: true,
+      email: 'ana.souza.com.um.endereco.bem.longo.para.truncar@agu.gov.br',
+    },
+  ];
+  const convites: Record<string, unknown>[] = opcoes.reenvioRecente
+    ? [
+        {
+          id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+          email: 'maria@gmail.com',
+          role: 'solicitante',
+          unidade: 'PU',
+          estado: 'aberto',
+          criado_em: new Date().toISOString(),
+          expira_em: new Date(Date.now() + 7 * 864e5).toISOString(),
+          usado_em: null,
+          revogado_em: null,
+          acoes_permitidas: ['reenviar', 'revogar'],
+        },
+      ]
+    : [];
+  const config = { quilometragem: false, abastecimento_manutencao: false };
+  const acoesColecao = opcoes.semCriar ? [] : ['criar'];
+  const corpos: {
+    convidar: unknown[];
+    aceitar: unknown[];
+    senha: unknown[];
+    config: unknown[];
+    consultas: string[];
+    reenvios: number;
+  } = {
+    consultas: [],
+    reenvios: 0,
+    convidar: [],
+    aceitar: [],
+    senha: [],
+    config: [],
+  };
+  let aceito = false;
+  let mfaConcluido = !opcoes.exigirMfa;
+
+  const apresentar = (u: Usuario) => ({
+    ...u,
+    rotulo_perfil: `${u.unidade} · ${u.role}`,
+    acoes_permitidas: [
+      'editar',
+      ...(u.id === ADMIN_ID ? [] : ['alterar_role']),
+      // Conta inativa também oferece `desativar` (refaz o bloqueio no Auth).
+      ...(u.ativo ? (u.id === ADMIN_ID ? [] : ['desativar']) : ['ativar', 'desativar']),
+    ],
+  });
+
+  const usuarioAuth = (id: string, email: string, fatores = 0) => ({
+    id,
+    aud: 'authenticated',
+    email,
+    app_metadata: {},
+    user_metadata: {},
+    created_at: '2026-01-01T00:00:00Z',
+    factors: Array.from({ length: fatores }, (_, i) => ({
+      id: `fator-${i}`,
+      factor_type: 'totp',
+      status: 'verified',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    })),
+  });
+  const sessao = (token: string, id: string, email: string) => ({
+    access_token: token,
+    token_type: 'bearer',
+    expires_in: 3600,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    refresh_token: `refresh-${token}`,
+    user: usuarioAuth(id, email),
+  });
+
+  // ---- Supabase Auth ----
+  await page.route('**/auth/v1/token?grant_type=password', async (route) => {
+    const c = route.request().postDataJSON() as { email: string; password: string };
+    if (c.password !== 'senha-correta') {
+      return route.fulfill({ status: 400, json: { error: 'invalid_grant' } });
+    }
+    await route.fulfill({ json: sessao('tok-admin', ADMIN_ID, c.email) });
+  });
+  await page.route('**/auth/v1/logout*', (route) => route.fulfill({ status: 204 }));
+  await page.route('**/auth/v1/user', async (route) => {
+    const m = route.request().method();
+    const auth = route.request().headers()['authorization'] ?? '';
+    if (m === 'PUT') {
+      corpos.senha.push(route.request().postDataJSON());
+      return route.fulfill({ json: usuarioAuth(CONVIDADO_ID, 'pedro@gmail.com') });
+    }
+    const id = auth.includes('convidado') ? CONVIDADO_ID : ADMIN_ID;
+    await route.fulfill({ json: usuarioAuth(id, 'x@agu.gov.br', opcoes.fatores ?? 0) });
+  });
+  // Cadastro do autenticador TOTP.
+  await page.route('**/auth/v1/factors', (route) =>
+    route.fulfill({
+      json: {
+        id: 'fator-novo',
+        type: 'totp',
+        friendly_name: 'x',
+        totp: {
+          qr_code:
+            'data:image/svg+xml;utf-8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+          secret: 'SEGREDOTOTP123',
+          uri: 'otpauth://totp/x',
+        },
+      },
+    }),
+  );
+  await page.route('**/auth/v1/factors/*/challenge', (route) =>
+    route.fulfill({ json: { id: 'desafio-1', expires_at: Math.floor(Date.now() / 1000) + 300 } }),
+  );
+  await page.route('**/auth/v1/factors/*/verify', (route) => {
+    mfaConcluido = true;
+    return route.fulfill({ json: sessao('tok-admin', ADMIN_ID, 'admin@agu.gov.br') });
+  });
+
+  // ---- /api/eu ----
+  await page.route('**/api/eu', async (route) => {
+    const auth = route.request().headers()['authorization'] ?? '';
+    if (auth === 'Bearer tok-convidado') {
+      if (!aceito) {
+        return erro(route, 403, 'conta_inativa', 'Conta sem acesso ao sistema.');
+      }
+      return route.fulfill({
+        json: {
+          id: CONVIDADO_ID,
+          nome: 'Pedro Alves',
+          unidade: 'CJU',
+          rotulo_perfil: 'CJU · Solicitante',
+          unidades: ['PU', 'PF', 'CJU', 'UEA'],
+          role: 'solicitante',
+          permissoes: ['criar_requisicao', 'ver_proprias_requisicoes'],
+          recursos: {},
+        },
+      });
+    }
+    if (auth !== 'Bearer tok-admin')
+      return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
+    if (!mfaConcluido) {
+      return erro(route, 403, 'mfa_requerido', 'Este perfil exige verificação em duas etapas.');
+    }
+    await route.fulfill({
+      json: {
+        id: ADMIN_ID,
+        nome: 'Marcos Silva',
+        unidade: 'UEA',
+        rotulo_perfil: 'UEA · Administrador',
+        unidades: ['PU', 'PF', 'CJU', 'UEA'],
+        role: 'admin',
+        permissoes: ['criar_requisicao', 'ver_todas_requisicoes', 'administrar'],
+        recursos: {},
+      },
+    });
+  });
+  await page.route('**/api/requisicoes**', (route) =>
+    route.fulfill({ json: { itens: [], total: 0 } }),
+  );
+  await page.route('**/api/veiculos', (route) => route.fulfill({ json: { itens: [] } }));
+
+  // ---- Aceite de convite ----
+  await page.route('**/api/convites/aceitar', async (route) => {
+    corpos.aceitar.push(route.request().postDataJSON());
+    if (opcoes.conviteExpirado) {
+      return erro(
+        route,
+        410,
+        'convite_expirado',
+        'Este convite expirou. Peça um novo ao administrador.',
+      );
+    }
+    const corpo = route.request().postDataJSON() as { nome?: string };
+    if (opcoes.exigirNome && !corpo.nome) {
+      return erro(
+        route,
+        400,
+        opcoes.codigoNome ?? 'nome_obrigatorio',
+        "O convite não traz o seu nome. Informe o campo 'nome' para concluir o cadastro.",
+      );
+    }
+    aceito = true;
+    await route.fulfill({ json: { id: CONVIDADO_ID, nome: 'Pedro Alves' } });
+  });
+
+  // ---- Administração ----
+  await page.route('**/api/admin/**', async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const partes = url.pathname.replace(/^\/api\/admin\//, '').split('/');
+    const [recurso, id, acao] = partes;
+    const m = req.method();
+
+    if (recurso === 'usuarios') {
+      if (!id && m === 'GET') {
+        const role = url.searchParams.get('role');
+        const ativo = url.searchParams.get('ativo');
+        const q = url.searchParams.get('q') ?? '';
+        corpos.consultas.push(url.search);
+        if (/[,()"\*%]/.test(q)) {
+          return erro(
+            route,
+            400,
+            'requisicao_invalida',
+            'O termo de busca contém caracteres inválidos.',
+          );
+        }
+        const itens = usuarios
+          .filter((u) => !q || `${u.nome} ${u.email}`.toLowerCase().includes(q.toLowerCase()))
+          .filter((u) => !role || u.role === role)
+          .filter((u) => !ativo || String(u.ativo) === ativo)
+          .map(apresentar);
+        return route.fulfill({
+          json: {
+            itens,
+            total: itens.length,
+            acoes_permitidas: acoesColecao,
+            ...(opcoes.buscaParcial && q ? { busca_parcial: true } : {}),
+          },
+        });
+      }
+      if (!id && m === 'POST') {
+        const c = req.postDataJSON() as Record<string, string>;
+        corpos.convidar.push(c);
+        const convite = {
+          id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+          email: c.email,
+          role: c.role,
+          unidade: c.unidade,
+          estado: 'aberto',
+          criado_em: new Date().toISOString(),
+          expira_em: new Date(Date.now() + 7 * 864e5).toISOString(),
+          usado_em: null,
+          revogado_em: null,
+          acoes_permitidas: ['reenviar', 'revogar'],
+        };
+        convites.push(convite);
+        return route.fulfill({ status: 201, json: { convite } });
+      }
+      const u = usuarios.find((x) => x.id === id);
+      if (!u) return erro(route, 404, 'nao_encontrado', 'Usuário não encontrado.');
+      if (m === 'GET') return route.fulfill({ json: apresentar(u) });
+      if (m === 'PATCH') {
+        Object.assign(u, req.postDataJSON());
+        return route.fulfill({ json: apresentar(u) });
+      }
+      if (acao === 'desativar') u.ativo = false;
+      if (acao === 'ativar') u.ativo = true;
+      return route.fulfill({ json: apresentar(u) });
+    }
+
+    if (recurso === 'convites') {
+      if (id && acao === 'reenviar' && m === 'POST') {
+        corpos.reenvios += 1;
+        // Segunda tentativa seguida: 429 com a mensagem da API; depois libera.
+        if (opcoes.reenvioRecente && corpos.reenvios === 1) {
+          return erro(
+            route,
+            429,
+            'reenvio_muito_recente',
+            'Este convite foi reenviado há pouco. Aguarde alguns minutos.',
+          );
+        }
+        const c = convites.find((x) => x.id === id);
+        return route.fulfill({ json: { convite: c } });
+      }
+      return route.fulfill({ json: { itens: convites, total: convites.length } });
+    }
+
+    if (recurso === 'veiculos') {
+      return route.fulfill({
+        json: {
+          itens: [
+            {
+              id: VEICULO_ID,
+              descricao: 'Veículo 01',
+              placa: 'ABC1D23',
+              ativo: true,
+              requisicao_aberta: false,
+              acoes_permitidas: ['editar', 'desativar'],
+            },
+          ],
+          acoes_permitidas: acoesColecao,
+        },
+      });
+    }
+
+    if (recurso === 'configuracoes') {
+      if (m === 'PUT') {
+        const pedido = req.postDataJSON() as Record<string, boolean>;
+        corpos.config.push(pedido);
+        // Dependência: o servidor recusa ligar Abastecimento sem Quilometragem.
+        if (pedido.abastecimento_manutencao && !config.quilometragem) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            "'Abastecimento e manutenção' exige 'Quilometragem' ligado.",
+          );
+        }
+        Object.assign(config, pedido);
+      }
+      const itens = [
+        {
+          chave: 'quilometragem',
+          rotulo: 'Quilometragem',
+          descricao: 'Exige km de saída e de chegada.',
+          habilitado: config.quilometragem,
+          exige: [],
+          motivo_indisponibilidade: null,
+          acoes_permitidas: [config.quilometragem ? 'desligar' : 'ligar'],
+        },
+        {
+          chave: 'abastecimento_manutencao',
+          rotulo: 'Abastecimento e manutenção',
+          descricao: 'Registra abastecimentos e manutenções.',
+          habilitado: config.abastecimento_manutencao,
+          exige: ['quilometragem'],
+          // Tela carregada antes de ligar a Quilometragem: ainda oferece "ligar" (estado velho).
+          motivo_indisponibilidade: null,
+          acoes_permitidas: [config.abastecimento_manutencao ? 'desligar' : 'ligar'],
+        },
+        {
+          chave: 'mfa',
+          rotulo: 'Verificação em duas etapas (MFA)',
+          descricao: 'Exige segundo fator no login.',
+          habilitado: false,
+          exige: [],
+          motivo_indisponibilidade: 'Para ligar, entre antes com o segundo fator (TOTP).',
+          acoes_permitidas: [],
+        },
+      ];
+      return route.fulfill({ json: { recursos: config, itens, acoes_permitidas: ['editar'] } });
+    }
+    return erro(route, 404, 'nao_encontrado', 'Recurso não encontrado.');
+  });
+
+  return { corpos };
+}

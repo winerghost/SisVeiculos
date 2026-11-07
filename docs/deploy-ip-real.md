@@ -2,19 +2,19 @@
 
 ## Cadeia de confiança
 
-Cloudflare -> proxy do CloudPanel (host) -> `127.0.0.1:8080` (nginx do frontend) -> gunicorn.
+Cloudflare -> proxy do CloudPanel (host) -> `127.0.0.1:<FRONTEND_PORT>` (nginx do frontend; padrão 8080) -> gunicorn.
 
 - O nginx do frontend só aceita `CF-Connecting-IP` quando o par imediato está nas faixas
-  oficiais do Cloudflare ou na sub-rede fixa do compose (`172.29.88.0/24`, onde chega o proxy
-  local pelo gateway `172.29.88.1`). Depois disso ele **sobrescreve** `CF-Connecting-IP`, `X-Real-IP` e
+  oficiais do Cloudflare ou na sub-rede fixa do compose (`10.213.88.0/24`, onde chega o proxy
+  local pelo gateway `10.213.88.1`). Depois disso ele **sobrescreve** `CF-Connecting-IP`, `X-Real-IP` e
   `X-Forwarded-For` com o IP validado, então o backend nunca recebe valor forjado pelo cliente.
 - As faixas ficam em `frontend/nginx.conf` e vêm de https://www.cloudflare.com/ips-v4 e
   https://www.cloudflare.com/ips-v6. Revise de tempos em tempos; alterar exige `--build`.
 
 ## Sub-rede fixa do compose
 
-`docker-compose.yml` fixa `networks.default.ipam` em `172.29.88.0/24` e o `nginx.conf`
-confia apenas nessa faixa (`set_real_ip_from 172.29.88.0/24`), em vez de todo o
+`docker-compose.yml` fixa `networks.default.ipam` em `10.213.88.0/24` e o `nginx.conf`
+confia apenas nessa faixa (`set_real_ip_from 10.213.88.0/24`), em vez de todo o
 `172.16.0.0/12`. Os dois valores devem ser sempre iguais. Se a faixa colidir com outra rede
 da VPS (`docker network ls` / `ip route`), troque nos dois arquivos e rode
 `docker compose up -d --build` (recria a rede). Mudança só no compose exige `up -d`; no
@@ -29,7 +29,7 @@ falso que o proxy local repassaria. Portanto:
    Cloudflare; ou
 2. Ative Authenticated Origin Pulls (mTLS) no Cloudflare e exija o certificado no CloudPanel.
 
-Alternativa mais forte: ambos. A porta 8080 já escuta só em `127.0.0.1`.
+Alternativa mais forte: ambos. A porta do frontend (FRONTEND_PORT) já escuta só em `127.0.0.1`.
 No proxy do CloudPanel, não repasse cabeçalhos `CF-Connecting-IP` de origens fora do Cloudflare.
 
 ## Rate limit e gunicorn

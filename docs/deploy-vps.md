@@ -3,14 +3,31 @@
 Roteiro operacional. Regras fixas: na VPS só se roda `git pull` e `docker compose`; nunca se
 editam arquivos do repositório lá; o `.env` fica fora do git; migrations nunca passam pela VPS.
 
-Cadeia: Cloudflare (SSL Full strict) -> proxy reverso do CloudPanel -> `127.0.0.1:8080`
-(nginx do frontend) -> `/api` para o gunicorn (rede interna do compose). Só o frontend publica
-porta, e apenas em `127.0.0.1`.
+Cadeia: Cloudflare (SSL Full strict) -> proxy reverso do CloudPanel -> `127.0.0.1:<FRONTEND_PORT>`
+(nginx do frontend; padrão 8080) -> `/api` para o gunicorn (rede interna do compose). Só o
+frontend publica porta, e apenas em `127.0.0.1`. **O proxy do CloudPanel aponta SEMPRE para o
+frontend**; o backend não publica porta no host (não existe `127.0.0.1:8000`).
+
+### VPS com vários sistemas (checagens ANTES do primeiro `up`)
+
+```bash
+# 1) Porta do host livre? (escolha uma sem resposta e ponha em FRONTEND_PORT no .env)
+ss -ltn | grep -E ':(8080|18080)\s' || echo "8080 e 18080 livres"
+# 2) Sub-rede do compose (10.213.88.0/24) livre? Não pode haver rede/rota igual.
+docker network ls -q | xargs -r docker network inspect --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
+ip route | grep -F '10.213.88.' || echo "sub-rede livre"
+# 3) Nome do projeto: o compose usa `name: sisveiculos` (containers sisveiculos-*), independente da pasta.
+docker ps -a --format '{{.Names}}' | grep -E '^sisveiculos-' || echo "sem conflito de nome"
+```
+
+Se a porta 8080 estiver ocupada, defina outra em `FRONTEND_PORT` (ex.: `18080`) no `.env`; basta
+`docker compose up -d` (sem `--build`) e usar `http://127.0.0.1:18080` no proxy do CloudPanel.
+Se a sub-rede `10.213.88.0/24` colidir, veja o troubleshooting (precisa de commit no repositório).
 
 ## 1. Primeira instalação
 
 1. Pré-requisitos: Docker e Docker Compose plugin; site criado no CloudPanel como proxy reverso
-   para `http://127.0.0.1:8080`; Cloudflare em SSL Full (strict); migrations já aplicadas e
+   para `http://127.0.0.1:<FRONTEND_PORT>` (frontend; padrão 8080); Cloudflare em SSL Full (strict); migrations já aplicadas e
    admin semeado (ver [deploy-banco.md](deploy-banco.md)).
 2. Clonar o repositório:
    `git clone <url-do-repositorio> sisveiculos && cd sisveiculos`
@@ -22,6 +39,7 @@ porta, e apenas em `127.0.0.1`.
 
 | Variável | Observação |
 | --- | --- |
+| `FRONTEND_PORT` | Porta do host (somente 127.0.0.1) onde o frontend escuta; padrão 8080. É a porta do proxy reverso do CloudPanel. Escolha uma livre (ver checagens acima). Mudar só isto exige `docker compose up -d` (sem `--build`). |
 | `NEXT_PUBLIC_SUPABASE_URL` | Pública. Vira build arg e é embutida no frontend. Deve ser `https://...`; o build falha se não for. O host também define a CSP. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Pública (anon key). Build arg. Mudar exige `--build`. |
 | `SUPABASE_URL` | Backend. |
@@ -46,8 +64,8 @@ explícita acima (sem `env_file`).
 
 ```bash
 docker compose ps                      # backend e frontend "healthy"
-curl -sS http://127.0.0.1:8080/api/saude
-curl -sSI http://127.0.0.1:8080/login | head -20
+curl -sS http://127.0.0.1:${FRONTEND_PORT:-8080}/api/saude
+curl -sSI http://127.0.0.1:${FRONTEND_PORT:-8080}/login | head -20
 curl -sSI https://SEU-DOMINIO/login    # pelo Cloudflare/CloudPanel
 docker compose logs --tail=50 backend frontend
 ```
@@ -60,7 +78,7 @@ Conferir:
   `Cross-Origin-Resource-Policy`; e `Strict-Transport-Security` vindo do Cloudflare (HSTS).
 - Logs sem PII: linhas do gunicorn no formato `IP MÉTODO CAMINHO STATUS BYTES TEMPO`, sem query
   string; nenhum e-mail, nome, token de convite ou URL assinada nos logs.
-- Porta publicada só em loopback: `docker compose ps` deve mostrar `127.0.0.1:8080->8080`.
+- Porta publicada só em loopback: `docker compose ps` deve mostrar `127.0.0.1:<FRONTEND_PORT>->8080`.
 
 ## 3. Atualização de rotina
 
@@ -136,8 +154,8 @@ Migrations NÃO têm rollback automático. Como proceder:
   não aumente workers sem mover o contador para armazenamento compartilhado. Login passa pelo
   Supabase Auth: configure os Rate Limits lá e, se quiser, regras no Cloudflare.
 - Firewall: restrinja 80/443 da VPS somente aos IPs do Cloudflare (ou use Authenticated Origin
-  Pulls). A 8080 já escuta só em loopback. Detalhes: [deploy-ip-real.md](deploy-ip-real.md).
-  Sub-rede do compose (`172.29.88.0/24`) deve ser igual no compose e no `nginx.conf`.
+  Pulls). A porta do frontend já escuta só em loopback. Detalhes: [deploy-ip-real.md](deploy-ip-real.md).
+  Sub-rede do compose (`10.213.88.0/24`) deve ser igual no compose e no `nginx.conf`.
 - Logs do proxy: no CloudPanel, sem `access_log` (ou com `$uri` no lugar de `$request`) em
   `/convite` e `/api/admin/usuarios`, e atenção ao `error_log`. No Cloudflare, mascare
   `ClientRequestURI`/`ClientRequestQuery` dessas rotas (token de convite e busca por nome/e-mail
@@ -171,5 +189,10 @@ Migrations NÃO têm rollback automático. Como proceder:
 - Convidado cai no login/home em vez de `/convite`: Redirect URLs do Supabase não casaram
   (ver convites-supabase-auth.md, seção 2). Convite expirado: usar "Reenviar".
 - 502/504 no site: `docker compose ps`; backend caído ou reiniciando. Veja os logs.
-- Rede em conflito com a sub-rede `172.29.88.0/24`: trocar nos dois arquivos
-  (compose e `nginx.conf`) via commit no repositório, nunca na VPS.
+- `Pool overlaps with other one on this address space` (sub-rede `10.213.88.0/24` já usada na
+  VPS): trocar a faixa nos DOIS lugares (`docker-compose.yml` em `networks.default.ipam` e
+  `set_real_ip_from` em `frontend/nginx.conf`, que precisam ser idênticos), via commit no
+  repositório e novo `git pull` + `docker compose up -d --build` (o nginx.conf vai na imagem).
+  Nunca edite na VPS.
+- `port is already allocated` / `address already in use` na porta do frontend: outra aplicação usa
+  essa porta; ponha uma livre em `FRONTEND_PORT` no `.env` e atualize o proxy do CloudPanel.

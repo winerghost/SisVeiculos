@@ -1,3 +1,7 @@
+# Nome fixo do projeto: sem ele o Compose usa o nome da pasta do clone, e outro sistema da VPS com
+# o mesmo nome compartilharia rede e containers (conflito).
+name: sisveiculos
+
 services:
   backend:
     build:
@@ -48,8 +52,11 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    # Só loopback. Porta do HOST configurável (FRONTEND_PORT no .env) para não colidir com outros
+    # sistemas da VPS; dentro do container o nginx continua em 8080. O proxy reverso do CloudPanel
+    # aponta para http://127.0.0.1:<FRONTEND_PORT> (o frontend, nunca o backend).
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:8080"
     read_only: true
     tmpfs:
       - /tmp
@@ -68,9 +75,12 @@ services:
     restart: unless-stopped
 
 # Sub-rede fixa: o nginx do frontend só confia em CF-Connecting-IP vindo desta faixa
-# (set_real_ip_from em frontend/nginx.conf). Ver docs/deploy-ip-real.md.
+# (set_real_ip_from em frontend/nginx.conf; precisa ser a MESMA nos dois arquivos). Ver
+# docs/deploy-ip-real.md. Faixa 10.x de propósito: o Docker distribui redes 172.16-31.x e
+# 192.168.x automaticamente aos outros projetos da VPS, então uma faixa 172.x fixa tem alto risco
+# de "Pool overlaps". Se 10.213.88.0/24 já existir na VPS, ver docs/deploy-vps.md (troubleshooting).
 networks:
   default:
     ipam:
       config:
-        - subnet: 172.29.88.0/24
+        - subnet: 10.213.88.0/24

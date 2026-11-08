@@ -1,22 +1,34 @@
 import { supabase } from './supabase';
 import type {
   Acao,
+  ConfiguracaoIA,
   ConfiguracoesAdmin,
   CorpoAcao,
+  CorpoIA,
   CorpoChecklist,
   Convite,
   DadosVeiculo,
+  EnvioRelatorio,
+  ListaDestinatarios,
+  FiltrosDashboard,
+  FormatoRelatorio,
   Eu,
   ListaAcessos,
   ListaConvites,
+  ListaNotificacoes,
   ListaRequisicoes,
   MomentoChecklist,
   ListaUsuarios,
   ListaVeiculosAdmin,
   NovaRequisicao,
   NovoConvite,
+  PainelId,
+  PreviaRelatorio,
   Requisicao,
   RespostaChecklists,
+  RespostaPainel,
+  RespostaPaineis,
+  RespostaRelatorios,
   RespostaFotoPerfil,
   Status,
   UploadFoto,
@@ -66,6 +78,57 @@ async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
     );
   }
   return corpo as T;
+}
+
+/** Nome do arquivo no Content-Disposition (filename* tem prioridade); sem cabeçalho, usa o padrão. */
+function nomeDoArquivo(cabecalho: string | null, padrao: string): string {
+  if (!cabecalho) return padrao;
+  const utf8 = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(cabecalho);
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1].trim());
+    } catch {
+      /* cai para o filename simples */
+    }
+  }
+  const simples = /filename\s*=\s*"?([^";]+)"?/i.exec(cabecalho);
+  const nome = simples?.[1]?.trim();
+  // Só o nome base: nunca aceita caminho vindo do cabeçalho.
+  return nome ? (nome.split(/[\\/]/).pop() ?? padrao) : padrao;
+}
+
+/** Baixa um arquivo autenticado para a memória (Blob). Nada é gravado em cache ou storage. */
+async function chamarArquivo(
+  caminho: string,
+  padrao: string,
+): Promise<{ blob: Blob; nome: string }> {
+  const { data } = await supabase().auth.getSession();
+  const token = data.session?.access_token;
+  const cabecalhos = new Headers();
+  if (token) cabecalhos.set('Authorization', `Bearer ${token}`);
+  let resp: Response;
+  try {
+    resp = await fetch(`/api${caminho}`, { headers: cabecalhos, cache: 'no-store' });
+  } catch {
+    throw new ApiErro(0, 'sem_conexao', 'Sem conexão com o servidor. Tente novamente.');
+  }
+  if (!resp.ok) {
+    let corpo: { erro?: { codigo?: string; mensagem?: string } } | null = null;
+    try {
+      corpo = await resp.json();
+    } catch {
+      corpo = null;
+    }
+    throw new ApiErro(
+      resp.status,
+      corpo?.erro?.codigo ?? 'erro',
+      corpo?.erro?.mensagem ?? 'Não foi possível gerar o arquivo.',
+    );
+  }
+  return {
+    blob: await resp.blob(),
+    nome: nomeDoArquivo(resp.headers.get('Content-Disposition'), padrao),
+  };
 }
 
 /** Monta a query só com os parâmetros preenchidos (os valores vão para a API como estão). */
@@ -128,6 +191,9 @@ export const admin = {
   configuracoes: () => chamar<ConfiguracoesAdmin>('/admin/configuracoes'),
   atualizarConfiguracoes: (d: Record<string, boolean>) =>
     chamar<ConfiguracoesAdmin>('/admin/configuracoes', { method: 'PUT', body: JSON.stringify(d) }),
+  ia: () => chamar<ConfiguracaoIA>('/admin/ia'),
+  atualizarIA: (d: CorpoIA) =>
+    chamar<ConfiguracaoIA>('/admin/ia', { method: 'PUT', body: JSON.stringify(d) }),
 };
 
 export const api = {
@@ -149,6 +215,47 @@ export const api = {
   /** Ações: autorizar, negar, saida, chegada, cancelar (rotas da API). */
   executar: (id: string, rota: RotaAcao, corpo?: CorpoAcao) =>
     chamar<Requisicao>(`/requisicoes/${encodeURIComponent(id)}/${rota}`, JSON_POST(corpo)),
+
+  /** Painéis permitidos; 403 para quem não pode. O menu só aparece se esta chamada der certo. */
+  paineisDashboard: () => chamar<RespostaPaineis>('/dashboards'),
+  /** Os filtros vão como estão (só os preenchidos); o servidor valida e aplica os padrões. */
+  painel: <T>(painel: PainelId, f: FiltrosDashboard = {}) =>
+    chamar<RespostaPainel<T>>(`/dashboards/${enc(painel)}${query({ ...f })}`),
+
+  /** Relatórios: o catálogo (filtrado pelo servidor) define telas, filtros e canais. */
+  relatorios: () => chamar<RespostaRelatorios>('/relatorios'),
+  previaRelatorio: (tipo: string, filtros: Record<string, string>) =>
+    chamar<PreviaRelatorio>(`/relatorios/${enc(tipo)}/previa${query(filtros)}`),
+  arquivoRelatorio: (
+    tipo: string,
+    formato: FormatoRelatorio,
+    via: 'download' | 'compartilhar',
+    filtros: Record<string, string>,
+  ) =>
+    chamarArquivo(
+      `/relatorios/${enc(tipo)}/arquivo${query({ ...filtros, formato, via })}`,
+      `relatorio.${formato}`,
+    ),
+  destinatariosRelatorio: () => chamar<ListaDestinatarios>('/relatorios/destinatarios'),
+  enviarRelatorioEmail: (
+    tipo: string,
+    d: {
+      formato: FormatoRelatorio;
+      filtros: Record<string, string | boolean>;
+      destinatario_id: string;
+    },
+  ) => chamar<EnvioRelatorio>(`/relatorios/${enc(tipo)}/email`, JSON_POST(d)),
+  envioRelatorio: (id: string) => chamar<EnvioRelatorio>(`/relatorios/envios/${enc(id)}`),
+
+  /** Notificações do próprio usuário (todos os perfis). Texto e destino vêm prontos do servidor. */
+  notificacoes: (p: { limite: number; offset: number; somente_nao_lidas: boolean }) =>
+    chamar<ListaNotificacoes>(
+      `/notificacoes${query({ ...p, somente_nao_lidas: String(p.somente_nao_lidas) })}`,
+    ),
+  contagemNotificacoes: () => chamar<{ nao_lidas: number }>('/notificacoes/contagem'),
+  marcarNotificacaoLida: (id: string) =>
+    chamar<{ id: string; lida_em: string }>(`/notificacoes/${enc(id)}/lida`, JSON_POST()),
+  marcarNotificacoesLidas: () => chamar<{ marcadas: number }>('/notificacoes/lidas', JSON_POST()),
 
   /** Checklist (autorizador/admin). As URLs de leitura expiram: recarregue ao abrir. */
   checklists: (id: string) => chamar<RespostaChecklists>(`/requisicoes/${enc(id)}/checklist`),

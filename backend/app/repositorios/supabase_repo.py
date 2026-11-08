@@ -24,11 +24,15 @@ from app.errors import (
     ConviteEncerrado,
     ConviteExpirado,
     ConviteInvalido,
+    CotaEnvioExcedida,
     DependenciaRecurso,
+    DestinatarioInvalido,
     ErroApi,
     ErroInterno,
     FalhaRegistroAcesso,
+    NaoEncontrado,
     PlacaDuplicada,
+    RecursoDesligado,
     RequisicaoInvalida,
     SemPermissao,
     SistemaOcupado,
@@ -56,6 +60,24 @@ MSG_VEICULO_OCUPADO = (
     "Este veículo já possui uma requisição em aberto. "
     "Ele só aceita novo pedido após a conclusão, negativa ou cancelamento da anterior."
 )
+
+
+COLUNAS_CONFIG = (
+    "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
+    "notificacao_email_criticos"
+)
+
+
+def _configuracoes(r: dict[str, Any]) -> Configuracoes:
+    return Configuracoes(
+        quilometragem=bool(r["quilometragem"]),
+        abastecimento_manutencao=bool(r["abastecimento_manutencao"]),
+        checklist=bool(r["checklist"]),
+        mfa=bool(r["mfa"]),
+        relatorio_email=bool(r.get("relatorio_email")),
+        relatorio_whatsapp=bool(r.get("relatorio_whatsapp")),
+        notificacao_email_criticos=bool(r.get("notificacao_email_criticos")),
+    )
 
 
 COLUNAS_CHECKLIST = (
@@ -120,7 +142,22 @@ MSG_CHECKLIST_MAX_FOTOS = "O checklist aceita no máximo 6 fotos."
 MSG_FOTO_INVALIDA = "A foto enviada não é válida."
 MSG_FOTO_REPETIDA = "Esta foto já foi registrada. Envie a foto novamente."
 
+MSG_PAINEL_INVALIDO = (
+    "Parâmetros do painel inválidos: informe um período de até 366 dias e a "
+    "granularidade dia, semana ou mes."
+)
+MSG_RELATORIO_INVALIDO = (
+    "Parâmetros do relatório inválidos: informe um período de até 366 dias e um agrupamento válido."
+)
 MSG_EMAIL = "Informe um e-mail institucional (@agu.gov.br) ou Gmail."
+
+
+def _inteiro_do_rpc(dados: Any, chave: str, rpc: str) -> int:
+    valor = dados.get(chave) if isinstance(dados, dict) else None
+    if not isinstance(valor, int) or isinstance(valor, bool):
+        log.error("erro_banco resposta_invalida rpc=%s", rpc)
+        raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+    return valor
 
 
 def filtrar_colunas(linha: dict[str, Any]) -> dict[str, Any]:
@@ -151,6 +188,27 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         if "perfis_pkey" in texto:
             return Conflito("Esta conta já possui perfil de acesso.", "perfil_existente")
         return Conflito("Já existe um registro com estes dados.")
+    if codigo == "AG023":  # dashboards: janela ou granularidade inválida (mensagem fixa)
+        return RequisicaoInvalida(MSG_PAINEL_INVALIDO, "painel_parametros_invalidos")
+    if codigo == "AG024":  # envio de relatório: destinatário ausente ou inativo
+        return DestinatarioInvalido("O destinatário não existe ou está inativo.")
+    if codigo == "AG025" and "usu" in texto.lower():  # cota por usuário (mensagem do banco)
+        return CotaEnvioExcedida(
+            "Você atingiu o limite de envios de relatórios por e-mail por hora. "
+            "Tente novamente mais tarde."
+        )
+    if codigo == "AG025":  # cota global de envios por hora
+        return CotaEnvioExcedida("Limite de envios por e-mail por hora atingido. Tente mais tarde.")
+    if codigo == "AG026":
+        return RecursoDesligado("O envio de relatórios por e-mail está desligado.")
+    if codigo == "AG027":
+        return RequisicaoInvalida("Parâmetros do envio por e-mail inválidos.", "envio_invalido")
+    if codigo == "AG028":
+        return NaoEncontrado("Envio não encontrado.")
+    if codigo == "AG029":  # notificação inexistente ou de outro usuário (mesma resposta)
+        return NaoEncontrado("Notificação não encontrada.")
+    if codigo == "AG030":
+        return RequisicaoInvalida("Parâmetros da notificação inválidos.", "notificacao_invalida")
     if codigo == "AG017":  # foto: usuário inexistente ou inativo (mensagem fixa)
         return SemPermissao("Conta sem acesso ao sistema.", codigo="conta_inativa")
     if codigo == "AG022":  # remoção de foto alheia por quem não é admin ativo
@@ -268,20 +326,11 @@ class SupabaseRepositorio:
 
     def ler_configuracoes(self) -> Configuracoes:
         res = _exec(
-            lambda: self._c.table("configuracoes")
-            .select("quilometragem,abastecimento_manutencao,checklist,mfa")
-            .limit(1)
-            .execute()
+            lambda: self._c.table("configuracoes").select(COLUNAS_CONFIG).limit(1).execute()
         )
         if not res.data:
             return Configuracoes()  # sem linha: tudo desligado
-        r = res.data[0]
-        return Configuracoes(
-            bool(r["quilometragem"]),
-            bool(r["abastecimento_manutencao"]),
-            bool(r["checklist"]),
-            bool(r["mfa"]),
-        )
+        return _configuracoes(res.data[0])
 
     def listar_veiculos(self) -> list[dict[str, Any]]:
         res = _exec(
@@ -379,6 +428,383 @@ class SupabaseRepositorio:
             .execute()
         )
         return {r["id"]: r["descricao"] for r in res.data}
+
+    def obter_requisicoes_por_ids(self, ids: list[str]) -> list[Requisicao]:
+        saida: list[Requisicao] = []
+        for i in range(0, len(ids), LOTE_IN):  # URL curta: ids em blocos
+            bloco = ids[i : i + LOTE_IN]
+            res = _exec(
+                lambda b=bloco: self._c.table("requisicoes")  # type: ignore[misc]
+                .select(COLUNAS_REQ)
+                .in_("id", b)
+                .execute()
+            )
+            saida.extend(res.data)
+        return saida
+
+    # -- dashboards (migration 20261108120000; só via RPC, service_role) -------------------
+    def _rpc_painel(self, nome: str, params: dict[str, Any]) -> dict[str, Any]:
+        res = _exec(lambda: self._c.rpc(nome, params).execute())
+        if not isinstance(res.data, dict):
+            log.error("erro_banco resposta_painel_invalida rpc=%s", nome)
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return res.data
+
+    def dash_operacao_agora(self, *, unidade: str | None, veiculo: str | None) -> dict[str, Any]:
+        return self._rpc_painel("dash_operacao_agora", {"p_unidade": unidade, "p_veiculo": veiculo})
+
+    def dash_volume_desfecho(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        granularidade: str,
+    ) -> dict[str, Any]:
+        return self._rpc_painel(
+            "dash_volume_desfecho",
+            {
+                "p_inicio": inicio,
+                "p_fim": fim,
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_granularidade": granularidade,
+            },
+        )
+
+    def _dash_janela(
+        self, nome: str, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]:
+        return self._rpc_painel(
+            nome,
+            {"p_inicio": inicio, "p_fim": fim, "p_unidade": unidade, "p_veiculo": veiculo},
+        )
+
+    def dash_tempos_fluxo(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]:
+        return self._dash_janela("dash_tempos_fluxo", inicio, fim, unidade, veiculo)
+
+    def dash_uso_unidade(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]:
+        return self._dash_janela("dash_uso_unidade", inicio, fim, unidade, veiculo)
+
+    def dash_uso_veiculo(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]:
+        return self._dash_janela("dash_uso_veiculo", inicio, fim, unidade, veiculo)
+
+    def dash_opcionais(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]:
+        return self._dash_janela("dash_opcionais", inicio, fim, unidade, veiculo)
+
+    def dash_governanca(self) -> dict[str, Any]:
+        return self._rpc_painel("dash_governanca", {})
+
+    # -- relatórios (migration 20261109120000; RPCs jsonb, só service_role) -------------------
+    def _rpc_relatorio(self, nome: str, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return self._rpc_painel(nome, params)
+        except RequisicaoInvalida as e:
+            if e.codigo != "painel_parametros_invalidos":
+                raise
+            raise RequisicaoInvalida(
+                MSG_RELATORIO_INVALIDO, "relatorio_parametros_invalidos"
+            ) from None
+
+    def rel_movimentacao(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        campo_data: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        incluir_nomes: bool,
+        incluir_trajeto: bool,
+        limite: int,
+    ) -> dict[str, Any]:
+        return self._rpc_relatorio(
+            "rel_movimentacao",
+            {
+                "p_inicio": inicio,
+                "p_fim": fim,
+                "p_campo_data": campo_data,
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_usuario": usuario,
+                "p_incluir_nomes": incluir_nomes,
+                "p_incluir_trajeto": incluir_trajeto,
+                "p_limite": limite,
+            },
+        )
+
+    def _rel_agrupado(
+        self,
+        nome: str,
+        inicio: str,
+        fim: str,
+        agrupar: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+    ) -> dict[str, Any]:
+        return self._rpc_relatorio(
+            nome,
+            {
+                "p_inicio": inicio,
+                "p_fim": fim,
+                "p_agrupar": agrupar,
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_usuario": usuario,
+            },
+        )
+
+    def rel_resumo(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        agrupar: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+    ) -> dict[str, Any]:
+        return self._rel_agrupado("rel_resumo", inicio, fim, agrupar, unidade, veiculo, usuario)
+
+    def rel_tempos(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        agrupar: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+    ) -> dict[str, Any]:
+        return self._rel_agrupado("rel_tempos", inicio, fim, agrupar, unidade, veiculo, usuario)
+
+    def rel_pendencias(
+        self,
+        *,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        incluir_nomes: bool,
+        limite: int,
+    ) -> dict[str, Any]:
+        return self._rpc_relatorio(
+            "rel_pendencias",
+            {
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_limite": limite,
+                "p_usuario": usuario,
+                "p_incluir_nomes": incluir_nomes,
+            },
+        )
+
+    def rel_auditoria(
+        self, *, inicio: str, fim: str, acao: str | None, limite: int
+    ) -> dict[str, Any]:
+        return self._rpc_relatorio(
+            "rel_auditoria",
+            {"p_inicio": inicio, "p_fim": fim, "p_acao": acao, "p_limite": limite},
+        )
+
+    def rel_opcionais_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        limite: int,
+    ) -> dict[str, Any]:
+        return self._rpc_relatorio(
+            "rel_opcionais_km",
+            {
+                "p_inicio": inicio,
+                "p_fim": fim,
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_usuario": usuario,
+                "p_limite": limite,
+            },
+        )
+
+    def rel_opcionais_avarias(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        limite: int,
+    ) -> dict[str, Any]:
+        # `p_incluir_descricao` NUNCA é enviado como true: o texto livre pode ter dado pessoal.
+        return self._rpc_relatorio(
+            "rel_opcionais_avarias",
+            {
+                "p_inicio": inicio,
+                "p_fim": fim,
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_usuario": usuario,
+                "p_incluir_descricao": False,
+                "p_limite": limite,
+            },
+        )
+
+    def reservar_envio_email(
+        self,
+        *,
+        solicitante: str,
+        destinatario: str,
+        tipo: str,
+        formato: str,
+        filtros: dict[str, Any],
+        max_por_hora: int,
+        max_por_usuario_hora: int | None = None,
+    ) -> str:
+        res = _exec(
+            lambda: self._c.rpc(
+                "reservar_envio_email",
+                {
+                    "p_solicitante": solicitante,
+                    "p_destinatario": destinatario,
+                    "p_tipo": tipo,
+                    "p_formato": formato,
+                    "p_filtros": filtros,
+                    "p_max_por_hora": max_por_hora,
+                    "p_max_por_usuario_hora": max_por_usuario_hora,
+                },
+            ).execute()
+        )
+        if not isinstance(res.data, dict) or not res.data.get("id"):
+            log.error("erro_banco resposta_invalida rpc=reservar_envio_email")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return str(res.data["id"])
+
+    def marcar_envio_email(
+        self, envio_id: str, status: str, erro_codigo: str | None = None
+    ) -> None:
+        _exec(
+            lambda: self._c.rpc(
+                "marcar_envio_email",
+                {"p_id": envio_id, "p_status": status, "p_erro_codigo": erro_codigo},
+            ).execute()
+        )
+
+    # -- notificações -----------------------------------------------------------------------
+    def _rpc_dict(self, nome: str, params: dict[str, Any], *, escrita: bool = False) -> Any:
+        res = _exec(lambda: self._c.rpc(nome, params).execute(), repetir_lock=escrita)
+        return res.data
+
+    def listar_notificacoes(
+        self, usuario: str, *, limite: int, offset: int, somente_nao_lidas: bool
+    ) -> dict[str, Any]:
+        dados = self._rpc_dict(
+            "listar_notificacoes",
+            {
+                "p_usuario": usuario,
+                "p_limite": limite,
+                "p_offset": offset,
+                "p_somente_nao_lidas": somente_nao_lidas,
+            },
+        )
+        if not isinstance(dados, dict) or not isinstance(dados.get("itens"), list):
+            log.error("erro_banco resposta_invalida rpc=listar_notificacoes")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return dados
+
+    def contar_notificacoes_nao_lidas(self, usuario: str) -> int:
+        dados = self._rpc_dict("contar_notificacoes_nao_lidas", {"p_usuario": usuario})
+        return _inteiro_do_rpc(dados, "nao_lidas", "contar_notificacoes_nao_lidas")
+
+    def marcar_notificacao_lida(self, usuario: str, notificacao_id: str) -> dict[str, Any]:
+        dados = self._rpc_dict(
+            "marcar_notificacao_lida",
+            {"p_usuario": usuario, "p_id": notificacao_id},
+            escrita=True,
+        )
+        if not isinstance(dados, dict) or not dados.get("id"):
+            log.error("erro_banco resposta_invalida rpc=marcar_notificacao_lida")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return dados
+
+    def marcar_todas_lidas(self, usuario: str) -> int:
+        dados = self._rpc_dict("marcar_todas_lidas", {"p_usuario": usuario}, escrita=True)
+        return _inteiro_do_rpc(dados, "marcadas", "marcar_todas_lidas")
+
+    def registrar_notificacao_sistema(self, tipo: str, detalhe_codigo: str) -> int:
+        dados = self._rpc_dict(
+            "registrar_notificacao_sistema",
+            {"p_tipo": tipo, "p_detalhe_codigo": detalhe_codigo},
+            escrita=True,
+        )
+        return _inteiro_do_rpc(dados, "criadas", "registrar_notificacao_sistema")
+
+    def reservar_emails_notificacao(self, limite: int) -> list[dict[str, Any]]:
+        dados = self._rpc_dict("reservar_emails_notificacao", {"p_limite": limite}, escrita=True)
+        if not isinstance(dados, list):
+            log.error("erro_banco resposta_invalida rpc=reservar_emails_notificacao")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return [dict(item) for item in dados if isinstance(item, dict)]
+
+    def marcar_email_notificacao(
+        self, notificacao_id: str, status: str, erro_codigo: str | None = None
+    ) -> None:
+        self._rpc_dict(
+            "marcar_email_notificacao",
+            {"p_id": notificacao_id, "p_status": status, "p_erro_codigo": erro_codigo},
+            escrita=True,
+        )
+
+    def purgar_notificacoes(self, dias: int = 90) -> int:
+        dados = self._rpc_dict("purgar_notificacoes", {"p_dias": dias}, escrita=True)
+        return int(dados) if isinstance(dados, int) and not isinstance(dados, bool) else 0
+
+    def obter_envio_email(self, envio_id: str) -> dict[str, Any] | None:
+        res = _exec(
+            lambda: self._c.table("envios_email")
+            .select("id,solicitado_por,status,erro_codigo")
+            .eq("id", envio_id)
+            .limit(1)
+            .execute()
+        )
+        return dict(res.data[0]) if res.data else None
+
+    def registrar_auditoria_relatorio(
+        self,
+        *,
+        acao: str,
+        registro_id: str | None,
+        ator_id: str,
+        detalhes: dict[str, Any],
+    ) -> None:
+        """`relatorio_gerado` (tabela relatorios) ou `relatorio_enviado` (envios_email). O banco
+        recusa chaves fora da lista e qualquer '@' em `detalhes`."""
+        tabela = "relatorios" if acao == "relatorio_gerado" else "envios_email"
+        _exec(
+            lambda: self._c.rpc(
+                "registrar_auditoria",
+                {
+                    "p_tabela": tabela,
+                    "p_registro_id": registro_id,
+                    "p_acao": acao,
+                    "p_ator_id": ator_id,
+                    "p_detalhes": detalhes,
+                },
+            ).execute()
+        )
 
     # -- checklist (migrations 19 a 22) ---------------------------------------------------
     def momentos_checklist(self, requisicao_ids: set[str]) -> dict[str, set[str]]:
@@ -663,13 +1089,7 @@ class SupabaseRepositorio:
         )
         if not res.data:
             raise ErroInterno("Configurações indisponíveis. Tente novamente.")
-        r = res.data[0]
-        return Configuracoes(
-            bool(r["quilometragem"]),
-            bool(r["abastecimento_manutencao"]),
-            bool(r["checklist"]),
-            bool(r["mfa"]),
-        )
+        return _configuracoes(res.data[0])
 
     def registrar_auditoria(
         self, *, tabela: str, registro_id: str | None, ator_id: str, detalhes: dict[str, Any]

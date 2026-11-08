@@ -212,3 +212,188 @@ class Repositorio(Protocol):
     def ids_ativos(self, usuario_ids: list[str]) -> set[str]:
         """Subconjunto dos ids cuja conta (perfis.ativo) está ativa."""
         ...
+
+    # -- dashboards (migration 20261108120000; RPCs jsonb, só service_role) -------------------
+    # `inicio`/`fim` são ISO 8601 com fuso, janela [inicio, fim) já validada pelo service. O
+    # repositório só repassa; parâmetro inválido no banco (AG023) vira RequisicaoInvalida.
+    def obter_requisicoes_por_ids(self, ids: list[str]) -> list[Requisicao]:
+        """Requisições por id, em lote (sem N+1). Ordem não garantida; ids inexistentes somem."""
+        ...
+
+    def dash_operacao_agora(
+        self, *, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]: ...
+
+    def dash_volume_desfecho(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        granularidade: str,
+    ) -> dict[str, Any]: ...
+
+    def dash_tempos_fluxo(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]: ...
+
+    def dash_uso_unidade(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]: ...
+
+    def dash_uso_veiculo(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]: ...
+
+    def dash_opcionais(
+        self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None
+    ) -> dict[str, Any]: ...
+
+    def dash_governanca(self) -> dict[str, Any]: ...
+
+    # -- relatórios (migration 20261109120000; RPCs jsonb, só service_role) ------------------
+    # Janela [inicio, fim) em ISO 8601 já validada pelo service. `usuario` não nulo restringe às
+    # requisições daquele usuário (o service força o id do JWT para o solicitante). Listas pedem
+    # `limite` (o service usa o limite máximo + 1 para detectar excesso).
+    def rel_movimentacao(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        campo_data: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        incluir_nomes: bool,
+        incluir_trajeto: bool,
+        limite: int,
+    ) -> dict[str, Any]: ...
+
+    def rel_resumo(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        agrupar: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+    ) -> dict[str, Any]: ...
+
+    def rel_tempos(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        agrupar: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+    ) -> dict[str, Any]: ...
+
+    def rel_pendencias(
+        self,
+        *,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        incluir_nomes: bool,
+        limite: int,
+    ) -> dict[str, Any]: ...
+
+    def rel_auditoria(
+        self, *, inicio: str, fim: str, acao: str | None, limite: int
+    ) -> dict[str, Any]: ...
+
+    def rel_opcionais_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        limite: int,
+    ) -> dict[str, Any]: ...
+
+    def rel_opcionais_avarias(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        limite: int,
+    ) -> dict[str, Any]:
+        """Nunca inclui a descrição das avarias (texto livre, pode ter dado pessoal)."""
+        ...
+
+    def reservar_envio_email(
+        self,
+        *,
+        solicitante: str,
+        destinatario: str,
+        tipo: str,
+        formato: str,
+        filtros: dict[str, Any],
+        max_por_hora: int,
+        max_por_usuario_hora: int | None = None,
+    ) -> str:
+        """RPC atômica: valida recurso, solicitante, destinatário ativo e cotas por hora (global
+        e por usuário; AG025, e a mensagem do banco da cota por usuário cita "usuário").
+        Devolve o id do envio (`pendente`). AG024/25/26/27 viram erros de API."""
+        ...
+
+    def marcar_envio_email(
+        self, envio_id: str, status: str, erro_codigo: str | None = None
+    ) -> None:
+        """`enviando`, `enviado` ou `falhou` (com código curto). Transição validada no banco."""
+        ...
+
+    def obter_envio_email(self, envio_id: str) -> dict[str, Any] | None:
+        """id, solicitado_por, status, erro_codigo (nunca e-mail nem arquivo)."""
+        ...
+
+    def registrar_auditoria_relatorio(
+        self, *, acao: str, registro_id: str | None, ator_id: str, detalhes: dict[str, Any]
+    ) -> None:
+        """`relatorio_gerado` ou `relatorio_enviado`. `detalhes`: só tipo, filtros, formato, via,
+        destinatario_id, total_linhas. Nunca conteúdo do relatório nem e-mail."""
+        ...
+
+    # -- notificações (migration 20261110120000). O dono vem SEMPRE do JWT, nunca do cliente. -----
+    def listar_notificacoes(
+        self, usuario: str, *, limite: int, offset: int, somente_nao_lidas: bool
+    ) -> dict[str, Any]:
+        """{total, nao_lidas, limite, offset, itens:[{id, tipo, requisicao_id, referencia_id,
+        codigo, critica, criada_em, lida_em}]}. Só as notificações de `usuario`."""
+        ...
+
+    def contar_notificacoes_nao_lidas(self, usuario: str) -> int: ...
+
+    def marcar_notificacao_lida(self, usuario: str, notificacao_id: str) -> dict[str, Any]:
+        """{id, lida_em}. Inexistente ou de outro usuário: AG029 (NaoEncontrado). Idempotente."""
+        ...
+
+    def marcar_todas_lidas(self, usuario: str) -> int:
+        """Quantidade marcada agora."""
+        ...
+
+    def registrar_notificacao_sistema(self, tipo: str, detalhe_codigo: str) -> int:
+        """`sistema_falha_envio` para os admins ativos (dedupe de 1 h no banco). Devolve `criadas`.
+        `detalhe_codigo` casa com ^[a-z0-9_.-]{1,40}$ (AG030 caso contrário)."""
+        ...
+
+    def reservar_emails_notificacao(self, limite: int) -> list[dict[str, Any]]:
+        """Lote do despachante: [{id, usuario_id, tipo, requisicao_id, referencia_id, codigo}]."""
+        ...
+
+    def marcar_email_notificacao(
+        self, notificacao_id: str, status: str, erro_codigo: str | None = None
+    ) -> None:
+        """`enviado`, `falhou` ou `ignorado`; `erro_codigo` curto (^[A-Za-z0-9_.-]{1,40}$)."""
+        ...
+
+    def purgar_notificacoes(self, dias: int = 90) -> int: ...

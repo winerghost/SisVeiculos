@@ -87,12 +87,19 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       ]
     : [];
   const config = { quilometragem: false, abastecimento_manutencao: false };
+  const ia: { mestre: boolean; saudacao: boolean; provedor: unknown; modelo: unknown } = {
+    mestre: false,
+    saudacao: false,
+    provedor: null,
+    modelo: null,
+  };
   const acoesColecao = opcoes.semCriar ? [] : ['criar'];
   const corpos: {
     convidar: unknown[];
     aceitar: unknown[];
     senha: unknown[];
     config: unknown[];
+    ia: Record<string, unknown>[];
     consultas: string[];
     /** Query string de cada GET /api/admin/acessos recebido. */
     acessos: string[];
@@ -108,6 +115,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     aceitar: [],
     senha: [],
     config: [],
+    ia: [],
   };
   let aceito = false;
   let mfaConcluido = !opcoes.exigirMfa;
@@ -464,6 +472,70 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         },
       ];
       return route.fulfill({ json: { recursos: config, itens, acoes_permitidas: ['editar'] } });
+    }
+    if (recurso === 'ia') {
+      if (m === 'PUT') {
+        const pedido = req.postDataJSON() as Record<string, unknown>;
+        corpos.ia.push(pedido);
+        // O servidor é quem recusa: ligar a chave geral sem provedor escolhido.
+        if (pedido.mestre === true && !ia.provedor && !pedido.provedor) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            'Escolha um provedor com chave configurada antes de ligar a IA.',
+          );
+        }
+        Object.assign(ia, pedido);
+        if (pedido.provedor && !pedido.modelo) ia.modelo = 'claude-haiku-5-5';
+      }
+      const semProvedor = !ia.provedor;
+      return route.fulfill({
+        json: {
+          servidor_habilitado: true,
+          motivo_indisponibilidade: null,
+          itens: [
+            {
+              chave: 'mestre',
+              rotulo: 'Inteligência artificial',
+              descricao: 'Chave geral.',
+              habilitado: ia.mestre,
+              motivo_indisponibilidade: null,
+              acoes_permitidas: [ia.mestre ? 'desligar' : 'ligar'],
+            },
+            {
+              chave: 'saudacao',
+              rotulo: 'Saudação sazonal no login',
+              descricao: 'Mensagem de boas-vindas por data comemorativa.',
+              habilitado: ia.saudacao,
+              motivo_indisponibilidade: ia.mestre ? null : 'Ligue antes a chave geral de IA.',
+              acoes_permitidas: ia.mestre ? [ia.saudacao ? 'desligar' : 'ligar'] : [],
+            },
+          ],
+          provedores: [
+            {
+              chave: 'openai',
+              rotulo: 'OpenAI',
+              chave_configurada: false,
+              modelos: ['gpt-5.4-mini'],
+              circuito_aberto: false,
+            },
+            {
+              chave: 'anthropic',
+              rotulo: 'Anthropic',
+              chave_configurada: true,
+              modelos: ['claude-haiku-5-5', 'claude-sonnet-5-5'],
+              circuito_aberto: false,
+            },
+          ],
+          provedor: semProvedor ? null : ia.provedor,
+          modelo: ia.modelo,
+          provedor_reserva: null,
+          teto_tokens_mes: null,
+          teto_efetivo_tokens_mes: 200000,
+          acoes_permitidas: ['editar'],
+        },
+      });
     }
     return erro(route, 404, 'nao_encontrado', 'Recurso não encontrado.');
   });

@@ -406,7 +406,9 @@ def test_historico_traz_autor_de_cada_evento(client, auth, repo):  # type: ignor
 def test_historico_cancelada_mostra_quem_cancelou(client, auth, repo):  # type: ignore[no-untyped-def]
     sol = repo.novo_perfil("solicitante")
     rid = criar(client, auth, sol, repo.novo_veiculo()).get_json()["id"]
-    j = acao(client, auth, sol, rid, "cancelar").get_json()
+    acao(client, auth, sol, rid, "cancelar")
+    adm = repo.novo_perfil("admin")
+    j = client.get(f"/api/requisicoes/{rid}", headers=auth(adm.id)).get_json()
     assert [(h["rotulo"], h["por"]) for h in j["historico"]] == [
         ("Solicitada", sol.nome),
         ("Cancelada", sol.nome),

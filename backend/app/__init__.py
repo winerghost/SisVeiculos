@@ -13,6 +13,9 @@ from app.auth.jwt import VerificadorJWT
 from app.config import Config
 from app.errors import registrar_erros
 from app.extensions import Dependencias, limiter, registrar_deps
+from app.ia.config import ConfigIA
+from app.ia.repositorio import SupabaseRepositorioIA
+from app.ia.servico import ServicoIA
 from app.notificacoes import Notificador, criar_notificador
 from app.repositorios.armazenamento import Armazenamento
 from app.repositorios.armazenamento_avatares import ArmazenamentoAvatares
@@ -31,6 +34,7 @@ def create_app(
     armazenamento_avatares: ArmazenamentoAvatares | None = None,
     notificador: Notificador | None = None,
     registrador_acessos: RegistradorAcessos | None = None,
+    servico_ia: ServicoIA | None = None,
 ) -> Flask:
     """Dependências (`repo`, `verificador`, `auth_admin`, `armazenamento`) podem ser injetadas
     nos testes; senão vêm da config."""
@@ -51,6 +55,7 @@ def create_app(
 
     if repo is None or verificador is None:
         cfg.validar_producao()
+    producao = repo is None
     if repo is None:
         from app.repositorios.auth_admin import SupabaseAuthAdmin
         from app.repositorios.supabase_repo import SupabaseRepositorio
@@ -81,6 +86,16 @@ def create_app(
         registrador_acessos = RegistradorAcessos(repo, assincrono=not cfg.testing)
     atexit.register(registrador_acessos.fechar)
 
+    if servico_ia is None:
+        # Sem AI_ENABLED=true o serviço nunca chama provedor. O repositório de IA só existe em
+        # produção; nos testes (repo injetado) o chamador injeta `servico_ia` se precisar.
+        repo_ia = (
+            SupabaseRepositorioIA.criar(cfg.supabase_url, cfg.supabase_service_role_key)
+            if producao
+            else None
+        )
+        servico_ia = ServicoIA(ConfigIA.from_env(), repo_ia)
+
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = cfg.max_content_length
     app.config["TESTING"] = cfg.testing
@@ -110,6 +125,7 @@ def create_app(
             armazenamento_avatares=armazenamento_avatares,
             notificador=notificador,
             registrador_acessos=registrador_acessos,
+            ia=servico_ia,
         ),
     )
     registrar_erros(app)
@@ -117,10 +133,25 @@ def create_app(
     from app.rotas.admin import admin
     from app.rotas.api import api
     from app.rotas.convites import convites
+    from app.rotas.dashboards import dashboards
+    from app.rotas.notificacoes import notificacoes
+    from app.rotas.relatorios import relatorios
 
     app.register_blueprint(api)
     app.register_blueprint(admin)
     app.register_blueprint(convites)
+    app.register_blueprint(dashboards)
+    app.register_blueprint(relatorios)
+    app.register_blueprint(notificacoes)
+
+    if not cfg.testing:
+        # Thread de manutenção (expurgo diário) e, com EMAIL_ENABLED, despachante de e-mail dos
+        # críticos; daemon, estado em memória (1 worker).
+        from app.notificacoes.despachante import Despachante
+
+        despachante = Despachante(repo, auth_admin, cfg)
+        despachante.iniciar()
+        atexit.register(despachante.parar)
 
     @app.after_request
     def _cabecalhos(resp):  # type: ignore[no-untyped-def]

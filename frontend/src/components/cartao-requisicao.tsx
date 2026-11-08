@@ -6,6 +6,7 @@ import { ACOES } from '@/lib/api';
 import { dataCurta, numero } from '@/lib/formato';
 import type { Acao, CampoAcao, CorpoAcao, Requisicao } from '@/lib/tipos';
 import { Avatar } from '@/components/avatar';
+import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { FormularioChecklist } from '@/components/formulario-checklist';
 import { Button } from '@/components/ui/button';
@@ -196,6 +197,7 @@ export function CartaoRequisicao({
         {mostrarSolicitante && req.observacao ? (
           <p className="mt-1 text-texto-2">Obs.: {req.observacao}</p>
         ) : null}
+        <LinhaDoTempo linhaDoTempo={req.linha_do_tempo} variante="compacta" className="mt-3" />
       </Link>
       {mostrarChecklist ? (
         <ChecklistRegistrado requisicaoId={req.id} versao={versaoChecklist(req)} />

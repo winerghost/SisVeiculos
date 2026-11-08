@@ -730,7 +730,7 @@ def _com_fotos(client, auth, c, avatares):  # type: ignore[no-untyped-def]
 def test_requisicao_traz_fotos_de_quem_aparece_nela(client, auth, c, repo, avatares):  # type: ignore[no-untyped-def]
     rid = _com_fotos(client, auth, c, avatares)
     avatares.lotes_leitura.clear()
-    j = client.get(f"/api/requisicoes/{rid}", headers=auth(c.sol.id)).get_json()
+    j = client.get(f"/api/requisicoes/{rid}", headers=auth(c.adm.id)).get_json()
     assert str(c.sol.id) in j["solicitante_foto_url"]
     assert str(c.aut.id) in j["autorizado_por_foto_url"]
     assert (
@@ -775,7 +775,7 @@ def test_fotos_nas_acoes_e_na_lista_do_autorizador(client, auth, c, avatares):  
 def test_usuario_inativo_nunca_serve_foto(client, auth, c, repo, avatares):  # type: ignore[no-untyped-def]
     rid = _com_fotos(client, auth, c, avatares)
     inativar(repo, c.aut)  # foto ainda ativa no banco, conta inativa
-    j = client.get(f"/api/requisicoes/{rid}", headers=auth(c.sol.id)).get_json()
+    j = client.get(f"/api/requisicoes/{rid}", headers=auth(c.adm.id)).get_json()
     assert j["autorizado_por_foto_url"] is None and j["solicitante_foto_url"]
     inativar(repo, c.sol)
     # lista do admin: inativo sem URL, mas com a ação de remover
@@ -785,7 +785,7 @@ def test_usuario_inativo_nunca_serve_foto(client, auth, c, repo, avatares):  # t
 
 def test_sem_foto_e_null(client, auth, c):  # type: ignore[no-untyped-def]
     rid = criar(client, auth, c.sol, c.veiculo).get_json()["id"]
-    j = client.get(f"/api/requisicoes/{rid}", headers=auth(c.sol.id)).get_json()
+    j = client.get(f"/api/requisicoes/{rid}", headers=auth(c.adm.id)).get_json()
     for campo in (
         "solicitante_foto_url",
         "autorizado_por_foto_url",

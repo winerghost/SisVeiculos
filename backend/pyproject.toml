@@ -11,6 +11,8 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
+# fixtures `mk`/`app` importadas de test_relatorios (reaparecem como parâmetros)
+"tests/test_relatorios_email.py" = ["S101", "F811"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

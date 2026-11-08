@@ -6,6 +6,7 @@ import { admin } from '@/lib/api';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { AdminShell } from '@/components/admin-shell';
+import { SecaoIA } from '@/components/secao-ia';
 import { Alerta } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 
@@ -72,6 +73,8 @@ function Conteudo() {
         Desligar um recurso não apaga os dados já gravados. Toda alteração fica registrada na
         auditoria.
       </p>
+
+      <SecaoIA />
     </>
   );
 }

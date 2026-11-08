@@ -147,6 +147,6 @@ test('checklist desligado: nada aparece e nenhuma chamada ao checklist é feita'
   await expect(page.getByRole('heading', { name: /Checklist/ })).toHaveCount(0);
   await expect(page.locator('input[type=file]')).toHaveCount(0);
   await page.getByText('Sede -> Fórum').click();
-  await expect(page.getByRole('heading', { name: 'Histórico' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Linha do tempo' })).toBeVisible();
   expect(chamadas).toEqual([]);
 });

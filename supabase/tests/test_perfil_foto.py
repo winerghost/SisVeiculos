@@ -611,12 +611,13 @@ def test_ck_auditoria_preserva_valores_antigos_e_inclui_os_novos() -> None:
             ).fetchall()
         )
     assert len(ACOES_ANTIGAS) == 15 and len(TABELAS_ANTIGAS_AUD) == 6
-    # Contagem exata: a migration 25c NAO recria os CHECKs (17 acoes / 7 tabelas continuam).
-    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))) == 17
-    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_tabela"]))) == 7
-    for v in (*ACOES_ANTIGAS, "foto_perfil_alterada", "foto_perfil_removida"):
+    # Contagem exata: 17 acoes / 7 tabelas + as da migration de relatorios (19 acoes / 9 tabelas).
+    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))) == 19
+    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_tabela"]))) == 9
+    for v in (*ACOES_ANTIGAS, "foto_perfil_alterada", "foto_perfil_removida",
+              "relatorio_gerado", "relatorio_enviado"):
         assert f"'{v}'" in defs["ck_auditoria_acao"], v
-    for v in (*TABELAS_ANTIGAS_AUD, "perfil_fotos"):
+    for v in (*TABELAS_ANTIGAS_AUD, "perfil_fotos", "relatorios", "envios_email"):
         assert f"'{v}'" in defs["ck_auditoria_tabela"], v
 
 

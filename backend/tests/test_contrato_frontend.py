@@ -17,6 +17,7 @@ def cenario(repo: RepoMemoria):  # type: ignore[no-untyped-def]
         sol = repo.novo_perfil("solicitante")
         outro = repo.novo_perfil("solicitante")
         aut = repo.novo_perfil("autorizador")
+        adm = repo.novo_perfil("admin")
         veiculo = repo.novo_veiculo()
 
     return C
@@ -40,13 +41,13 @@ def test_rotulo_por_papel(client, auth, repo, role, texto):  # type: ignore[no-u
 
 def test_historico_ciclo_completo_e_nomes(client, auth, cenario):  # type: ignore[no-untyped-def]
     rid = criar(client, auth, cenario.sol, cenario.veiculo).get_json()["id"]
-    j = client.get(f"/api/requisicoes/{rid}", headers=auth(cenario.sol.id)).get_json()
+    j = client.get(f"/api/requisicoes/{rid}", headers=auth(cenario.adm.id)).get_json()
     assert [h["rotulo"] for h in j["historico"]] == ["Solicitada"]
     assert j["autorizado_por_nome"] is None
     assert j["veiculo_descricao"] == "Carro"
     for passo in ("autorizar", "saida", "chegada"):
         assert acao(client, auth, cenario.aut, rid, passo).status_code == 200
-    j = client.get(f"/api/requisicoes/{rid}", headers=auth(cenario.sol.id)).get_json()
+    j = client.get(f"/api/requisicoes/{rid}", headers=auth(cenario.adm.id)).get_json()
     assert [h["rotulo"] for h in j["historico"]] == [
         "Solicitada",
         "Autorizada",
@@ -89,11 +90,9 @@ def test_nenhum_dado_pessoal_extra_para_solicitante(client, auth, cenario):  # t
     bruto = json.dumps(lista)
     assert cenario.outro.nome not in bruto and cenario.outro.id not in bruto
     assert "@" not in bruto and "email" not in bruto
-    chaves_nome = {k for k in lista["itens"][0] if k.endswith("_nome")}
-    assert chaves_nome == {
-        "autorizado_por_nome",
-        "saida_registrada_por_nome",
-        "chegada_registrada_por_nome",
+    # solicitante não recebe nome, foto nem id de quem agiu (só a linha_do_tempo, com papel)
+    assert not {k for k in lista["itens"][0] if k.endswith(("_nome", "_foto_url"))} - {
+        "solicitante_foto_url"
     }
 
 
@@ -102,3 +101,58 @@ def test_solicitante_nao_ve_nome_de_requisicao_alheia(client, auth, cenario):  #
     acao(client, auth, cenario.aut, rid, "autorizar")
     r = client.get(f"/api/requisicoes/{rid}", headers=auth(cenario.outro.id))
     assert r.status_code == 404 and cenario.aut.nome not in r.get_data(as_text=True)
+
+
+CAMPOS_EQUIPE = (
+    "autorizado_por",
+    "saida_registrada_por",
+    "chegada_registrada_por",
+    "cancelada_por",
+    "autorizado_por_nome",
+    "saida_registrada_por_nome",
+    "chegada_registrada_por_nome",
+    "autorizado_por_foto_url",
+    "saida_registrada_por_foto_url",
+    "chegada_registrada_por_foto_url",
+)
+
+
+def test_solicitante_nao_recebe_dados_da_equipe_em_lista_e_detalhe(client, auth, cenario, repo):  # type: ignore[no-untyped-def]
+    rid = criar(client, auth, cenario.sol, cenario.veiculo).get_json()["id"]
+    for passo in ("autorizar", "saida", "chegada"):
+        acao(client, auth, cenario.aut, rid, passo)
+    v2 = repo.novo_veiculo()
+    rid2 = criar(client, auth, cenario.sol, v2).get_json()["id"]
+    acao(client, auth, cenario.adm, rid2, "cancelar")
+    cab = auth(cenario.sol.id)
+    lista = client.get("/api/requisicoes", headers=cab).get_json()["itens"]
+    detalhe = client.get(f"/api/requisicoes/{rid}", headers=cab).get_json()
+    for item in [*lista, detalhe]:
+        assert not [k for k in CAMPOS_EQUIPE if k in item]
+        assert all("por" not in h and {"rotulo", "quando"} <= set(h) for h in item["historico"])
+        assert "solicitante_foto_url" in item
+        texto = json.dumps(item)
+        assert cenario.aut.id not in texto and cenario.aut.nome not in texto
+        assert cenario.adm.id not in texto and cenario.adm.nome not in texto
+
+
+def test_solicitante_nao_consulta_nomes_da_equipe(client, auth, cenario, repo, monkeypatch):  # type: ignore[no-untyped-def]
+    rid = criar(client, auth, cenario.sol, cenario.veiculo).get_json()["id"]
+    acao(client, auth, cenario.aut, rid, "autorizar")
+    pedidos: list[set[str]] = []
+    original = repo.nomes_perfis
+    monkeypatch.setattr(
+        repo, "nomes_perfis", lambda ids: (pedidos.append(set(ids)), original(ids))[1]
+    )
+    client.get(f"/api/requisicoes/{rid}", headers=auth(cenario.sol.id))
+    assert pedidos == [{cenario.sol.id}]
+
+
+def test_staff_continua_recebendo_dados_da_equipe(client, auth, cenario):  # type: ignore[no-untyped-def]
+    rid = criar(client, auth, cenario.sol, cenario.veiculo).get_json()["id"]
+    acao(client, auth, cenario.aut, rid, "autorizar")
+    for quem in (cenario.aut, cenario.adm):
+        j = client.get(f"/api/requisicoes/{rid}", headers=auth(quem.id)).get_json()
+        assert j["autorizado_por"] == cenario.aut.id
+        assert j["autorizado_por_nome"] == cenario.aut.nome and "autorizado_por_foto_url" in j
+        assert all("por" in h for h in j["historico"])

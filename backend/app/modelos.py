@@ -34,6 +34,9 @@ class Configuracoes:
     abastecimento_manutencao: bool = False
     checklist: bool = False
     mfa: bool = False
+    relatorio_email: bool = False
+    relatorio_whatsapp: bool = False
+    notificacao_email_criticos: bool = False
 
     def como_dict(self) -> dict[str, bool]:
         return {
@@ -41,4 +44,7 @@ class Configuracoes:
             "abastecimento_manutencao": self.abastecimento_manutencao,
             "checklist": self.checklist,
             "mfa": self.mfa,
+            "relatorio_email": self.relatorio_email,
+            "relatorio_whatsapp": self.relatorio_whatsapp,
+            "notificacao_email_criticos": self.notificacao_email_criticos,
         }

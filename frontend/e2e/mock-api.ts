@@ -71,6 +71,8 @@ export interface Opcoes {
   fotoQuebrada?: boolean;
   /** O POST /api/eu/foto (confirmação) responde 400 com este código e mensagem. */
   erroConfirmacao?: { status: number; codigo: string; mensagem: string };
+  /** O autorizador também recebe a permissão `administrar` (menu com 6 itens). */
+  comAdmin?: boolean;
   /** Requisições já existentes (ex.: viagem em uso), mescladas sobre uma base. */
   sementes?: Partial<Req>[];
 }
@@ -156,6 +158,96 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     }
     return o;
   };
+  // Linha do tempo no formato da API (a regra de etapas/situação vive no servidor; aqui só no teste).
+  type Sit = 'concluida' | 'atual' | 'pendente' | 'negada' | 'cancelada';
+  const etapa = (
+    chave: string,
+    rotulo: string,
+    situacao: Sit,
+    em: string | null,
+    por: { nome?: string; papel?: string } | null,
+    ant: string | null,
+  ) => ({
+    chave,
+    rotulo,
+    situacao,
+    em,
+    por,
+    duracao_desde_anterior_s:
+      em && ant ? Math.max(Math.round((Date.parse(em) - Date.parse(ant)) / 1000), 0) : null,
+    decorrido_s: situacao === 'atual' ? 120 : null,
+  });
+  const linhaDoTempo = (r: Req) => {
+    const solicitada = etapa(
+      'solicitada',
+      'Solicitada',
+      'concluida',
+      r.criado_em,
+      { nome: r.nome_solicitante },
+      null,
+    );
+    const ana = { nome: 'Ana Souza' };
+    let etapas: ReturnType<typeof etapa>[];
+    let desfecho: string;
+    if (r.status === 'negada') {
+      desfecho = 'negada';
+      etapas = [solicitada, etapa('negada', 'Negada', 'negada', r.autorizado_em, ana, r.criado_em)];
+    } else if (r.status === 'cancelada') {
+      desfecho = 'cancelada';
+      etapas = [
+        solicitada,
+        etapa(
+          'cancelada',
+          'Cancelada',
+          'cancelada',
+          r.cancelada_em,
+          { papel: 'solicitante' },
+          r.criado_em,
+        ),
+      ];
+    } else {
+      const i = ['solicitada', 'autorizada', 'em_uso', 'concluida'].indexOf(r.status);
+      const sit = (k: number): Sit =>
+        k < i || r.status === 'concluida' ? 'concluida' : k === i ? 'atual' : 'pendente';
+      desfecho = r.status === 'concluida' ? 'concluida' : 'em_andamento';
+      etapas = [
+        { ...solicitada, situacao: sit(0), decorrido_s: sit(0) === 'atual' ? 120 : null },
+        etapa(
+          'autorizada',
+          'Autorizada',
+          sit(1),
+          r.autorizado_em,
+          r.autorizado_em ? ana : null,
+          r.criado_em,
+        ),
+        etapa(
+          'saida',
+          'Saída registrada',
+          sit(2),
+          r.saida_real_em,
+          r.saida_real_em ? ana : null,
+          r.autorizado_em,
+        ),
+        etapa(
+          'chegada',
+          'Chegada registrada',
+          sit(3),
+          r.chegada_real_em,
+          r.chegada_real_em ? ana : null,
+          r.saida_real_em,
+        ),
+      ];
+    }
+    const atual = etapas.findIndex((e) => e.situacao === 'atual');
+    return {
+      desfecho,
+      etapa_atual: atual < 0 ? etapas.length : atual + 1,
+      total_etapas: etapas.length,
+      texto_equivalente: `Requisição ${r.status}. ${etapas.map((e) => `${e.rotulo}: ${e.situacao}`).join('; ')}.`,
+      gerado_em: new Date().toISOString(),
+      etapas,
+    };
+  };
   const historico = (r: Req) =>
     (
       [
@@ -190,6 +282,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     chegada_registrada_por_foto_url: r.chegada_registrada_por_nome ? fotoUrl() : null,
     veiculo_descricao: 'Veículo 01',
     historico: historico(r),
+    linha_do_tempo: linhaDoTempo(r),
     acoes_permitidas: acoes(papel, r),
     campos_acao: camposAcao(papel, r),
   });
@@ -274,7 +367,10 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
         rotulo_perfil: papel === 'autorizador' ? 'UEA · Autorizador' : 'UEA · Solicitante',
         unidades: ['PU', 'PF', 'CJU', 'UEA'],
         role: papel,
-        permissoes: p.permissoes,
+        permissoes:
+          opcoes.comAdmin && papel === 'autorizador'
+            ? [...p.permissoes, 'administrar']
+            : p.permissoes,
         recursos: opcoes.checklist ? { checklist: true } : {},
         foto_url: fotoUrl(),
       },
@@ -387,6 +483,134 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
       .filter((r) => !status || r.status === status)
       .map((r) => ver(papel, r));
     await route.fulfill({ json: { itens, total: itens.length } });
+  });
+
+  // Dashboards: solicitante recebe 403; autorizador vê os painéis básicos.
+  const consultasPainel: { painel: string; query: Record<string, string> }[] = [];
+  await page.route(/\/api\/dashboards(\/[a-z]+)?(\?.*)?$/, async (route) => {
+    const papel = papelDoToken(route);
+    if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
+    if (papel !== 'autorizador') {
+      return erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.');
+    }
+    const url = new URL(route.request().url());
+    const painel = url.pathname.split('/')[3];
+    if (!painel) {
+      return route.fulfill({
+        json: {
+          paineis: [
+            { chave: 'operacao', rotulo: 'Operação agora' },
+            { chave: 'volume', rotulo: 'Volume' },
+            { chave: 'tempos', rotulo: 'Tempos' },
+            { chave: 'unidades', rotulo: 'Unidades' },
+            { chave: 'veiculos', rotulo: 'Veículos' },
+            { chave: 'opcionais', rotulo: 'Opcionais' },
+          ],
+          fuso: 'America/Sao_Paulo',
+          periodo_padrao_dias: 30,
+          periodo_maximo_dias: 366,
+        },
+      });
+    }
+    const q = Object.fromEntries(url.searchParams.entries());
+    consultasPainel.push({ painel, query: q });
+    // Só o que o painel usa: operação, apenas unidade/veículo; volume, também granularidade.
+    const filtros: Record<string, string | null> =
+      painel === 'operacao'
+        ? { fuso: 'America/Sao_Paulo', unidade: q.unidade ?? null, veiculo: q.veiculo ?? null }
+        : {
+            inicio: q.inicio ?? '2026-10-10',
+            fim: q.fim ?? '2026-11-08',
+            fuso: 'America/Sao_Paulo',
+            unidade: q.unidade ?? null,
+            veiculo: q.veiculo ?? null,
+            ...(painel === 'volume' ? { granularidade: q.granularidade ?? 'dia' } : {}),
+          };
+    const abertas = reqs.filter((r) => ['solicitada', 'autorizada', 'em_uso'].includes(r.status));
+    const por = (st: string) => abertas.filter((r) => r.status === st);
+    const maisAntiga = (l: Req[]) =>
+      l.length ? { id: l[0]?.id, criado_em: l[0]?.criado_em, decorrido_s: 900 } : null;
+    const dados: Record<string, unknown> = {
+      operacao: {
+        gerado_em: new Date().toISOString(),
+        veiculos: {
+          ativos: 1,
+          livres: abertas.length ? 0 : 1,
+          reservados: por('solicitada').length + por('autorizada').length,
+          em_uso: por('em_uso').length,
+        },
+        solicitadas: {
+          total: por('solicitada').length,
+          mais_antiga: maisAntiga(por('solicitada')),
+        },
+        autorizadas_sem_saida: {
+          total: por('autorizada').length,
+          mais_antiga: maisAntiga(por('autorizada')),
+        },
+        em_uso: { total: por('em_uso').length, decorrido_medio_s: 3600, decorrido_max_s: 7200 },
+        itens: abertas.map((r) => ver(papel, r)),
+      },
+      volume: {
+        totais: {
+          total: 10,
+          autorizadas: 6,
+          negadas: 2,
+          canceladas: 1,
+          solicitadas_pendentes: 1,
+          pct_autorizadas: 60,
+          pct_negadas: 20,
+          pct_canceladas: 10,
+        },
+        serie: [
+          { periodo: '2026-11-05', total: 4, autorizadas: 3, negadas: 1, canceladas: 0 },
+          { periodo: '2026-11-06', total: 6, autorizadas: 3, negadas: 1, canceladas: 1 },
+        ],
+        granularidade: filtros.granularidade ?? 'dia',
+        fuso: 'America/Sao_Paulo',
+      },
+      tempos: {
+        espera_autorizacao: { n: 5, media_s: 600, mediana_s: 540, max_s: 1800 },
+        duracao_uso: { n: 4, media_s: 7200, mediana_s: 6600, max_s: 14400 },
+        saida_vs_prevista: { n: 4, media_s: -300, mediana_s: -120, min_s: -1800, max_s: 900 },
+      },
+      opcionais: {
+        quilometragem: { habilitado: false },
+        checklist: {
+          habilitado: true,
+          total: 4,
+          com_avaria: 1,
+          requisicoes_com_avaria: [
+            {
+              requisicao_id: VEICULO_ID,
+              momento: 'chegada',
+              registrado_em: '2026-11-06T15:00:00Z',
+            },
+          ],
+        },
+      },
+      unidades: {
+        itens: [
+          { unidade: 'PU', requisicoes: 4, usos: 3, horas_uso: 6.5 },
+          { unidade: 'UEA', requisicoes: 2, usos: 2, horas_uso: 3 },
+        ],
+      },
+      veiculos: {
+        horas_periodo: 720,
+        itens: [
+          {
+            veiculo_id: VEICULO_ID,
+            ativo: true,
+            usos: 5,
+            horas_uso: 12,
+            horas_ocupadas: 18,
+            taxa_ocupacao: 0.025,
+          },
+        ],
+      },
+    };
+    if (!(painel in dados))
+      return erro(route, 404, 'painel_desconhecido', 'Painel não encontrado.');
+    await route.fulfill({ json: { painel, filtros, dados: dados[painel] } });
   });
 
   const FOTO_URL = 'https://exemplo.supabase.co/storage/v1/object/sign/checklists/';
@@ -573,6 +797,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
 
   return {
     reqs,
+    consultasPainel,
     corpos,
     corposAcao,
     registrosChecklist,

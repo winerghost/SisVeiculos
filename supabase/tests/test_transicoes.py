@@ -282,7 +282,7 @@ def test_auditoria_append_only(atores: Atores, sql: str) -> None:
         # `requisicoes` e referenciada por FK (checklists -> requisicoes; checklist_fotos -> checklists).
         # TRUNCATE simples nela daria 0A000 do Postgres ANTES do gatilho; para provar o gatilho AG003
         # truncam-se as tabelas referenciadoras na mesma instrucao (o Postgres aceita) ou usa-se CASCADE.
-        "truncate public.requisicoes, public.checklists, public.checklist_fotos",
+        "truncate public.requisicoes, public.checklists, public.checklist_fotos, public.notificacoes",
         "truncate public.requisicoes cascade",
     ],
 )

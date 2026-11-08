@@ -109,6 +109,45 @@ test('admin: configurações exibem 409 dependencia_recurso como veio e respeita
   ]);
 });
 
+test('admin: IA mostra a recusa da API e só envia a intenção do admin', async ({ page }) => {
+  const mock = await entrarAdmin(page);
+  await page.goto('/admin/configuracoes');
+
+  const mestre = page.getByRole('switch', { name: 'Inteligência artificial' });
+  const saudacao = page.getByRole('switch', { name: 'Saudação sazonal no login' });
+  // Sem a chave geral, a API não oferece ação para a saudação.
+  await expect(saudacao).toBeDisabled();
+  await expect(page.getByText('Ligue antes a chave geral de IA.')).toBeVisible();
+
+  // A recusa (409) é exibida como veio e o interruptor continua desligado.
+  await mestre.click();
+  await expect(
+    page
+      .getByRole('alert')
+      .filter({ hasText: 'Escolha um provedor com chave configurada antes de ligar a IA.' }),
+  ).toBeVisible();
+  await expect(mestre).toHaveAttribute('aria-checked', 'false');
+
+  // Provedor sem chave no servidor aparece desabilitado; o configurado pode ser escolhido.
+  await expect(
+    page
+      .getByLabel('Provedor', { exact: true })
+      .getByRole('option', { name: /OpenAI \(chave não configurada\)/ }),
+  ).toBeDisabled();
+  await page.getByLabel('Provedor', { exact: true }).selectOption('anthropic');
+  await mestre.click();
+  await expect(mestre).toHaveAttribute('aria-checked', 'true');
+  await saudacao.click();
+  await expect(saudacao).toHaveAttribute('aria-checked', 'true');
+
+  expect(mock.corpos.ia).toEqual([
+    { mestre: true },
+    { provedor: 'anthropic' },
+    { mestre: true },
+    { saudacao: true },
+  ]);
+});
+
 test('admin: veículos listam e abrem a edição conforme acoes_permitidas', async ({ page }) => {
   await entrarAdmin(page);
   await page.goto('/admin/veiculos');

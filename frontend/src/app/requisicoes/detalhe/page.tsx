@@ -3,39 +3,17 @@
 import * as React from 'react';
 import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Check } from 'lucide-react';
 import { api } from '@/lib/api';
 import { dataHora, numero } from '@/lib/formato';
 import { useCarga } from '@/lib/use-carga';
 import { useAcao } from '@/lib/use-acao';
-import type { Requisicao } from '@/lib/tipos';
 import { AppShell } from '@/components/app-shell';
 import { Avatar } from '@/components/avatar';
+import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { Alerta } from '@/components/ui/alert';
 import { StatusChip } from '@/components/ui/status-chip';
-
-// Fallback para respostas sem `por`: nomes antigos por rótulo do histórico. A API é a fonte.
-function porFallback(r: Requisicao, rotulo: string): string | null {
-  const mapa: Record<string, string | null> = {
-    Autorizada: r.autorizado_por_nome,
-    Negada: r.autorizado_por_nome,
-    'Saída registrada': r.saida_registrada_por_nome,
-    'Chegada registrada': r.chegada_registrada_por_nome,
-  };
-  return mapa[rotulo] ?? null;
-}
-
-function fotoDoEvento(r: Requisicao, rotulo: string): string | null | undefined {
-  const mapa: Record<string, string | null | undefined> = {
-    Autorizada: r.autorizado_por_foto_url,
-    Negada: r.autorizado_por_foto_url,
-    'Saída registrada': r.saida_registrada_por_foto_url,
-    'Chegada registrada': r.chegada_registrada_por_foto_url,
-  };
-  return mapa[rotulo];
-}
 
 function Detalhe({ id }: { id: string }) {
   const req = useCarga(() => api.requisicao(id));
@@ -86,41 +64,10 @@ function Detalhe({ id }: { id: string }) {
         {r.observacao ? <p className="mt-2 break-words">Obs.: {r.observacao}</p> : null}
       </section>
 
-      <h2 className="mt-6 mb-2 font-medium text-texto-2">Histórico</h2>
-      <ol className="flex flex-col gap-4 rounded-xl border border-borda bg-white p-4">
-        {r.historico.map((e) => {
-          const por = e.por ?? porFallback(r, e.rotulo);
-          return (
-            <li key={e.rotulo} className="flex items-start gap-3">
-              <span
-                aria-hidden
-                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sucesso text-white"
-              >
-                <Check className="size-5" />
-              </span>
-              <div>
-                <p className="font-semibold">{e.rotulo}</p>
-                <p className="text-texto-2">
-                  {dataHora(e.quando)}
-                  {por ? ` · por ${por}` : ''}
-                </p>
-                {por ? (
-                  <Avatar
-                    nome={por}
-                    fotoUrl={fotoDoEvento(r, e.rotulo)}
-                    tamanho="pequeno"
-                    decorativo
-                    className="mt-1"
-                  />
-                ) : null}
-                {e.km !== undefined && e.km !== null ? (
-                  <p className="text-texto-2">Km: {numero(e.km)}</p>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+      <h2 className="mt-6 mb-2 font-medium text-texto-2">Linha do tempo</h2>
+      <section aria-label="Linha do tempo" className="rounded-xl border border-borda bg-white p-4">
+        <LinhaDoTempo linhaDoTempo={r.linha_do_tempo} variante="completa" />
+      </section>
 
       <ChecklistRegistrado requisicaoId={r.id} versao={versaoChecklist(r)} />
 

@@ -16,7 +16,15 @@ _PLACA = re.compile(r"^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$")
 MAX_EMAIL = 254
 MAX_DESCRICAO = 120
 VALIDADE_PADRAO_DIAS, VALIDADE_MAX_DIAS = 7, 30
-RECURSOS = ("quilometragem", "abastecimento_manutencao", "checklist", "mfa")
+RECURSOS = (
+    "quilometragem",
+    "abastecimento_manutencao",
+    "checklist",
+    "mfa",
+    "relatorio_email",
+    "relatorio_whatsapp",
+    "notificacao_email_criticos",
+)
 
 
 def _objeto(corpo: Any, permitidos: set[str]) -> dict[str, Any]:

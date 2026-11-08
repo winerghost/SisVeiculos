@@ -7,6 +7,7 @@ elas são aplicadas antes, para devolver mensagens claras e `acoes_permitidas`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from app.errors import (
@@ -90,10 +91,13 @@ CAMPOS_ATORES = ("autorizado_por", "saida_registrada_por", "chegada_registrada_p
 CAMPOS_AUTORES_HISTORICO = ("usuario_id", *CAMPOS_ATORES, "cancelada_por")
 
 
-def montar_historico(req: Requisicao, nomes: dict[str, str] | None = None) -> list[dict[str, Any]]:
+def montar_historico(
+    req: Requisicao, nomes: dict[str, str] | None = None, *, incluir_por: bool = True
+) -> list[dict[str, Any]]:
     """Linha do tempo montada no servidor; só entram os eventos que já ocorreram.
 
-    `por` é o nome (só `perfis.nome`) de quem fez o evento; None se desconhecido.
+    `por` é o nome (só `perfis.nome`) de quem fez o evento; None se desconhecido. Visão do
+    solicitante (`incluir_por=False`): o campo `por` não é devolvido.
     """
     nomes = nomes or {}
     eventos = [
@@ -120,10 +124,132 @@ def montar_historico(req: Requisicao, nomes: dict[str, str] | None = None) -> li
     ]
     # `km` (odômetro do veículo, não é dado pessoal) só aparece quando gravado.
     return [
-        {"rotulo": r, "quando": q, "por": nomes.get(a or ""), **({} if km is None else {"km": km})}
+        {
+            "rotulo": r,
+            "quando": q,
+            **({"por": nomes.get(a or "")} if incluir_por else {}),
+            **({} if km is None else {"km": km}),
+        }
         for r, q, a, km in eventos
         if q
     ]
+
+
+ETAPAS_FLUXO = ("solicitada", "autorizada", "em_uso", "concluida")
+ROTULOS_ETAPA = {
+    "solicitada": "Solicitada",
+    "autorizada": "Autorizada",
+    "em_uso": "Em uso",
+    "concluida": "Concluída",
+    "negada": "Negada",
+    "cancelada": "Cancelada",
+}
+PAPEL_EQUIPE = "Autorizador"  # visão do solicitante: só o papel, nunca o nome da equipe
+# chave da etapa -> (coluna do carimbo, coluna de quem agiu)
+FONTES_ETAPA = {
+    "solicitada": ("criado_em", "usuario_id"),
+    "autorizada": ("autorizado_em", "autorizado_por"),
+    "negada": ("autorizado_em", "autorizado_por"),
+    "em_uso": ("saida_real_em", "saida_registrada_por"),
+    "concluida": ("chegada_real_em", "chegada_registrada_por"),
+    "cancelada": ("cancelada_em", "cancelada_por"),
+}
+
+
+def _instante(valor: Any) -> datetime | None:
+    if not isinstance(valor, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(valor)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _segundos(inicio: datetime | None, fim: datetime | None) -> int | None:
+    if inicio is None or fim is None:
+        return None
+    return max(0, int((fim - inicio).total_seconds()))
+
+
+def montar_linha_do_tempo(
+    req: Requisicao,
+    nomes: dict[str, str] | None = None,
+    *,
+    ocultar_nomes: bool = False,
+    agora: datetime | None = None,
+) -> dict[str, Any]:
+    """Linha do tempo por etapas, montada no servidor a partir das colunas de `requisicoes`.
+
+    Em andamento: 4 etapas (solicitada, autorizada, em_uso, concluida); a etapa do estado atual é
+    `atual`, as seguintes `pendente`. Negada e cancelada encerram a linha (sem etapas futuras).
+    `ocultar_nomes` (visão do solicitante): só o nome do próprio dono; a equipe aparece como papel.
+    """
+    nomes = nomes or {}
+    agora = agora or datetime.now(UTC)
+    status = req.get("status")
+    if status == "negada":
+        chaves = ["solicitada", "negada"]
+    elif status == "cancelada":
+        chaves = ["solicitada", *(["autorizada"] if req.get("autorizado_em") else []), "cancelada"]
+    else:
+        chaves = list(ETAPAS_FLUXO)
+    encerrada = status in {"negada", "cancelada", "concluida"}
+    indice_atual = chaves.index(status) if status in chaves and not encerrada else -1
+
+    etapas: list[dict[str, Any]] = []
+    anterior: datetime | None = None
+    for i, chave in enumerate(chaves):
+        pendente = not encerrada and i > indice_atual
+        if pendente:
+            situacao = "pendente"
+        elif i == indice_atual:
+            situacao = "atual"
+        elif chave in {"negada", "cancelada"}:
+            situacao = chave
+        else:
+            situacao = "concluida"
+        etapa: dict[str, Any] = {
+            "chave": chave,
+            "rotulo": ROTULOS_ETAPA[chave],
+            "situacao": situacao,
+            "em": None,
+            "por": None,
+            "duracao_desde_anterior_s": None,
+            "decorrido_s": None,
+        }
+        if not pendente:
+            col_em, col_por = FONTES_ETAPA[chave]
+            etapa["em"] = req.get(col_em)
+            etapa["por"] = _autor(req.get(col_por), req, nomes, ocultar_nomes)
+            em = _instante(req.get(col_em))
+            etapa["duracao_desde_anterior_s"] = _segundos(anterior, em)
+            if situacao == "atual":
+                etapa["decorrido_s"] = _segundos(em, agora)
+            anterior = em or anterior
+        etapas.append(etapa)
+
+    etapa_atual = len(etapas) if encerrada else indice_atual + 1
+    rotulo = ROTULOS_ETAPA.get(str(status), str(status)).lower()
+    return {
+        "desfecho": status if encerrada else "em_andamento",
+        "etapa_atual": etapa_atual,
+        "total_etapas": len(etapas),
+        "texto_equivalente": f"Etapa {etapa_atual} de {len(etapas)}: {rotulo}",
+        "gerado_em": agora.isoformat(),
+        "etapas": etapas,
+    }
+
+
+def _autor(
+    ator: Any, req: Requisicao, nomes: dict[str, str], ocultar_nomes: bool
+) -> dict[str, str] | None:
+    if not ator:
+        return None
+    if ocultar_nomes and ator != req.get("usuario_id"):
+        return {"papel": PAPEL_EQUIPE}
+    nome = nomes.get(ator)
+    return {"nome": nome} if nome else None
 
 
 class ServicoRequisicoes:
@@ -202,7 +328,15 @@ class ServicoRequisicoes:
 
     def apresentar_lote(self, perfil: Perfil, reqs: list[Requisicao]) -> list[dict[str, Any]]:
         """Acrescenta ações, histórico, nomes (só `perfis.nome`) e descrição do veículo."""
-        ids_perfis = {r[c] for r in reqs for c in CAMPOS_AUTORES_HISTORICO if r.get(c)}
+        staff = perfil.role in STAFF
+        # Solicitante: só o próprio dono (e ele mesmo como ator) é consultado; nomes, fotos e ids
+        # da equipe nem são buscados (minimização).
+        ids_perfis = {
+            r[c]
+            for r in reqs
+            for c in CAMPOS_AUTORES_HISTORICO
+            if r.get(c) and (staff or r[c] == r.get("usuario_id"))
+        }
         ids_veiculos = {r["veiculo_id"] for r in reqs if r.get("veiculo_id")}
         nomes = self._repo.nomes_perfis(ids_perfis)
         veiculos = self._repo.descricoes_veiculos(ids_veiculos)
@@ -210,30 +344,53 @@ class ServicoRequisicoes:
         # falha do Storage resultam em null, nunca em erro.
         fotos = self._fotos.urls(ids_perfis) if self._fotos is not None else {}
         config = self._repo.ler_configuracoes()
+        agora = datetime.now(UTC)
         checklists = (
             self._repo.momentos_checklist({r["id"] for r in reqs}) if config.checklist else {}
         )
         return [
             {
-                **r,
+                **self._sem_equipe(r, staff),
                 # Sempre presentes (null se nunca gravados): desligar o recurso não esconde
                 # o que já foi gravado.
                 "km_saida": r.get("km_saida"),
                 "km_chegada": r.get("km_chegada"),
                 "acoes_permitidas": self.acoes_permitidas(perfil, r),
                 "campos_acao": self.campos_acao(perfil, r, config, checklists),
-                "historico": montar_historico(r, nomes),
-                "autorizado_por_nome": nomes.get(r.get("autorizado_por") or ""),
-                "saida_registrada_por_nome": nomes.get(r.get("saida_registrada_por") or ""),
-                "chegada_registrada_por_nome": nomes.get(r.get("chegada_registrada_por") or ""),
+                "historico": montar_historico(r, nomes, incluir_por=staff),
+                "linha_do_tempo": montar_linha_do_tempo(
+                    r, nomes, ocultar_nomes=not staff, agora=agora
+                ),
                 "veiculo_descricao": veiculos.get(r.get("veiculo_id") or ""),
                 "solicitante_foto_url": fotos.get(r.get("usuario_id") or ""),
-                "autorizado_por_foto_url": fotos.get(r.get("autorizado_por") or ""),
-                "saida_registrada_por_foto_url": fotos.get(r.get("saida_registrada_por") or ""),
-                "chegada_registrada_por_foto_url": fotos.get(r.get("chegada_registrada_por") or ""),
+                **self._autores(r, staff, nomes, fotos),
             }
             for r in reqs
         ]
+
+    @staticmethod
+    def _sem_equipe(r: Requisicao, staff: bool) -> Requisicao:
+        """Visão do solicitante: ids de quem agiu só permanecem se for o próprio dono."""
+        if staff:
+            return r
+        return {
+            k: v
+            for k, v in r.items()
+            if k not in CAMPOS_ATORES + ("cancelada_por",) or v == r.get("usuario_id")
+        }
+
+    @staticmethod
+    def _autores(
+        r: Requisicao, staff: bool, nomes: dict[str, str], fotos: dict[str, str | None]
+    ) -> dict[str, Any]:
+        """Nome e foto de quem autorizou/registrou. Solicitante: só se o autor é ele mesmo."""
+        saida: dict[str, Any] = {}
+        for campo in CAMPOS_ATORES:
+            ator = r.get(campo) or ""
+            if staff or (ator and ator == r.get("usuario_id")):
+                saida[f"{campo}_nome"] = nomes.get(ator)
+                saida[f"{campo}_foto_url"] = fotos.get(ator)
+        return saida
 
     # -- leitura (anti-IDOR) --------------------------------------------------------
     def obter(self, perfil: Perfil, requisicao_id: str) -> Requisicao:

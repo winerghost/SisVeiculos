@@ -37,6 +37,23 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "Exige segundo fator (TOTP) no login de administradores e autorizadores.",
         (),
     ),
+    "relatorio_email": (
+        "Relatórios por e-mail",
+        "Permite enviar relatórios (CSV ou XLSX) por e-mail. Exige o servidor de e-mail "
+        "configurado no ambiente do sistema.",
+        (),
+    ),
+    "relatorio_whatsapp": (
+        "Relatórios por WhatsApp",
+        "Permite compartilhar o arquivo do relatório pelo WhatsApp (pelo próprio aparelho).",
+        (),
+    ),
+    "notificacao_email_criticos": (
+        "E-mail para notificações críticas",
+        "Envia um aviso genérico por e-mail quando houver uma notificação crítica (sem dados da "
+        "requisição). Exige o servidor de e-mail configurado no ambiente do sistema.",
+        (),
+    ),
 }
 ROTULOS_RECURSOS = {k: v[0] for k, v in CATALOGO.items()}
 

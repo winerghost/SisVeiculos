@@ -114,6 +114,20 @@ class DependenciaRecurso(ErroApi):
     status, codigo = 409, "dependencia_recurso"
 
 
+class RelatorioGrande(ErroApi):
+    """Relatório acima do limite de linhas: o usuário precisa estreitar o filtro."""
+
+    status, codigo = 422, "relatorio_muito_grande"
+
+
+class DestinatarioInvalido(ErroApi):
+    status, codigo = 422, "destinatario_invalido"
+
+
+class CotaEnvioExcedida(ErroApi):
+    status, codigo = 429, "cota_envio_excedida"
+
+
 class SistemaOcupado(ErroApi):
     """Lock do banco (55P03) ou deadlock (40P01) persistente após as novas tentativas."""
 

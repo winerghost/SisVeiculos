@@ -37,6 +37,9 @@ def test_token_valido_carrega_role_do_banco(client, repo, auth):  # type: ignore
         "abastecimento_manutencao": False,
         "checklist": False,
         "mfa": False,
+        "relatorio_email": False,
+        "relatorio_whatsapp": False,
+        "notificacao_email_criticos": False,
     }
 
 

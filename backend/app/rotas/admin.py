@@ -15,6 +15,7 @@ from app.errors import ErroApi, RequisicaoInvalida, SemPermissao
 from app.extensions import deps, limiter
 from app.services.acessos import ServicoAcessos
 from app.services.admin_configuracoes import ServicoConfiguracoes
+from app.services.admin_ia import ServicoIAAdmin
 from app.services.admin_usuarios import ServicoUsuarios
 from app.services.admin_veiculos import ServicoVeiculosAdmin
 from app.services.convites import ServicoConvites
@@ -221,3 +222,22 @@ def atualizar_configuracoes() -> Any:
             g.perfil, _corpo(), segundo_fator=tem_segundo_fator(g.claims)
         )
     )
+
+
+# ------------------------------------------------------------------------- IA (configurações)
+def _ia_admin() -> ServicoIAAdmin:
+    ia = deps().ia
+    if ia is None:
+        raise ErroApi("Configuração de IA indisponível.", "indisponivel", 503)
+    return ServicoIAAdmin(ia)
+
+
+@admin.get("/ia")
+def obter_ia() -> Any:
+    return jsonify(_ia_admin().obter(g.perfil))
+
+
+@admin.put("/ia")
+@limiter.limit(_limite_escrita)
+def atualizar_ia() -> Any:
+    return jsonify(_ia_admin().atualizar(g.perfil, _corpo()))

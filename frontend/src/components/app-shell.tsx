@@ -3,13 +3,23 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronLeft, Clock, ListChecks, LogOut, Settings, ShieldCheck } from 'lucide-react';
+import {
+  BarChart3,
+  ChevronLeft,
+  Clock,
+  FileText,
+  ListChecks,
+  LogOut,
+  Settings,
+  ShieldCheck,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Alerta } from '@/components/ui/alert';
 import { Avatar } from '@/components/avatar';
 import { TelaMfa } from '@/components/tela-mfa';
+import { SinoNotificacoes } from '@/components/sino-notificacoes';
 
 function Carregando() {
   return (
@@ -41,7 +51,7 @@ export function AppShell({
   voltarPara?: string;
   children: React.ReactNode;
 }) {
-  const { estado, eu, aviso, sair, recarregar } = useAuth();
+  const { estado, eu, paineis, relatorios, aviso, sair, recarregar } = useAuth();
   const router = useRouter();
   const caminho = usePathname();
 
@@ -73,6 +83,14 @@ export function AppShell({
   if (permissoes.has('registrar_chegada')) {
     itens.push({ href: '/viagem', rotulo: 'Viagem', icone: <Clock aria-hidden /> });
   }
+  // Visível só se GET /api/dashboards respondeu com ao menos um painel.
+  if (paineis && paineis.length > 0) {
+    itens.push({ href: '/dashboards', rotulo: 'Dashboards', icone: <BarChart3 aria-hidden /> });
+  }
+  // Visível só se GET /api/relatorios respondeu (o servidor filtra o catálogo por perfil).
+  if (relatorios && relatorios.relatorios.length > 0) {
+    itens.push({ href: '/relatorios', rotulo: 'Relatórios', icone: <FileText aria-hidden /> });
+  }
   if (permissoes.has('administrar')) {
     itens.push({ href: '/admin', rotulo: 'Admin', icone: <Settings aria-hidden /> });
   }
@@ -88,7 +106,8 @@ export function AppShell({
           >
             <ChevronLeft aria-hidden />
           </Link>
-          <h1 className="text-2xl font-semibold">{titulo}</h1>
+          <h1 className="min-w-0 flex-1 text-2xl font-semibold">{titulo}</h1>
+          <SinoNotificacoes />
         </header>
         <main className="flex-1 px-5 pt-3 pb-8">{children}</main>
       </div>
@@ -108,7 +127,8 @@ export function AppShell({
           ) : null}
           <h1 className="mt-1 text-3xl font-semibold">{titulo}</h1>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
+          <SinoNotificacoes />
           <Link
             href="/seguranca"
             className="flex size-11 items-center justify-center rounded-full"
@@ -147,7 +167,8 @@ export function AppShell({
               href={i.href}
               aria-current={ativo ? 'page' : undefined}
               className={cn(
-                'flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 text-sm font-medium [&_svg]:size-6',
+                'flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 font-medium [&_svg]:size-6',
+                itens.length > 5 ? 'text-[0.6875rem] tracking-tight' : 'text-sm',
                 ativo ? 'font-semibold text-primaria' : 'text-texto-2',
               )}
             >

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from flask import Flask, current_app, g, request
 from flask_limiter import Limiter
@@ -15,6 +16,9 @@ from app.repositorios.armazenamento_avatares import ArmazenamentoAvatares
 from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
 from app.services.registro_acessos import RegistradorAcessos
+
+if TYPE_CHECKING:
+    from app.ia.servico import ServicoIA
 
 
 def ip_cliente() -> str:
@@ -53,6 +57,7 @@ class Dependencias:
     armazenamento_avatares: ArmazenamentoAvatares | None = None
     notificador: Notificador = field(default_factory=NotificadorNulo)
     registrador_acessos: RegistradorAcessos | None = None
+    ia: ServicoIA | None = None  # IA opcional; None = sem IA (sempre cai no texto padrão)
 
 
 def deps() -> Dependencias:

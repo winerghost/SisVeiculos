@@ -15,8 +15,10 @@ from app.errors import registrar_erros
 from app.extensions import Dependencias, limiter, registrar_deps
 from app.notificacoes import Notificador, criar_notificador
 from app.repositorios.armazenamento import Armazenamento
+from app.repositorios.armazenamento_avatares import ArmazenamentoAvatares
 from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
+from app.services.registro_acessos import RegistradorAcessos
 
 
 def create_app(
@@ -26,14 +28,25 @@ def create_app(
     verificador: VerificadorJWT | None = None,
     auth_admin: AuthAdmin | None = None,
     armazenamento: Armazenamento | None = None,
+    armazenamento_avatares: ArmazenamentoAvatares | None = None,
     notificador: Notificador | None = None,
+    registrador_acessos: RegistradorAcessos | None = None,
 ) -> Flask:
     """Dependências (`repo`, `verificador`, `auth_admin`, `armazenamento`) podem ser injetadas
     nos testes; senão vêm da config."""
     cfg = config or Config.from_env()
     logging.basicConfig(level=os.environ.get("LOG_LEVEL") or "INFO")
     # Em INFO estas bibliotecas registram URLs com UUID/e-mail em query string (LGPD).
-    for nome in ("httpx", "httpcore", "hpack", "postgrest", "gotrue", "supabase_auth", "werkzeug"):
+    for nome in (
+        "httpx",
+        "httpcore",
+        "hpack",
+        "postgrest",
+        "gotrue",
+        "supabase_auth",
+        "werkzeug",
+        "PIL",
+    ):
         logging.getLogger(nome).setLevel(logging.WARNING)
 
     if repo is None or verificador is None:
@@ -47,6 +60,12 @@ def create_app(
             from app.repositorios.armazenamento import SupabaseArmazenamento
 
             armazenamento = SupabaseArmazenamento(cfg.supabase_url, cfg.supabase_service_role_key)
+        if armazenamento_avatares is None:
+            from app.repositorios.armazenamento_avatares import SupabaseArmazenamentoAvatares
+
+            armazenamento_avatares = SupabaseArmazenamentoAvatares(
+                cfg.supabase_url, cfg.supabase_service_role_key
+            )
         if auth_admin is None:  # produção: mesma credencial service_role, só no backend
             auth_admin = SupabaseAuthAdmin(cfg.supabase_url, cfg.supabase_service_role_key)
     if verificador is None:
@@ -58,6 +77,10 @@ def create_app(
         notificador = criar_notificador(cfg.n8n_webhook_url, cfg.n8n_webhook_token)
     atexit.register(notificador.fechar)
 
+    if registrador_acessos is None:  # nos testes (testing=True) grava de forma síncrona
+        registrador_acessos = RegistradorAcessos(repo, assincrono=not cfg.testing)
+    atexit.register(registrador_acessos.fechar)
+
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = cfg.max_content_length
     app.config["TESTING"] = cfg.testing
@@ -68,7 +91,7 @@ def create_app(
         app,
         resources={r"/api/*": {"origins": cfg.cors_origins}},
         allow_headers=["Authorization", "Content-Type"],
-        methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         max_age=600,
     )
 
@@ -84,7 +107,9 @@ def create_app(
             verificador=verificador,
             auth_admin=auth_admin,
             armazenamento=armazenamento,
+            armazenamento_avatares=armazenamento_avatares,
             notificador=notificador,
+            registrador_acessos=registrador_acessos,
         ),
     )
     registrar_erros(app)

@@ -13,10 +13,13 @@ from flask import Blueprint, g, jsonify, request
 from app.auth.decoradores import autenticar, tem_segundo_fator
 from app.errors import ErroApi, RequisicaoInvalida, SemPermissao
 from app.extensions import deps, limiter
+from app.services.acessos import ServicoAcessos
 from app.services.admin_configuracoes import ServicoConfiguracoes
 from app.services.admin_usuarios import ServicoUsuarios
 from app.services.admin_veiculos import ServicoVeiculosAdmin
 from app.services.convites import ServicoConvites
+from app.services.foto_perfil import ServicoFotoPerfil
+from app.services.fotos_exibicao import FotosExibicao
 
 admin = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -50,7 +53,13 @@ def _auth_admin() -> Any:
 
 
 def _usuarios() -> ServicoUsuarios:
-    return ServicoUsuarios(deps().repo, _auth_admin())
+    d = deps()
+    return ServicoUsuarios(
+        d.repo,
+        _auth_admin(),
+        fotos=ServicoFotoPerfil(d.repo, d.armazenamento_avatares),
+        exibicao=FotosExibicao(d.repo, d.armazenamento_avatares),
+    )
 
 
 def _convites() -> ServicoConvites:
@@ -117,6 +126,13 @@ def desativar_usuario(usuario_id: str) -> Any:
     return jsonify(_usuarios().desativar(g.perfil, usuario_id))
 
 
+@admin.delete("/usuarios/<usuario_id>/foto")
+@limiter.limit(_limite_escrita)
+def remover_foto_usuario(usuario_id: str) -> Any:
+    """Remove a foto de perfil de um usuário (ator = admin do JWT; auditado pelo banco)."""
+    return jsonify(_usuarios().remover_foto(g.perfil, usuario_id))
+
+
 # ------------------------------------------------------------------------- convites
 @admin.get("/convites")
 def listar_convites() -> Any:
@@ -179,6 +195,14 @@ def ativar_veiculo(veiculo_id: str) -> Any:
 @limiter.limit(_limite_escrita)
 def desativar_veiculo(veiculo_id: str) -> Any:
     return jsonify(_veiculos().desativar(g.perfil, veiculo_id))
+
+
+# ------------------------------------------------------------------------- acessos
+@admin.get("/acessos")
+@limiter.limit(_limite_busca)
+def listar_acessos() -> Any:
+    """Histórico de logins (só admin; consulta auditada). Filtros validados no service."""
+    return jsonify(ServicoAcessos(deps().repo).listar(g.perfil, request.args.to_dict(flat=False)))
 
 
 # ------------------------------------------------------------------------- configurações

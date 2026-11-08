@@ -90,10 +90,15 @@ test('erro 409 da criação é exibido como veio', async ({ page }) => {
 test('manifest standalone com ícones maskable e service worker servidos', async ({ request }) => {
   const m = await (await request.get('/manifest.webmanifest')).json();
   expect(m.display).toBe('standalone');
-  const maskable = (m.icons as { sizes: string; purpose: string }[])
-    .filter((i) => i.purpose === 'maskable')
-    .map((i) => i.sizes);
-  expect(maskable).toEqual(['192x192', '512x512']);
+  const icones = m.icons as { src: string; sizes: string; purpose: string }[];
+  const maskable = icones.filter((i) => i.purpose === 'maskable');
+  expect(maskable.map((i) => i.sizes)).toEqual(['192x192', '512x512']);
+  // Maskable com arquivo próprio (safe zone), distinto dos ícones "any".
+  const any = icones.filter((i) => i.purpose === 'any').map((i) => i.src);
+  for (const i of maskable) {
+    expect(any).not.toContain(i.src);
+    expect((await request.get(i.src)).ok()).toBe(true);
+  }
   expect((await request.get('/sw.js')).ok()).toBe(true);
 });
 

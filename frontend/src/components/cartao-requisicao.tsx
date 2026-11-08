@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ACOES } from '@/lib/api';
 import { dataCurta, numero } from '@/lib/formato';
 import type { Acao, CampoAcao, CorpoAcao, Requisicao } from '@/lib/tipos';
+import { Avatar } from '@/components/avatar';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { FormularioChecklist } from '@/components/formulario-checklist';
 import { Button } from '@/components/ui/button';
@@ -169,9 +170,14 @@ export function CartaoRequisicao({
         className="block rounded-padrao"
       >
         <div className="flex items-start justify-between gap-3">
-          <p className="text-lg font-semibold">
-            {mostrarSolicitante ? req.nome_solicitante : dataCurta(req.hora_saida)}
-          </p>
+          {mostrarSolicitante ? (
+            <p className="flex min-w-0 items-center gap-2 text-lg font-semibold">
+              <Avatar nome={req.nome_solicitante} fotoUrl={req.solicitante_foto_url} decorativo />
+              <span className="min-w-0 break-words">{req.nome_solicitante}</span>
+            </p>
+          ) : (
+            <p className="text-lg font-semibold">{dataCurta(req.hora_saida)}</p>
+          )}
           <StatusChip status={req.status} />
         </div>
         {mostrarSolicitante ? (

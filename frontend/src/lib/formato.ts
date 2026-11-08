@@ -30,6 +30,34 @@ export function dataCurta(iso: string | null): string {
   return `${fmtData.format(d).slice(0, 5)} · ${fmtHora.format(d)}`;
 }
 
+/** "dd/mm/aaaa hh:mm" no fuso do sistema (sem "às"). */
+export function dataHoraNumerica(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${fmtData.format(d)} ${fmtHora.format(d)}`;
+}
+
+/** "Último acesso: dd/mm/aaaa hh:mm" ou "Nunca acessou" (null/ausente/ilegível). */
+export function rotuloUltimoAcesso(iso: string | null | undefined): string {
+  const t = dataHoraNumerica(iso);
+  return t ? `Último acesso: ${t}` : 'Nunca acessou';
+}
+
+/**
+ * Converte o valor de um input date ("aaaa-mm-dd") em ISO com fuso fixo, à meia-noite.
+ * Com `diaSeguinte`, devolve 00:00 do dia seguinte (limite exclusivo de um intervalo).
+ * Só montagem de texto; a API valida o intervalo.
+ */
+export function diaParaIso(dia: string, diaSeguinte = false): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dia);
+  if (!m) return '';
+  const [, a, mes, d] = m;
+  if (!diaSeguinte) return `${a}-${mes}-${d}T00:00:00${OFFSET}`;
+  const prox = new Date(Date.UTC(Number(a), Number(mes) - 1, Number(d) + 1));
+  return `${prox.getUTCFullYear()}-${dois(prox.getUTCMonth() + 1)}-${dois(prox.getUTCDate())}T00:00:00${OFFSET}`;
+}
+
 const fmtNumero = new Intl.NumberFormat('pt-BR');
 
 /** Número com separador de milhar pt-BR (ex.: 12.345). */

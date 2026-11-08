@@ -8,6 +8,8 @@ rodaria um teste que só faz sentido com as 28 migrations.
 Nada aqui foi aplicado em produção. Estado: escritas e testadas num Postgres descartável
 (144 testes), **ainda não revisadas pelo `revisor-seguranca`**.
 
+> **Aviso (foto de perfil):** a migration 27 pendente recria `ck_auditoria_acao`/`ck_auditoria_tabela`; ao reativar, ela DEVE repetir também `foto_perfil_alterada`, `foto_perfil_removida` e `perfil_fotos` (22 ações e 10 tabelas somadas) e ser renumerada depois da última migration ativa.
+
 ## Conteúdo
 
 - `migrations/20261107122500_abastecimento_manutencao_tabelas.sql`: tabelas imutáveis, anulações, RLS.

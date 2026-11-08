@@ -159,3 +159,56 @@ class Repositorio(Protocol):
         """Grava checklist e fotos numa transação (RPC). `fotos`: id, mime_type, tamanho_bytes
         (a posição é a ordem). Devolve o id do checklist."""
         ...
+
+    # -- histórico de acessos (migration 20261107122430; só via RPC, nunca SELECT direto) -----
+    def registrar_acesso_login(
+        self,
+        *,
+        usuario_id: str,
+        session_id: str,
+        ocorrido_em: str,
+        metodo: str | None,
+        aal: str | None,
+        ip_mascarado: str | None,
+        ua_familia: str | None,
+    ) -> bool:
+        """True se gravou, False se a sessão já estava registrada (idempotente). Qualquer falha
+        vira `FalhaRegistroAcesso(codigo)`, sem a mensagem do banco."""
+        ...
+
+    def listar_acessos_login(
+        self,
+        *,
+        usuario_id: str | None,
+        de: str | None,
+        ate: str | None,
+        limite: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        """{total, limite, offset, itens[]} (itens sem session_id; só `sessao_ref`)."""
+        ...
+
+    def ultimo_acesso_por_usuario(self, usuario_ids: list[str]) -> dict[str, str]:
+        """id -> instante do último acesso (ISO); quem nunca acessou não aparece. Máx. 100 ids."""
+        ...
+
+    # -- foto de perfil (migrations 25a e 25c; escrita só via RPC, leitura só de perfil_fotos) ---
+    def trocar_foto_perfil(
+        self, *, usuario_id: str, foto_id: str, mime: str, tamanho: int
+    ) -> str | None:
+        """RPC `trocar_foto_perfil`: registra a nova foto e marca a anterior como removida.
+        Devolve o caminho da foto ANTERIOR (None se não havia). `usuario_id` vem do JWT."""
+        ...
+
+    def remover_foto_perfil_por(self, *, usuario_id: str, ator_id: str) -> str | None:
+        """RPC `remover_foto_perfil_por`: remoção lógica; idempotente. `ator_id` = dono ou admin
+        ativo (senão AG022 vira SemPermissao). Devolve o caminho removido (None se não havia)."""
+        ...
+
+    def fotos_ativas(self, usuario_ids: list[str]) -> dict[str, str]:
+        """usuario_id -> caminho da foto ATIVA (removida_em nulo). Em lote, sem filtrar inativos."""
+        ...
+
+    def ids_ativos(self, usuario_ids: list[str]) -> set[str]:
+        """Subconjunto dos ids cuja conta (perfis.ativo) está ativa."""
+        ...

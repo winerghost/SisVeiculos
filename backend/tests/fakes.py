@@ -16,6 +16,7 @@ from app.errors import VeiculoOcupado
 from app.modelos import ESTADOS_ABERTOS, Configuracoes, Perfil, Requisicao
 from tests.fakes_admin import ANTES, AdminMemoria, erro_db
 from tests.fakes_checklist import ChecklistMemoria
+from tests.fakes_foto import FotoPerfilMemoria
 
 CARIMBOS = {
     "autorizada": "autorizado_em",
@@ -26,10 +27,11 @@ CARIMBOS = {
 }
 
 
-class RepoMemoria(AdminMemoria, ChecklistMemoria):
+class RepoMemoria(AdminMemoria, ChecklistMemoria, FotoPerfilMemoria):
     def __init__(self) -> None:
         self._init_admin()
         self._init_checklist()
+        self._init_foto()
         self.perfis: dict[str, Perfil] = {}
         self.veiculos: dict[str, dict[str, Any]] = {}
         self.requisicoes: dict[str, Requisicao] = {}

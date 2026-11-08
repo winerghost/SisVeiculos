@@ -10,6 +10,8 @@ from app.auth.decoradores import requer_auth
 from app.errors import RequisicaoInvalida
 from app.extensions import chave_usuario, deps, limiter
 from app.services.checklist import ServicoChecklist
+from app.services.foto_perfil import ServicoFotoPerfil
+from app.services.fotos_exibicao import FotosExibicao
 from app.services.perfis import montar_eu
 from app.services.requisicoes import ServicoRequisicoes
 from app.services.veiculos import ServicoVeiculos
@@ -26,6 +28,18 @@ def _req() -> ServicoRequisicoes:
         deps().repo,
         permitir_autoautorizacao=deps().config.permitir_autoautorizacao,
         notificador=deps().notificador,
+        fotos=_exibicao(),
+    )
+
+
+def _exibicao() -> FotosExibicao:
+    return FotosExibicao(deps().repo, deps().armazenamento_avatares)
+
+
+def _foto_perfil() -> ServicoFotoPerfil:
+    d = deps()
+    return ServicoFotoPerfil(
+        d.repo, d.armazenamento_avatares, max_emissoes=d.config.max_emissoes_foto_perfil
     )
 
 
@@ -59,7 +73,41 @@ def saude() -> Any:
 @api.get("/eu")
 @requer_auth()
 def eu() -> Any:
-    return jsonify(montar_eu(g.perfil, deps().repo.ler_configuracoes()))
+    foto_url = _exibicao().urls([g.perfil.id], ativos={g.perfil.id}).get(g.perfil.id)
+    return jsonify(montar_eu(g.perfil, deps().repo.ler_configuracoes(), foto_url))
+
+
+# -- Foto de perfil (sempre ligada; regra em services/foto_perfil.py) ----------------------
+def _limite_foto() -> str:
+    return deps().config.limite_foto_perfil
+
+
+def _limite_foto_ip() -> str:
+    return deps().config.limite_foto_perfil_ip
+
+
+# O dono é sempre o usuário do JWT (g.perfil): nenhuma destas rotas aceita id de usuário.
+@api.post("/eu/foto/upload-url")
+@requer_auth()
+@limiter.limit(_limite_foto_ip)
+@limiter.limit(_limite_foto, key_func=chave_usuario)
+def solicitar_upload_foto_perfil() -> Any:
+    return jsonify(_foto_perfil().solicitar_upload(g.perfil, request.get_json(silent=True))), 201
+
+
+@api.post("/eu/foto")
+@requer_auth()
+@limiter.limit(_limite_foto_ip)
+@limiter.limit(_limite_foto, key_func=chave_usuario)
+def registrar_foto_perfil() -> Any:
+    return jsonify(_foto_perfil().registrar(g.perfil, request.get_json(silent=True)))
+
+
+@api.delete("/eu/foto")
+@requer_auth()
+@limiter.limit(_limite_escrita)
+def remover_foto_perfil() -> Any:
+    return jsonify(_foto_perfil().remover(g.perfil))
 
 
 @api.get("/veiculos")

@@ -1,9 +1,24 @@
-"""Helpers compartilhados pelos testes de banco (somente banco local/dev).
+"""Helpers compartilhados pelos testes de banco (somente banco local/dev DESCARTAVEL).
 
-A conexao vem de TEST_DATABASE_URL (ex.: a URL do `supabase start`). Como as
-migrations proibem DELETE fisico e auditoria e append-only, os testes NAO limpam
-o que criam: use um banco descartavel (`supabase db reset`). Todos os dados usam
-IDs/e-mails unicos, entao repetir a suite nao gera colisao.
+A conexao vem de TEST_DATABASE_URL (ex.: a URL do `supabase start`). Como as migrations proibem
+DELETE fisico e auditoria e append-only, os testes NAO limpam o que criam: use um banco descartavel
+(`supabase db reset`). Todos os dados usam IDs/e-mails unicos, entao repetir a suite nao gera colisao.
+
+GUARDA DE BANCO DESCARTAVEL (os testes gravam e nunca apagam; em banco real poluiriam dados e a
+auditoria append-only). O DSN so e aceito (h.DSN) quando TODAS as condicoes valem; senao h.DSN fica
+None, os testes sao PULADOS e um aviso explica o motivo (sem repassar detalhes de erro do banco):
+  1. TEST_DATABASE_URL definida;
+  2. confirmacao positiva TEST_DATABASE_CONFIRM=descartavel (segunda chave, sempre exigida);
+  3. host local EXPLICITO (localhost, 127.0.0.1, ::1 ou socket '/...'); DSN com hostaddr, service,
+     passfile ou lista de hosts e recusado; host vazio so vale sem PGHOST/PGHOSTADDR/PGSERVICE no
+     ambiente; PGHOSTADDR/PGSERVICE no ambiente sempre recusam. TEST_DATABASE_ALLOW_REMOTE=1 e
+     excecao explicita para o host e NAO dispensa as demais condicoes;
+  4. current_database() com nome de teste (token test/teste/tmp/dev/local/descartavel separado por
+     _ ou -; o banco "postgres" so vale em host local);
+  5. MARCADOR POSITIVO no proprio banco: comment on database <nome> is 'sisveiculos:descartavel'.
+     O `supabase db reset` recria o banco e apaga o marcador: crie-o DEPOIS do reset e antes do pytest.
+Risco residual: um tunel/porta-forward local para banco real passa nas condicoes 3 e 4; so o marcador
+(que ninguem cria em banco real) e a confirmacao protegem. Nunca crie o marcador em banco real.
 """
 
 from __future__ import annotations
@@ -11,19 +26,82 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 import uuid
+import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 
-DSN = os.environ.get("TEST_DATABASE_URL")
+CONFIRMACAO_ESPERADA = "descartavel"
+MARCADOR_BANCO = "sisveiculos:descartavel"
+_NOME_DE_TESTE = re.compile(r"(^|[_-])(test|teste|tmp|dev|local|descartavel)([_-]|$)", re.IGNORECASE)
+_HOSTS_LOCAIS = ("localhost", "127.0.0.1", "::1")
+
+
+def _host_local(dsn: str) -> bool:
+    if os.environ.get("PGHOSTADDR") or os.environ.get("PGSERVICE"):
+        return False
+    try:
+        d = conninfo_to_dict(dsn)
+    except psycopg.Error:
+        return False
+    if any(d.get(k) for k in ("hostaddr", "service", "passfile")):
+        return False
+    host = d.get("host") or ""
+    if not host:
+        return not os.environ.get("PGHOST")
+    return "," not in host and (host.startswith("/") or host in _HOSTS_LOCAIS)
+
+
+def _avaliar_dsn() -> tuple[str | None, str | None]:
+    """(dsn aceito, motivo do pulo). Nunca inclui o DSN nem a mensagem de erro do banco."""
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        return None, "TEST_DATABASE_URL nao definida"
+    if os.environ.get("TEST_DATABASE_CONFIRM") != CONFIRMACAO_ESPERADA:
+        return None, (
+            "TEST_DATABASE_CONFIRM=descartavel nao definida: confirme que o banco e DESCARTAVEL "
+            "(os testes gravam e nao apagam)"
+        )
+    local = _host_local(url)
+    if not local and os.environ.get("TEST_DATABASE_ALLOW_REMOTE") != "1":
+        return None, "host do DSN nao e local explicito (TEST_DATABASE_ALLOW_REMOTE=1 + confirmacao forca)"
+    try:
+        with psycopg.connect(url, connect_timeout=10) as c:
+            row = c.execute("select current_database()").fetchone()
+            nome = str(row[0]) if row else ""
+            if not (_NOME_DE_TESTE.search(nome) or (local and nome == "postgres")):
+                return None, "current_database() nao parece banco de teste"
+            marca = c.execute(
+                "select shobj_description(oid, 'pg_database') = %s from pg_database "
+                "where datname = current_database()",
+                (MARCADOR_BANCO,),
+            ).fetchone()
+    except psycopg.Error:
+        return None, "banco inacessivel"
+    if not (marca and marca[0]):
+        return None, (
+            f"marcador ausente no banco: rode (so em banco descartavel, depois do db reset) "
+            f"comment on database <nome> is '{MARCADOR_BANCO}'"
+        )
+    return url, None
+
+
+DSN, MOTIVO_PULO = _avaliar_dsn()
+if DSN is None:
+    warnings.warn(
+        f"Testes de banco PULADOS: {MOTIVO_PULO}. Ver docs/deploy-banco.md, 'Testes de banco'.",
+        stacklevel=1,
+    )
 
 
 def conectar() -> "psycopg.Connection":
-    assert DSN, "TEST_DATABASE_URL nao definida"
+    assert DSN, f"banco de teste nao liberado: {MOTIVO_PULO}"
     return psycopg.connect(DSN, autocommit=True)
 
 
@@ -143,7 +221,7 @@ def como(papel: str, uid: uuid.UUID | None = None) -> Iterator["psycopg.Connecti
     que se espera falhar (apos erro a transacao fica abortada).
     """
     assert papel in PAPEIS_API, papel
-    assert DSN, "TEST_DATABASE_URL nao definida"
+    assert DSN, f"banco de teste nao liberado: {MOTIVO_PULO}"
     with psycopg.connect(DSN) as conn:
         conn.execute(f"set local role {papel}")
         if uid is not None:

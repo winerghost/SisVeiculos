@@ -6,6 +6,8 @@ dependência de recursos) e grava a auditoria como o banco grava. Os erros passa
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import re
 import threading
 import uuid
@@ -16,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from postgrest.exceptions import APIError
 
-from app.errors import ContaExistente, ErroInterno
+from app.errors import ContaExistente, ErroInterno, FalhaRegistroAcesso
 from app.modelos import Configuracoes, Perfil
 from app.repositorios.auth_admin import ContaAuth, IndiceEmails
 from app.repositorios.supabase_repo import traduzir_erro_banco
@@ -29,6 +31,7 @@ _COLUNAS_CONVITE = ["id", "email", "role", "unidade", "criado_por", "criado_em"]
     "revogado_em",
     "revogado_por",
 ]
+_UA_DB = re.compile(r"[A-Za-z][A-Za-z .+-]{0,23}/[A-Za-z][A-Za-z .+-]{0,23}")
 ANTES = "2026-01-01T00:00:00+00:00"
 
 
@@ -54,6 +57,11 @@ class AdminMemoria:
         self.eventos: list[dict[str, Any]] = []  # auditoria administrativa, como o banco grava
         self.contas_auth: dict[str, dict[str, Any]] = {}
         self._adm = threading.RLock()  # o advisory lock exclusivo do banco
+        self.acessos: dict[str, dict[str, Any]] = {}  # session_id -> linha (como a tabela)
+        self.falha_registro: str | None = None  # injeta um código de erro (ex.: "AG019")
+        self.chamadas_registro = 0
+        self.falha_listagem: Exception | None = None
+        self.falha_auditoria: Exception | None = None
 
     # -- helpers ------------------------------------------------------------------------
     def _audit(
@@ -356,9 +364,102 @@ class AdminMemoria:
     def registrar_auditoria(
         self, *, tabela: str, registro_id: str | None, ator_id: str, detalhes: dict[str, Any]
     ) -> None:
+        if self.falha_auditoria is not None:
+            raise self.falha_auditoria
         if ator_id not in self.perfis:
             raise erro_db("AG002")
         self._audit(tabela, registro_id, "acao_administrativa", ator_id, detalhes=detalhes)
+
+    # -- histórico de acessos: emula as RPCs da migration 20261107122430 --------------------
+    def registrar_acesso_login(
+        self,
+        *,
+        usuario_id: str,
+        session_id: str,
+        ocorrido_em: str,
+        metodo: str | None,
+        aal: str | None,
+        ip_mascarado: str | None,
+        ua_familia: str | None,
+    ) -> bool:
+        self.chamadas_registro += 1
+        if self.falha_registro is not None:
+            raise FalhaRegistroAcesso(self.falha_registro)
+        if metodo not in {None, "password", "totp", "outro"} or aal not in {None, "aal1", "aal2"}:
+            raise FalhaRegistroAcesso("AG020")
+        if ua_familia is not None and not _UA_DB.fullmatch(ua_familia):
+            raise FalhaRegistroAcesso("AG020")
+        if ip_mascarado is not None:
+            rede = ipaddress.ip_network(ip_mascarado, strict=True)  # IP completo = erro
+            if rede.prefixlen > (24 if rede.version == 4 else 48):
+                raise FalhaRegistroAcesso("AG020")
+        p = self.perfis.get(usuario_id)
+        if p is None or not p.ativo:
+            raise FalhaRegistroAcesso("AG019")
+        with self._adm:
+            if session_id in self.acessos:
+                return False
+            self.acessos[session_id] = {
+                "id": str(uuid.uuid4()),
+                "usuario_id": usuario_id,
+                "session_id": session_id,
+                "ocorrido_em": ocorrido_em,
+                "metodo": metodo,
+                "aal": aal,
+                "ip_mascarado": ip_mascarado,
+                "ua_familia": ua_familia,
+            }
+            return True
+
+    def listar_acessos_login(
+        self,
+        *,
+        usuario_id: str | None,
+        de: str | None,
+        ate: str | None,
+        limite: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        self.ultima_listagem = {"usuario_id": usuario_id, "de": de, "ate": ate}
+        if self.falha_listagem is not None:
+            raise self.falha_listagem
+        rows = [
+            a
+            for a in self.acessos.values()
+            if (usuario_id is None or a["usuario_id"] == usuario_id)
+            and (
+                de is None or datetime.fromisoformat(a["ocorrido_em"]) >= datetime.fromisoformat(de)
+            )
+            and (
+                ate is None
+                or datetime.fromisoformat(a["ocorrido_em"]) < datetime.fromisoformat(ate)
+            )
+        ]
+        rows.sort(key=lambda a: (a["ocorrido_em"], a["id"]), reverse=True)
+        itens = [
+            {
+                "id": a["id"],
+                "usuario_id": a["usuario_id"],
+                "nome": self.perfis[a["usuario_id"]].nome,
+                "ocorrido_em": a["ocorrido_em"],
+                "metodo": a["metodo"],
+                "aal": a["aal"],
+                "ip_mascarado": a["ip_mascarado"],
+                "ua_familia": a["ua_familia"],
+                "sessao_ref": hashlib.sha256(a["session_id"].encode()).hexdigest()[:8],
+            }
+            for a in rows[offset : offset + limite]
+        ]
+        return {"total": len(rows), "limite": limite, "offset": offset, "itens": itens}
+
+    def ultimo_acesso_por_usuario(self, usuario_ids: list[str]) -> dict[str, str]:
+        if len(usuario_ids) > 100:
+            raise erro_db("AG020")
+        out: dict[str, str] = {}
+        for a in self.acessos.values():
+            if a["usuario_id"] in usuario_ids:
+                out[a["usuario_id"]] = max(a["ocorrido_em"], out.get(a["usuario_id"], ""))
+        return out
 
 
 class AuthAdminMemoria:

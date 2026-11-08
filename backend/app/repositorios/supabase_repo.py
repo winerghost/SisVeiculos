@@ -27,6 +27,7 @@ from app.errors import (
     DependenciaRecurso,
     ErroApi,
     ErroInterno,
+    FalhaRegistroAcesso,
     PlacaDuplicada,
     RequisicaoInvalida,
     SemPermissao,
@@ -70,9 +71,22 @@ COLUNAS_VEICULO_ADMIN = "id,descricao,placa,ativo,criado_em,atualizado_em"
 _SET_PERFIL = frozenset(COLUNAS_PERFIL_ADMIN.split(","))
 _SET_CONVITE = frozenset(COLUNAS_CONVITE.split(","))
 _SET_VEICULO = frozenset(COLUNAS_VEICULO_ADMIN.split(","))
+_SET_ACESSO = frozenset(
+    [
+        "id",
+        "usuario_id",
+        "nome",
+        "ocorrido_em",
+        "metodo",
+        "aal",
+        "ip_mascarado",
+        "ua_familia",
+        "sessao_ref",
+    ]
+)
 
 # Contrato da migration 15: lock_timeout curto no banco + nova tentativa em lock/deadlock.
-CODIGOS_LOCK = frozenset({"55P03", "40P01"})
+CODIGOS_LOCK = frozenset({"55P03", "40P01", "40001"})  # lock, deadlock, serialização
 ESPERAS_LOCK = (0.2, 0.5)  # segundos entre as 3 tentativas
 _dormir = time.sleep  # substituível nos testes
 
@@ -82,6 +96,7 @@ MSG_OCUPADO_ADMIN = "O sistema está processando outra alteração administrativ
 # abaixo do gunicorn --timeout 30. O timeout HTTP do PostgREST (20 s) fica acima desse orçamento
 # por tentativa e abaixo do gunicorn.
 TIMEOUT_POSTGREST = 20
+LOTE_IN = 50  # ids por consulta `in (...)` (UUIDs longos: evita URL gigante)
 
 MSG_KM_OBRIGATORIO = (
     "Informe a quilometragem: km_saida ao registrar a saída e km_chegada ao registrar a "
@@ -102,6 +117,9 @@ MSG_CHECKLIST_DUPLICADO = "Já existe checklist registrado para este momento."
 MSG_CHECKLIST_INVALIDO = "Os dados do checklist não são válidos."
 MSG_CHECKLIST_MAX_FOTOS = "O checklist aceita no máximo 6 fotos."
 
+MSG_FOTO_INVALIDA = "A foto enviada não é válida."
+MSG_FOTO_REPETIDA = "Esta foto já foi registrada. Envie a foto novamente."
+
 MSG_EMAIL = "Informe um e-mail institucional (@agu.gov.br) ou Gmail."
 
 
@@ -117,6 +135,8 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
     if codigo == "23505" and INDICE_VEICULO_ABERTO in texto:
         return VeiculoOcupado(MSG_VEICULO_OCUPADO)
     if codigo == "23505":
+        if "perfil_fotos" in texto or "uq_perfil_fotos_ativa" in texto:  # PK repetida (p_id)
+            return Conflito(MSG_FOTO_REPETIDA, "foto_ja_registrada")
         if "uq_checklists_requisicao_momento" in texto:
             return Conflito(MSG_CHECKLIST_DUPLICADO, "checklist_ja_registrado")
         if "checklist_fotos" in texto:  # uq_checklist_fotos_posicao ou PK (foto repetida)
@@ -131,6 +151,12 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         if "perfis_pkey" in texto:
             return Conflito("Esta conta já possui perfil de acesso.", "perfil_existente")
         return Conflito("Já existe um registro com estes dados.")
+    if codigo == "AG017":  # foto: usuário inexistente ou inativo (mensagem fixa)
+        return SemPermissao("Conta sem acesso ao sistema.", codigo="conta_inativa")
+    if codigo == "AG022":  # remoção de foto alheia por quem não é admin ativo
+        return SemPermissao("Você não tem permissão para esta ação.")
+    if codigo == "23514" and "ck_perfil_fotos_" in texto:
+        return RequisicaoInvalida(MSG_FOTO_INVALIDA, "foto_invalida")
     if codigo == "AG012":
         return RequisicaoInvalida(MSG_KM_OBRIGATORIO, "km_obrigatorio")
     if codigo == "AG004" and "uilometragem" in texto:
@@ -662,3 +688,137 @@ class SupabaseRepositorio:
             repetir_lock=True,
             admin=True,
         )
+
+    # -- histórico de acessos --------------------------------------------------------------
+    def registrar_acesso_login(
+        self,
+        *,
+        usuario_id: str,
+        session_id: str,
+        ocorrido_em: str,
+        metodo: str | None,
+        aal: str | None,
+        ip_mascarado: str | None,
+        ua_familia: str | None,
+    ) -> bool:
+        try:
+            res = self._c.rpc(
+                "registrar_acesso_login",
+                {
+                    "p_usuario": usuario_id,
+                    "p_session": session_id,
+                    "p_ocorrido_em": ocorrido_em,
+                    "p_metodo": metodo,
+                    "p_aal": aal,
+                    "p_ip": ip_mascarado,
+                    "p_ua": ua_familia,
+                },
+            ).execute()
+        except APIError as e:
+            # Só o código: a mensagem/detalhe do banco pode repetir dado pessoal.
+            raise FalhaRegistroAcesso(str(getattr(e, "code", "") or "desconhecido")[:16]) from None
+        except Exception as e:  # rede, timeout etc.
+            raise FalhaRegistroAcesso(type(e).__name__) from None
+        return res.data is True
+
+    def listar_acessos_login(
+        self,
+        *,
+        usuario_id: str | None,
+        de: str | None,
+        ate: str | None,
+        limite: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        res = _exec(
+            lambda: self._c.rpc(
+                "listar_acessos_login",
+                {
+                    "p_usuario": usuario_id,
+                    "p_de": de,
+                    "p_ate": ate,
+                    "p_limite": limite,
+                    "p_offset": offset,
+                },
+            ).execute(),
+            admin=True,
+        )
+        dados = res.data
+        if not isinstance(dados, dict) or not isinstance(dados.get("itens"), list):
+            log.error("erro_banco resposta_acessos_invalida")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return {
+            "total": int(dados.get("total") or 0),
+            "limite": int(dados.get("limite") or limite),
+            "offset": int(dados.get("offset") or 0),
+            # Lista fechada: nada além disso (nem session_id) sai do repositório.
+            "itens": [_so(i, _SET_ACESSO) for i in dados["itens"] if isinstance(i, dict)],
+        }
+
+    def ultimo_acesso_por_usuario(self, usuario_ids: list[str]) -> dict[str, str]:
+        if not usuario_ids:
+            return {}
+        res = _exec(
+            lambda: self._c.rpc("ultimo_acesso_por_usuario", {"p_usuarios": usuario_ids}).execute(),
+            admin=True,
+        )
+        linhas = res.data if isinstance(res.data, list) else []
+        return {
+            str(r["usuario_id"]): str(r["ultimo_acesso_em"])
+            for r in linhas
+            if isinstance(r, dict) and r.get("usuario_id") and r.get("ultimo_acesso_em")
+        }
+
+    # -- foto de perfil (migrations 25a e 25c) ------------------------------------------------
+    @staticmethod
+    def _caminho_anterior(data: Any) -> str | None:
+        """RPCs `returns table (id_anterior, caminho_anterior)`: lista de 1 linha (NULLs = nada)."""
+        linha = data[0] if isinstance(data, list) and data else data
+        if not isinstance(linha, dict):
+            return None
+        caminho = linha.get("caminho_anterior")
+        return str(caminho) if caminho else None
+
+    def trocar_foto_perfil(
+        self, *, usuario_id: str, foto_id: str, mime: str, tamanho: int
+    ) -> str | None:
+        params = {"p_usuario": usuario_id, "p_id": foto_id, "p_mime": mime, "p_tamanho": tamanho}
+        res = _exec(lambda: self._c.rpc("trocar_foto_perfil", params).execute(), repetir_lock=True)
+        return self._caminho_anterior(res.data)
+
+    def remover_foto_perfil_por(self, *, usuario_id: str, ator_id: str) -> str | None:
+        params = {"p_usuario": usuario_id, "p_ator": ator_id}
+        res = _exec(
+            lambda: self._c.rpc("remover_foto_perfil_por", params).execute(),
+            repetir_lock=True,
+            admin=ator_id != usuario_id,
+        )
+        return self._caminho_anterior(res.data)
+
+    def fotos_ativas(self, usuario_ids: list[str]) -> dict[str, str]:
+        saida: dict[str, str] = {}
+        for i in range(0, len(usuario_ids), LOTE_IN):  # URL curta: ids em blocos
+            bloco = usuario_ids[i : i + LOTE_IN]
+            res = _exec(
+                lambda b=bloco: self._c.table("perfil_fotos")  # type: ignore[misc]
+                .select("usuario_id,caminho")
+                .in_("usuario_id", b)
+                .is_("removida_em", "null")
+                .execute()
+            )
+            saida.update({str(r["usuario_id"]): str(r["caminho"]) for r in res.data})
+        return saida
+
+    def ids_ativos(self, usuario_ids: list[str]) -> set[str]:
+        saida: set[str] = set()
+        for i in range(0, len(usuario_ids), LOTE_IN):
+            bloco = usuario_ids[i : i + LOTE_IN]
+            res = _exec(
+                lambda b=bloco: self._c.table("perfis")  # type: ignore[misc]
+                .select("id")
+                .in_("id", b)
+                .eq("ativo", True)
+                .execute()
+            )
+            saida.update(str(r["id"]) for r in res.data)
+        return saida

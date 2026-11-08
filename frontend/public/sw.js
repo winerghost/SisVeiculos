@@ -7,7 +7,7 @@
  * - Navegação (HTML estático, sem dados de usuário): network-first com cópia para uso offline.
  * - Requisições para outras origens (Supabase) não são interceptadas.
  */
-const VERSAO = 'v2';
+const VERSAO = 'v3';
 const CACHE_ASSETS = `assets-${VERSAO}`;
 const CACHE_PAGINAS = `paginas-${VERSAO}`;
 
@@ -32,6 +32,7 @@ const ehAssetVersionado = (url) => url.pathname.startsWith('/_next/static/');
 const ehAssetRevalidavel = (url) =>
   url.pathname.startsWith('/icons/') ||
   url.pathname === '/logo-agu.webp' ||
+  url.pathname === '/favicon.ico' ||
   url.pathname === '/manifest.webmanifest';
 
 self.addEventListener('fetch', (event) => {

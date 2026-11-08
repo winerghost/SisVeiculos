@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Alerta } from '@/components/ui/alert';
+import { Avatar } from '@/components/avatar';
 import { TelaMfa } from '@/components/tela-mfa';
 
 function Carregando() {
@@ -110,11 +111,16 @@ export function AppShell({
         <div className="flex items-center gap-1">
           <Link
             href="/seguranca"
-            className="flex size-11 items-center justify-center rounded-full bg-primaria text-lg font-semibold text-white"
+            className="flex size-11 items-center justify-center rounded-full"
             title="Segurança da conta"
             aria-label={`Conta: ${eu.nome} (segurança)`}
           >
-            {eu.nome.charAt(0).toUpperCase()}
+            <Avatar
+              nome={eu.nome}
+              fotoUrl={eu.foto_url}
+              decorativo
+              className="bg-primaria text-white"
+            />
           </Link>
           <button
             type="button"

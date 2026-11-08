@@ -21,6 +21,7 @@ from app.errors import (
 from app.modelos import Configuracoes, Perfil, Requisicao
 from app.notificacoes import Notificador, NotificadorNulo
 from app.repositorios.base import Repositorio
+from app.services.fotos_exibicao import FotosExibicao
 from app.services.validacao import validar_criacao, validar_km, validar_uuid
 
 STAFF = frozenset({"autorizador", "admin"})
@@ -132,8 +133,10 @@ class ServicoRequisicoes:
         *,
         permitir_autoautorizacao: bool = False,
         notificador: Notificador | None = None,
+        fotos: FotosExibicao | None = None,
     ) -> None:
         self._repo = repo
+        self._fotos = fotos
         self._notificador: Notificador = notificador or NotificadorNulo()
         self._autoauto = permitir_autoautorizacao
 
@@ -203,6 +206,9 @@ class ServicoRequisicoes:
         ids_veiculos = {r["veiculo_id"] for r in reqs if r.get("veiculo_id")}
         nomes = self._repo.nomes_perfis(ids_perfis)
         veiculos = self._repo.descricoes_veiculos(ids_veiculos)
+        # Fotos só de quem aparece nestas requisições (já filtradas por dono/role); inativo e
+        # falha do Storage resultam em null, nunca em erro.
+        fotos = self._fotos.urls(ids_perfis) if self._fotos is not None else {}
         config = self._repo.ler_configuracoes()
         checklists = (
             self._repo.momentos_checklist({r["id"] for r in reqs}) if config.checklist else {}
@@ -221,6 +227,10 @@ class ServicoRequisicoes:
                 "saida_registrada_por_nome": nomes.get(r.get("saida_registrada_por") or ""),
                 "chegada_registrada_por_nome": nomes.get(r.get("chegada_registrada_por") or ""),
                 "veiculo_descricao": veiculos.get(r.get("veiculo_id") or ""),
+                "solicitante_foto_url": fotos.get(r.get("usuario_id") or ""),
+                "autorizado_por_foto_url": fotos.get(r.get("autorizado_por") or ""),
+                "saida_registrada_por_foto_url": fotos.get(r.get("saida_registrada_por") or ""),
+                "chegada_registrada_por_foto_url": fotos.get(r.get("chegada_registrada_por") or ""),
             }
             for r in reqs
         ]

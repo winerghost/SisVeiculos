@@ -6,6 +6,7 @@ Fluxo: Bearer JWT -> verificação (assinatura, exp, aud, iss) -> perfil em `per
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from functools import wraps
@@ -14,9 +15,10 @@ from typing import Any, TypeVar
 from flask import g, request
 
 from app.errors import NaoAutenticado, SemPermissao
-from app.extensions import deps
+from app.extensions import deps, ip_cliente
 from app.modelos import Perfil
 
+log = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -56,6 +58,23 @@ def autenticar_token() -> tuple[str, dict[str, Any]]:
     return usuario_id, claims
 
 
+def _registrar_acesso(usuario_id: str, claims: dict[str, Any]) -> None:
+    """Histórico de logins: best-effort, nunca falha nem atrasa a requisição (o registrador
+    grava em segundo plano e engole qualquer erro). Só roda com JWT, perfil e MFA já ok."""
+    registrador = deps().registrador_acessos
+    if registrador is None:
+        return
+    try:
+        registrador.registrar(
+            usuario_id,
+            claims,
+            ip=ip_cliente(),
+            user_agent=request.headers.get("User-Agent"),
+        )
+    except Exception as e:  # defesa em profundidade: o registrador já não levanta
+        log.info("registro_acesso_falhou codigo=%s", type(e).__name__)
+
+
 def autenticar() -> Perfil:
     d = deps()
     usuario_id, claims = autenticar_token()
@@ -74,6 +93,7 @@ def autenticar() -> Perfil:
         )
     g.perfil = perfil
     g.claims = claims
+    _registrar_acesso(perfil.id, claims)
     return perfil
 
 

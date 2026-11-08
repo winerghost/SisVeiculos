@@ -14,6 +14,7 @@ interface Usuario {
   role: string;
   ativo: boolean;
   email: string;
+  ultimo_acesso_em: string | null;
 }
 
 export interface OpcoesAdmin {
@@ -33,7 +34,17 @@ export interface OpcoesAdmin {
   fatores?: number;
   /** /api/eu do admin responde 403 mfa_requerido até a verificação do cadastro terminar. */
   exigirMfa?: boolean;
+  /** /api/eu do admin NÃO traz `ver_acessos` (a API recusa /admin/acessos com 403). */
+  semVerAcessos?: boolean;
+  /** Ana Souza (autorizadora) tem foto ativa: ganha foto_url e a ação `remover_foto`. */
+  anaComFoto?: boolean;
+  /** DELETE da foto de usuário responde 403 sem_permissao. */
+  removerFotoNegado?: boolean;
+  /** Quantidade de registros de acesso devolvidos (padrão 45; 0 = estado vazio). */
+  totalAcessos?: number;
 }
+
+const ACESSO_BASE = Date.parse('2026-11-05T15:00:00Z');
 
 const erro = (route: Route, status: number, codigo: string, mensagem: string) =>
   route.fulfill({ status, json: { erro: { codigo, mensagem } } });
@@ -47,6 +58,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       role: 'admin',
       ativo: true,
       email: 'admin@agu.gov.br',
+      ultimo_acesso_em: '2026-11-05T15:30:00Z',
     },
     {
       id: ANA_ID,
@@ -55,6 +67,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       role: 'autorizador',
       ativo: true,
       email: 'ana.souza.com.um.endereco.bem.longo.para.truncar@agu.gov.br',
+      ultimo_acesso_em: null,
     },
   ];
   const convites: Record<string, unknown>[] = opcoes.reenvioRecente
@@ -81,9 +94,15 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     senha: unknown[];
     config: unknown[];
     consultas: string[];
+    /** Query string de cada GET /api/admin/acessos recebido. */
+    acessos: string[];
     reenvios: number;
+    /** IDs de usuário cuja foto foi removida pelo admin. */
+    fotosRemovidas: string[];
   } = {
+    fotosRemovidas: [],
     consultas: [],
+    acessos: [],
     reenvios: 0,
     convidar: [],
     aceitar: [],
@@ -93,11 +112,17 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
   let aceito = false;
   let mfaConcluido = !opcoes.exigirMfa;
 
+  let anaFoto = !!opcoes.anaComFoto;
+  const FOTO_URL = 'https://exemplo.supabase.co/storage/v1/object/sign/avatares/ana.jpg?token=t';
+  const temFoto = (u: Usuario) => u.id === ANA_ID && anaFoto;
+
   const apresentar = (u: Usuario) => ({
     ...u,
+    foto_url: temFoto(u) && u.ativo ? FOTO_URL : null,
     rotulo_perfil: `${u.unidade} · ${u.role}`,
     acoes_permitidas: [
       'editar',
+      ...(temFoto(u) ? ['remover_foto'] : []),
       ...(u.id === ADMIN_ID ? [] : ['alterar_role']),
       // Conta inativa também oferece `desativar` (refaz o bloqueio no Auth).
       ...(u.ativo ? (u.id === ADMIN_ID ? [] : ['desativar']) : ['ativar', 'desativar']),
@@ -204,7 +229,12 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         rotulo_perfil: 'UEA · Administrador',
         unidades: ['PU', 'PF', 'CJU', 'UEA'],
         role: 'admin',
-        permissoes: ['criar_requisicao', 'ver_todas_requisicoes', 'administrar'],
+        permissoes: [
+          'criar_requisicao',
+          'ver_todas_requisicoes',
+          'administrar',
+          ...(opcoes.semVerAcessos ? [] : ['ver_acessos']),
+        ],
         recursos: {},
       },
     });
@@ -295,6 +325,14 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       const u = usuarios.find((x) => x.id === id);
       if (!u) return erro(route, 404, 'nao_encontrado', 'Usuário não encontrado.');
       if (m === 'GET') return route.fulfill({ json: apresentar(u) });
+      if (acao === 'foto' && m === 'DELETE') {
+        if (opcoes.removerFotoNegado) {
+          return erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.');
+        }
+        corpos.fotosRemovidas.push(u.id);
+        if (u.id === ANA_ID) anaFoto = false;
+        return route.fulfill({ json: apresentar(u) });
+      }
       if (m === 'PATCH') {
         Object.assign(u, req.postDataJSON());
         return route.fulfill({ json: apresentar(u) });
@@ -302,6 +340,46 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       if (acao === 'desativar') u.ativo = false;
       if (acao === 'ativar') u.ativo = true;
       return route.fulfill({ json: apresentar(u) });
+    }
+
+    if (recurso === 'acessos' && m === 'GET') {
+      corpos.acessos.push(url.search);
+      if (opcoes.semVerAcessos) {
+        return erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.');
+      }
+      const p = url.searchParams;
+      const de = p.get('de');
+      const ate = p.get('ate');
+      if (de && ate && Date.parse(de) > Date.parse(ate)) {
+        return erro(
+          route,
+          400,
+          'requisicao_invalida',
+          "O parâmetro 'de' não pode ser posterior a 'ate'.",
+        );
+      }
+      const limite = Number(p.get('limite') ?? 50);
+      const offset = Number(p.get('offset') ?? 0);
+      const todos = Array.from({ length: opcoes.totalAcessos ?? 45 }, (_, i) => {
+        const u = i % 3 === 0 ? usuarios[1] : usuarios[0];
+        return {
+          id: `a0000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+          usuario_id: u?.id ?? '',
+          nome: u?.nome ?? '',
+          ocorrido_em: new Date(ACESSO_BASE - i * 864e5 * 0.5).toISOString(),
+          metodo: i % 2 === 0 ? 'password' : 'totp',
+          aal: i % 2 === 0 ? 'aal1' : 'aal2',
+          ip_mascarado: '203.0.113.0/24',
+          ua_familia: 'Chrome 130 / Windows',
+          sessao_ref: `sess-${String(i).padStart(4, '0')}`,
+        };
+      })
+        .filter((a) => !p.get('usuario_id') || a.usuario_id === p.get('usuario_id'))
+        .filter((a) => !de || Date.parse(a.ocorrido_em) >= Date.parse(de))
+        .filter((a) => !ate || Date.parse(a.ocorrido_em) < Date.parse(ate));
+      return route.fulfill({
+        json: { itens: todos.slice(offset, offset + limite), total: todos.length, limite, offset },
+      });
     }
 
     if (recurso === 'convites') {

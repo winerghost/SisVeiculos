@@ -9,11 +9,13 @@ import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import type { UsuarioAdmin } from '@/lib/tipos';
 import { AdminShell } from '@/components/admin-shell';
+import { Avatar } from '@/components/avatar';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRole, ROLES, rotuloRole } from '@/components/ui/chip';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { rotuloUltimoAcesso } from '@/lib/formato';
 
 function Edicao({
   u,
@@ -30,6 +32,8 @@ function Edicao({
   const [unidade, setUnidade] = React.useState(u.unidade);
   const [role, setRole] = React.useState(u.role);
   const [confirmando, setConfirmando] = React.useState(false);
+  const [confirmandoFoto, setConfirmandoFoto] = React.useState(false);
+  const [fotoRemovida, setFotoRemovida] = React.useState(false);
   const [salvo, setSalvo] = React.useState(false);
 
   // Alterações que o servidor autoriza vêm em acoes_permitidas; as regras (último admin,
@@ -38,6 +42,7 @@ function Edicao({
   const podeRole = u.acoes_permitidas.includes('alterar_role');
   const podeDesativar = u.acoes_permitidas.includes('desativar');
   const podeAtivar = u.acoes_permitidas.includes('ativar');
+  const podeRemoverFoto = u.acoes_permitidas.includes('remover_foto');
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
@@ -68,18 +73,27 @@ function Edicao({
     }
   }
 
+  async function removerFoto() {
+    setSalvo(false);
+    setFotoRemovida(false);
+    const r = await envio.executar(() => admin.removerFotoUsuario(u.id));
+    setConfirmandoFoto(false);
+    if (r.ok) {
+      aoAtualizar(r.valor);
+      setFotoRemovida(true);
+    } else {
+      await recarregar();
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <section className="flex items-center gap-4 rounded-xl border border-borda bg-white p-4">
-        <span
-          aria-hidden
-          className="flex size-14 shrink-0 items-center justify-center rounded-full bg-[#dcebff] text-lg font-semibold text-[#0b3c7a]"
-        >
-          {u.nome.charAt(0).toUpperCase()}
-        </span>
+        <Avatar nome={u.nome} fotoUrl={u.foto_url} decorativo className="size-14 text-lg" />
         <div className="min-w-0">
           <h2 className="truncate text-xl font-semibold">{u.nome}</h2>
           {u.email ? <p className="truncate text-texto-2">{u.email}</p> : null}
+          <p className="text-texto-2">{rotuloUltimoAcesso(u.ultimo_acesso_em)}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <ChipRole role={u.role} />
             {u.ativo ? <Chip tom="sucesso">Conta ativa</Chip> : <Chip tom="perigo">Inativa</Chip>}
@@ -145,6 +159,35 @@ function Edicao({
           </Button>
         ) : null}
       </form>
+
+      {fotoRemovida ? (
+        <p role="status" className="rounded-padrao border border-borda bg-white p-3">
+          Foto removida.
+        </p>
+      ) : null}
+
+      {podeRemoverFoto ? (
+        <section className="rounded-xl border border-borda bg-white p-4">
+          <h2 className="text-lg font-semibold">Foto do perfil</h2>
+          <p className="mt-1 mb-3 text-texto-2">
+            A foto é opcional e serve apenas para identificar a pessoa no sistema.
+          </p>
+          {confirmandoFoto ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Button variante="contorno" onClick={() => setConfirmandoFoto(false)}>
+                Cancelar
+              </Button>
+              <Button variante="perigo" disabled={envio.ocupado} onClick={() => void removerFoto()}>
+                Confirmar
+              </Button>
+            </div>
+          ) : (
+            <Button variante="perigo" tamanho="cheio" onClick={() => setConfirmandoFoto(true)}>
+              Remover foto
+            </Button>
+          )}
+        </section>
+      ) : null}
 
       {podeDesativar || podeAtivar ? (
         <section className="rounded-xl border border-borda bg-white p-4">

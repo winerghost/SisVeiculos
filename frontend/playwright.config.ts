@@ -23,6 +23,7 @@ export default defineConfig({
     env: {
       NEXT_PUBLIC_SUPABASE_URL: 'https://exemplo.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key-de-teste',
+      NEXT_PUBLIC_SITE_URL: 'https://sisv.exemplo.test',
       NEXT_TELEMETRY_DISABLED: '1',
     },
   },

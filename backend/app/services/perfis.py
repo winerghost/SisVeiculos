@@ -26,6 +26,7 @@ _PERMISSOES: dict[str, list[str]] = {
         "registrar_chegada",
         "cancelar",
         "administrar",
+        "ver_acessos",
     ],
 }
 
@@ -41,13 +42,14 @@ def rotulo_perfil(perfil: Perfil) -> str:
     return f"{perfil.unidade} · {_ROTULOS_ROLE[perfil.role]}"
 
 
-def montar_eu(perfil: Perfil, config: Configuracoes) -> dict[str, Any]:
+def montar_eu(perfil: Perfil, config: Configuracoes, foto_url: str | None = None) -> dict[str, Any]:
     return {
         "id": perfil.id,
         "nome": perfil.nome,
         "unidade": perfil.unidade,
         "role": perfil.role,
         "rotulo_perfil": rotulo_perfil(perfil),
+        "foto_url": foto_url,  # URL assinada curta da própria foto (ou null)
         "unidades": list(UNIDADES_ORDEM),
         "permissoes": _PERMISSOES[perfil.role],
         # Recursos opcionais habilitados (todos desligados por padrão).

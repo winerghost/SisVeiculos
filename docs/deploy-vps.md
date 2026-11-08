@@ -33,6 +33,7 @@ Se a sub-rede `10.213.88.0/24` colidir, veja o troubleshooting (precisa de commi
    `git clone <url-do-repositorio> sisveiculos && cd sisveiculos`
 3. Criar o `.env` uma única vez, preenchendo direto no arquivo (nunca cole chaves em chat):
    `cp .env.example .env && chmod 600 .env && nano .env`
+   (inclua `NEXT_PUBLIC_SITE_URL` antes do primeiro build; veja a tabela abaixo)
 4. Subir: `docker compose up -d --build`
 
 ### Variáveis do `.env` da VPS
@@ -42,6 +43,7 @@ Se a sub-rede `10.213.88.0/24` colidir, veja o troubleshooting (precisa de commi
 | `FRONTEND_PORT` | Porta do host (somente 127.0.0.1) onde o frontend escuta; padrão 8080. É a porta do proxy reverso do CloudPanel. Escolha uma livre (ver checagens acima). Mudar só isto exige `docker compose up -d` (sem `--build`). |
 | `NEXT_PUBLIC_SUPABASE_URL` | Pública. Vira build arg e é embutida no frontend. Deve ser `https://...`; o build falha se não for. O host também define a CSP. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Pública (anon key). Build arg. Mudar exige `--build`. |
+| `NEXT_PUBLIC_SITE_URL` | **Obrigatória**, pública, build arg. URL https do site, sem barra final (ex.: `https://SEU-DOMINIO`). Usada nas URLs absolutas de `og:image`/`og:url`. Defina **ANTES do primeiro build**; o build falha se estiver vazia, for `http://`, tiver caminho ou apontar para localhost. Mudar exige `--build`. |
 | `SUPABASE_URL` | Backend. |
 | `SUPABASE_SERVICE_ROLE_KEY` | SECRETA. Só no backend. |
 | `SUPABASE_JWKS_URL` | Obrigatória. Sem ela o backend não fica saudável. |
@@ -75,7 +77,53 @@ Conferir:
 - `/api/saude` responde 200; `/login` responde 200.
 - Headers presentes: `Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`,
   `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`,
-  `Cross-Origin-Resource-Policy`; e `Strict-Transport-Security` vindo do Cloudflare (HSTS).
+  `Cross-Origin-Resource-Policy`, `X-Robots-Tag: noindex, nofollow`; e
+  `Strict-Transport-Security` vindo do Cloudflare (HSTS).
+- Cada header aparece **uma vez**. O vhost do CloudPanel pode adicionar os seus; já foi observado
+  duplicado em produção: remova do vhost as linhas `add_header` de `X-Frame-Options`,
+  `Referrer-Policy` e `X-Content-Type-Options` (o nginx do frontend é a fonte única). Conferir:
+  `curl -sSI https://SEU-DOMINIO/login | sort | uniq -d` não deve listar headers repetidos.
+- Meta tags: `curl -sS https://SEU-DOMINIO/login | grep -o '<meta property="og:[^>]*>'` deve
+  mostrar `og:url` e `og:image` com `https://SEU-DOMINIO/...` (nunca localhost).
+
+## 2.1 Pré-visualização de links
+
+`X-Robots-Tag: noindex, nofollow` mantém o sistema fora de buscadores, mas **não impede** a
+pré-visualização em WhatsApp, Teams e Telegram (eles leem as meta tags `og:*`). Não crie
+`robots.txt` com `Disallow`: o Twitterbot o respeita (o card do X não apareceria) e o `noindex`
+nunca seria lido.
+
+Testar com os user-agents dos crawlers, na raiz, em `/login` e na imagem. Esperado: `200` e, na
+imagem, `Content-Type: image/png`:
+
+```bash
+for ua in "facebookexternalhit/1.1" "WhatsApp/2.23.20" "Twitterbot/1.0" \
+          "TelegramBot (like TwitterBot)" "Slackbot-LinkExpanding 1.0" "LinkedInBot/1.0" \
+          "Mozilla/5.0 (compatible; Teams)"; do
+  for p in / /login /og/og-agu-v1.png; do
+    printf '%s %s -> ' "$ua" "$p"
+    curl -sS -o /dev/null -A "$ua" -w '%{http_code} %{content_type}\n' "https://SEU-DOMINIO$p"
+  done
+done
+```
+
+Se algum retornar 403/503 ou página de desafio, o Cloudflare está barrando o crawler. Verifique
+Security > Bots (Bot Fight Mode / Super Bot Fight Mode) e Security > WAF/Events. Se bloquear, crie
+uma regra de skip por user-agent (Security > WAF > Custom rules, ação *Skip* para as proteções
+de bots/WAF) **apenas** para o caminho `/`, `/login` ou `/og/*` e os user-agents acima. Não
+libere `/api` nem o resto do site.
+
+Limpar caches de preview após trocar texto ou imagem:
+
+- Facebook/Instagram: Sharing Debugger (developers.facebook.com/tools/debug), "Scrape Again".
+- LinkedIn: Post Inspector (linkedin.com/post-inspector), "Inspect".
+- Telegram: enviar o link ao bot `@WebpageBot` para renovar.
+- WhatsApp: não há ferramenta; o cache só renova com o tempo ou com URL nova. Por isso a imagem
+  é versionada (`/og/og-agu-v1.png`): ao trocar a arte, publique como `v2` e atualize a meta tag.
+
+Cache: o nginx serve `/og/*` com `Cache-Control: public, max-age=31536000, immutable`, seguro
+porque o nome é versionado (nunca sobrescreva `v1` com outra arte). `/icons/` não recebe cache
+longo, pois os nomes não têm versão/hash.
 - Logs sem PII: linhas do gunicorn no formato `IP MÉTODO CAMINHO STATUS BYTES TEMPO`, sem query
   string; nenhum e-mail, nome, token de convite ou URL assinada nos logs.
 - Porta publicada só em loopback: `docker compose ps` deve mostrar `127.0.0.1:<FRONTEND_PORT>->8080`.
@@ -183,7 +231,8 @@ Migrations NÃO têm rollback automático. Como proceder:
 - Build do frontend falha sem `package.json` / `npm ci` não acha o lockfile: o contexto é
   `./frontend`; confira se o `git pull` trouxe `frontend/package.json` e `package-lock.json` e
   se o `.dockerignore` não os exclui. Também falha se `NEXT_PUBLIC_SUPABASE_URL` não for
-  `https://...` ("NEXT_PUBLIC_SUPABASE_URL invalida").
+  `https://...` ("NEXT_PUBLIC_SUPABASE_URL invalida") ou se `NEXT_PUBLIC_SITE_URL` estiver ausente
+  no `.env`, for `http://`, tiver caminho ou for localhost ("NEXT_PUBLIC_SITE_URL invalida").
 - Testes do frontend (Playwright) falham com porta 3100 ocupada: um `serve` anterior ficou
   vivo. Encerre o processo que usa a 3100 e rode de novo.
 - Convidado cai no login/home em vez de `/convite`: Redirect URLs do Supabase não casaram

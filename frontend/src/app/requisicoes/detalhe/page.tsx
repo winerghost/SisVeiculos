@@ -10,6 +10,7 @@ import { useCarga } from '@/lib/use-carga';
 import { useAcao } from '@/lib/use-acao';
 import type { Requisicao } from '@/lib/tipos';
 import { AppShell } from '@/components/app-shell';
+import { Avatar } from '@/components/avatar';
 import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { Alerta } from '@/components/ui/alert';
@@ -24,6 +25,16 @@ function porFallback(r: Requisicao, rotulo: string): string | null {
     'Chegada registrada': r.chegada_registrada_por_nome,
   };
   return mapa[rotulo] ?? null;
+}
+
+function fotoDoEvento(r: Requisicao, rotulo: string): string | null | undefined {
+  const mapa: Record<string, string | null | undefined> = {
+    Autorizada: r.autorizado_por_foto_url,
+    Negada: r.autorizado_por_foto_url,
+    'Saída registrada': r.saida_registrada_por_foto_url,
+    'Chegada registrada': r.chegada_registrada_por_foto_url,
+  };
+  return mapa[rotulo];
 }
 
 function Detalhe({ id }: { id: string }) {
@@ -53,8 +64,11 @@ function Detalhe({ id }: { id: string }) {
           <StatusChip status={r.status} />
         </div>
         <p className="mt-2 text-xl font-semibold break-words">{r.trajeto}</p>
-        <p className="mt-2 text-texto-2">
-          Solicitante: {r.nome_solicitante} · {r.unidade}
+        <p className="mt-2 flex items-center gap-2 text-texto-2">
+          <Avatar nome={r.nome_solicitante} fotoUrl={r.solicitante_foto_url} decorativo />
+          <span className="min-w-0 break-words">
+            Solicitante: {r.nome_solicitante} · {r.unidade}
+          </span>
         </p>
         <p className="mt-1 text-texto-2">Saída prevista: {dataHora(r.hora_saida)}</p>
         {r.saida_real_em ? (
@@ -90,6 +104,15 @@ function Detalhe({ id }: { id: string }) {
                   {dataHora(e.quando)}
                   {por ? ` · por ${por}` : ''}
                 </p>
+                {por ? (
+                  <Avatar
+                    nome={por}
+                    fotoUrl={fotoDoEvento(r, e.rotulo)}
+                    tamanho="pequeno"
+                    decorativo
+                    className="mt-1"
+                  />
+                ) : null}
                 {e.km !== undefined && e.km !== null ? (
                   <p className="text-texto-2">Km: {numero(e.km)}</p>
                 ) : null}

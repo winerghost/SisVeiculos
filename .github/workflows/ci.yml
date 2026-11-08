@@ -91,11 +91,18 @@ jobs:
         run: |
           supabase start -x realtime,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
           supabase db reset --local --no-seed
+      # O db reset recria o banco e apaga o marcador: criar DEPOIS do reset e ANTES do pytest.
+      - name: Marcar banco como descartavel
+        if: steps.mudou.outputs.rodar == 'true'
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: psql "$TEST_DATABASE_URL" -c "comment on database postgres is 'sisveiculos:descartavel'"
       - name: Testes de banco
         if: steps.mudou.outputs.rodar == 'true'
         env:
           # Credenciais padrao FIXAS e publicas do Supabase local (nao e segredo).
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          TEST_DATABASE_CONFIRM: descartavel
         run: >
           "$RUNNER_TEMP/venv-banco/bin/python" -m pytest supabase/tests
           -c supabase/tests/pytest.ini --rootdir supabase/tests
@@ -185,6 +192,7 @@ jobs:
           docker build -t sisveiculos-frontend:ci
           --build-arg NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co
           --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder
+          --build-arg NEXT_PUBLIC_SITE_URL=https://exemplo.invalid
           frontend
       - name: Trivy imagem frontend
         if: needs.detectar.outputs.frontend == 'true'

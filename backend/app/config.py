@@ -38,6 +38,11 @@ class Config:
     limite_leitura_fotos_ip: str = "90 per minute"
     # Teto de URLs de upload emitidas por requisição/momento (vale por ~2 h, o prazo do token).
     max_urls_upload_por_momento: int = 12
+    # Foto de perfil: upload-url e confirmação (recodificação usa CPU) limitados por usuário e IP;
+    # a cota de emissões de URL de upload vale por hora (LimiteEmissao).
+    limite_foto_perfil: str = "10 per minute"
+    limite_foto_perfil_ip: str = "30 per minute"
+    max_emissoes_foto_perfil: int = 10
     limite_busca_usuarios: str = "30 per minute"  # GET /api/admin/usuarios com `q` (varredura)
     # Decisão pendente do usuário: autorizador pode autorizar a própria requisição?
     permitir_autoautorizacao: bool = False

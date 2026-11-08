@@ -13,6 +13,8 @@ export interface Eu {
   role: string;
   permissoes: string[];
   recursos: Record<string, boolean>;
+  /** URL assinada curta (~120 s) da própria foto, ou null. Nunca guardar nem registrar. */
+  foto_url?: string | null;
 }
 
 export interface Veiculo {
@@ -49,6 +51,11 @@ export interface Requisicao {
   autorizado_por_nome: string | null;
   saida_registrada_por_nome: string | null;
   chegada_registrada_por_nome: string | null;
+  /** URLs assinadas curtas das fotos de perfil (null sem foto ou conta inativa). */
+  solicitante_foto_url?: string | null;
+  autorizado_por_foto_url?: string | null;
+  saida_registrada_por_foto_url?: string | null;
+  chegada_registrada_por_foto_url?: string | null;
   veiculo_descricao: string | null;
   /** Odômetro gravado; null se nunca gravado (permanece visível com o recurso desligado). */
   km_saida: number | null;
@@ -69,6 +76,17 @@ export interface UploadFoto {
   caminho: string;
   url_upload: string;
   token: string;
+}
+
+/** POST /api/eu/foto/upload-url. O objeto de staging é `tmp/<usuario_id>/<id>` (bucket avatares). */
+export interface UploadFotoPerfil {
+  id: string;
+  url_upload: string;
+  token: string;
+}
+
+export interface RespostaFotoPerfil {
+  foto_url: string | null;
 }
 
 export interface FotoEnviada {
@@ -134,7 +152,31 @@ export interface UsuarioAdmin {
   ativo: boolean;
   email: string | null;
   rotulo_perfil: string;
+  /** ISO 8601 do último login registrado; null = nunca acessou. */
+  ultimo_acesso_em?: string | null;
+  /** URL assinada curta da foto de perfil (null sem foto ou conta inativa). */
+  foto_url?: string | null;
   acoes_permitidas: string[];
+}
+
+/** Registro de acesso (GET /api/admin/acessos). IP já vem mascarado (/24 ou /48). */
+export interface Acesso {
+  id: string;
+  usuario_id: string;
+  nome: string | null;
+  ocorrido_em: string;
+  metodo: string | null;
+  aal: string | null;
+  ip_mascarado: string | null;
+  ua_familia: string | null;
+  sessao_ref: string | null;
+}
+
+export interface ListaAcessos {
+  itens: Acesso[];
+  total: number;
+  limite: number;
+  offset: number;
 }
 
 export interface ListaUsuarios {

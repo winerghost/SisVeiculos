@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/app-shell';
+import { FotoPerfil } from '@/components/foto-perfil';
 import { CadastroTotp } from '@/components/cadastro-totp';
 import { Alerta } from '@/components/ui/alert';
 
@@ -27,6 +28,8 @@ function Conteudo() {
 
   return (
     <>
+      <FotoPerfil />
+      <h2 className="mb-2 text-lg font-semibold">Verificação em duas etapas</h2>
       <p className="mb-4 text-texto-2">
         A verificação em duas etapas usa um aplicativo autenticador. Quando o administrador a
         habilita, ela passa a ser exigida no login de administradores e autorizadores.

@@ -14,6 +14,7 @@ from typing import Any
 
 from app.errors import (
     AutoAlteracaoProibida,
+    ErroApi,
     NaoEncontrado,
     RequisicaoInvalida,
     SemPermissao,
@@ -22,6 +23,8 @@ from app.errors import (
 from app.modelos import Perfil
 from app.repositorios.auth_admin import AuthAdmin, IndiceEmails
 from app.repositorios.base import Repositorio
+from app.services.foto_perfil import ServicoFotoPerfil
+from app.services.fotos_exibicao import FotosExibicao
 from app.services.perfis import rotulo_perfil
 from app.services.validacao import validar_uuid
 from app.services.validacao_admin import ROLES, validar_busca, validar_edicao_usuario
@@ -84,13 +87,22 @@ def limitar(limite: int, offset: int) -> tuple[int, int]:
 
 
 class ServicoUsuarios:
-    def __init__(self, repo: Repositorio, auth: AuthAdmin) -> None:
+    def __init__(
+        self,
+        repo: Repositorio,
+        auth: AuthAdmin,
+        *,
+        fotos: ServicoFotoPerfil | None = None,
+        exibicao: FotosExibicao | None = None,
+    ) -> None:
         self._repo = repo
         self._auth = auth
+        self._fotos = fotos
+        self._exibicao = exibicao
 
     # -- apresentação ------------------------------------------------------------------
     def acoes_permitidas(
-        self, admin: Perfil, alvo: dict[str, Any], admins_ativos: int
+        self, admin: Perfil, alvo: dict[str, Any], admins_ativos: int, tem_foto: bool = False
     ) -> list[str]:
         """Ações que o admin logado pode exibir para este usuário (o banco reforça tudo)."""
         eu = alvo["id"] == admin.id
@@ -107,6 +119,8 @@ class ServicoUsuarios:
             # "desativar" é idempotente e refaz o bloqueio, então segue disponível.
             if not eu:
                 acoes.append("desativar")
+        if tem_foto:  # só com foto ativa (mesmo conta inativa: a remoção segue permitida)
+            acoes.append("remover_foto")
         return acoes
 
     def _apresentar(
@@ -115,15 +129,30 @@ class ServicoUsuarios:
         alvos: list[dict[str, Any]],
         emails: dict[str, str],
         admins_ativos: int,
+        ultimos: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
+        ultimos = ultimos or {}
+        ids = [a["id"] for a in alvos]
+        caminhos = self._exibicao.caminhos(ids) if self._exibicao is not None else {}
+        # Conta inativa não serve URL (a foto só pode ser removida); as demais vêm de `ativo`.
+        ativos = {a["id"] for a in alvos if a["ativo"]}
+        urls = (
+            self._exibicao.assinar({u: c for u, c in caminhos.items() if u in ativos})
+            if self._exibicao is not None
+            else {}
+        )
         return [
             {
                 **a,
                 "email": emails.get(a["id"]),
+                "ultimo_acesso_em": ultimos.get(a["id"]),  # null = nunca acessou
+                "foto_url": urls.get(a["id"]),
                 "rotulo_perfil": rotulo_perfil(
                     Perfil(a["id"], a["nome"], a["unidade"], a["role"], a["ativo"])
                 ),
-                "acoes_permitidas": self.acoes_permitidas(admin, a, admins_ativos),
+                "acoes_permitidas": self.acoes_permitidas(
+                    admin, a, admins_ativos, a["id"] in caminhos
+                ),
             }
             for a in alvos
         ]
@@ -159,7 +188,13 @@ class ServicoUsuarios:
         )
         emails = self._auth.emails_por_id({i["id"] for i in itens})
         return {
-            "itens": self._apresentar(admin, itens, emails, self._repo.contar_admins_ativos()),
+            "itens": self._apresentar(
+                admin,
+                itens,
+                emails,
+                self._repo.contar_admins_ativos(),
+                self._ultimos_acessos([i["id"] for i in itens]),
+            ),
             "total": total,
             # True quando a busca por e-mail não cobriu todas as contas (varredura truncada
             # ou mais de MAX_IDS_BUSCA achados): o front avisa para refinar o termo.
@@ -186,7 +221,22 @@ class ServicoUsuarios:
         exigir_admin(admin)
         alvo = self._carregar(usuario_id)
         emails = self._auth.emails_por_id({alvo["id"]})
-        return self._apresentar(admin, [alvo], emails, self._repo.contar_admins_ativos())[0]
+        return self._apresentar(
+            admin,
+            [alvo],
+            emails,
+            self._repo.contar_admins_ativos(),
+            self._ultimos_acessos([alvo["id"]]),
+        )[0]
+
+    def _ultimos_acessos(self, ids: list[str]) -> dict[str, str]:
+        """Último acesso em lote (até 100 ids por página). Best-effort: se falhar, a lista de
+        usuários segue funcionando e o campo sai nulo (só o código vai ao log)."""
+        try:
+            return self._repo.ultimo_acesso_por_usuario(ids[:100])
+        except ErroApi as e:
+            log.warning("ultimo_acesso_indisponivel codigo=%s", e.codigo)
+            return {}
 
     def _carregar(self, usuario_id: str) -> dict[str, Any]:
         alvo = self._repo.obter_perfil_admin(validar_uuid(usuario_id))
@@ -233,7 +283,22 @@ class ServicoUsuarios:
             self._checar_ultimo_admin(alvo)
             if self._repo.atualizar_perfil(alvo["id"], {"ativo": False}, ator_id=admin.id) is None:
                 raise NaoEncontrado("Usuário não encontrado.")
+        # Conta desativada não mantém foto (LGPD). Chamada SEPARADA da escrita administrativa
+        # (contrato da migration 15), depois que o perfil já está inativo, e nunca falha a
+        # desativação: se falhar, a foto segue sem ser servida e o admin pode removê-la.
+        if self._fotos is not None:
+            self._fotos.remover_melhor_esforco(usuario_id=alvo["id"], ator_id=admin.id)
         self._auth.bloquear(alvo["id"])
+        return self.obter(admin, alvo["id"])
+
+    def remover_foto(self, admin: Perfil, usuario_id: str) -> dict[str, Any]:
+        """Admin remove a foto de um usuário. O ator vem do JWT; a auditoria sai do gatilho do
+        banco (ator = admin, `por_admin`), então nada é duplicado aqui. Idempotente."""
+        exigir_admin(admin)
+        if self._fotos is None:
+            raise ErroApi("Remoção de foto indisponível.", "indisponivel", 503)
+        alvo = self._carregar(usuario_id)
+        self._fotos.remover_de(usuario_id=alvo["id"], ator_id=admin.id)
         return self.obter(admin, alvo["id"])
 
     def ativar(self, admin: Perfil, usuario_id: str) -> dict[str, Any]:

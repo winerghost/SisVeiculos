@@ -15,6 +15,7 @@ class ErroApi(Exception):
 
     status = 400
     codigo = "erro"
+    retry_after: int | None = None  # segundos, vira o cabeçalho Retry-After
 
     def __init__(self, mensagem: str, codigo: str | None = None, status: int | None = None):
         super().__init__(mensagem)
@@ -117,6 +118,16 @@ class SistemaOcupado(ErroApi):
     """Lock do banco (55P03) ou deadlock (40P01) persistente após as novas tentativas."""
 
     status, codigo = 503, "ocupado"
+    retry_after = 2
+
+
+class FalhaRegistroAcesso(Exception):  # noqa: N818
+    """Falha ao gravar o histórico de acessos. Carrega só o código (SQLSTATE AGxxx, 55P03 ou o
+    nome do tipo da exceção): nunca a mensagem do banco, que poderia trazer dado pessoal."""
+
+    def __init__(self, codigo: str) -> None:
+        super().__init__(codigo)
+        self.codigo = codigo
 
 
 def corpo_erro(codigo: str, mensagem: str) -> dict[str, dict[str, str]]:
@@ -136,7 +147,10 @@ _HTTP = {
 def registrar_erros(app: Flask) -> None:
     @app.errorhandler(ErroApi)
     def _api(e: ErroApi):  # type: ignore[no-untyped-def]
-        return jsonify(corpo_erro(e.codigo, e.mensagem)), e.status
+        resp = jsonify(corpo_erro(e.codigo, e.mensagem))
+        if e.retry_after:
+            resp.headers["Retry-After"] = str(e.retry_after)
+        return resp, e.status
 
     @app.errorhandler(HTTPException)
     def _http(e: HTTPException):  # type: ignore[no-untyped-def]

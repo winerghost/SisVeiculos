@@ -6,11 +6,13 @@ import { Plus } from 'lucide-react';
 import { admin } from '@/lib/api';
 import { useCarga } from '@/lib/use-carga';
 import { AdminShell } from '@/components/admin-shell';
+import { Avatar } from '@/components/avatar';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRole, ROLES, rotuloRole } from '@/components/ui/chip';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { rotuloUltimoAcesso } from '@/lib/formato';
 
 const LIMITE = 20;
 
@@ -109,18 +111,16 @@ function Conteudo() {
                 href={`/admin/usuarios/detalhe?id=${encodeURIComponent(u.id)}`}
                 className={`flex min-h-16 items-center gap-3 p-4 ${u.ativo ? '' : 'text-texto-2'}`}
               >
-                <span
-                  aria-hidden
-                  className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#dcebff] font-semibold text-[#0b3c7a]"
-                >
-                  {u.nome.charAt(0).toUpperCase()}
-                </span>
+                <Avatar nome={u.nome} fotoUrl={u.foto_url} decorativo />
                 {/* min-w-0 + truncate: o e-mail termina em reticências em telas estreitas. */}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-semibold">{u.nome}</span>
                   <span className="block truncate text-texto-2">
                     {u.unidade}
                     {u.email ? ` · ${u.email}` : ''}
+                  </span>
+                  <span className="block truncate text-sm text-texto-2">
+                    {rotuloUltimoAcesso(u.ultimo_acesso_em)}
                   </span>
                 </span>
                 {u.ativo ? <ChipRole role={u.role} /> : <Chip tom="perigo">Inativo</Chip>}

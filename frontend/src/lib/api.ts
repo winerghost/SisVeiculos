@@ -7,6 +7,7 @@ import type {
   Convite,
   DadosVeiculo,
   Eu,
+  ListaAcessos,
   ListaConvites,
   ListaRequisicoes,
   MomentoChecklist,
@@ -16,8 +17,10 @@ import type {
   NovoConvite,
   Requisicao,
   RespostaChecklists,
+  RespostaFotoPerfil,
   Status,
   UploadFoto,
+  UploadFotoPerfil,
   UsuarioAdmin,
   Veiculo,
   VeiculoAdmin,
@@ -103,12 +106,24 @@ export const admin = {
     }),
   acaoUsuario: (id: string, acao: 'ativar' | 'desativar') =>
     chamar<UsuarioAdmin>(`/admin/usuarios/${enc(id)}/${acao}`, JSON_POST()),
+  /** Só aparece com `remover_foto` em acoes_permitidas; responde com o usuário atualizado. */
+  removerFotoUsuario: (id: string) =>
+    chamar<UsuarioAdmin>(`/admin/usuarios/${enc(id)}/foto`, { method: 'DELETE' }),
   convidar: (d: NovoConvite) => chamar<{ convite: Convite }>('/admin/usuarios', JSON_POST(d)),
 
   convites: (p: { estado?: string; limite: number; offset: number }) =>
     chamar<ListaConvites>(`/admin/convites${query(p)}`),
   acaoConvite: (id: string, acao: 'reenviar' | 'revogar') =>
     chamar<{ convite: Convite }>(`/admin/convites/${enc(id)}/${acao}`, JSON_POST()),
+
+  /** Histórico de acessos (só admin). Valores vão como estão; a API valida e devolve o erro. */
+  acessos: (p: {
+    usuario_id?: string;
+    de?: string;
+    ate?: string;
+    limite: number;
+    offset: number;
+  }) => chamar<ListaAcessos>(`/admin/acessos${query(p)}`),
 
   configuracoes: () => chamar<ConfiguracoesAdmin>('/admin/configuracoes'),
   atualizarConfiguracoes: (d: Record<string, boolean>) =>
@@ -117,6 +132,11 @@ export const admin = {
 
 export const api = {
   eu: () => chamar<Eu>('/eu'),
+  /** Foto de perfil em 3 passos: pedir URL, enviar ao Storage (SDK) e confirmar. */
+  solicitarUploadFotoPerfil: (d: { mime: string; tamanho: number }) =>
+    chamar<UploadFotoPerfil>('/eu/foto/upload-url', JSON_POST(d)),
+  confirmarFotoPerfil: (id: string) => chamar<RespostaFotoPerfil>('/eu/foto', JSON_POST({ id })),
+  removerFotoPerfil: () => chamar<RespostaFotoPerfil>('/eu/foto', { method: 'DELETE' }),
   /** Aceite do convite: o usuário vem do JWT; o corpo só leva o token do link. */
   aceitarConvite: (token: string, nome?: string) =>
     chamar<Eu>('/convites/aceitar', JSON_POST(nome ? { token, nome } : { token })),

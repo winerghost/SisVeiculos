@@ -15,9 +15,11 @@ from app.extensions import limiter
 from app.services.admin_usuarios import INDICE_EMAILS
 from app.services.checklist import EMISSOES
 from app.services.convites import CONTROLE
+from app.services.foto_perfil import EMISSOES_FOTO
 from tests.fakes import RepoMemoria
 from tests.fakes_admin import AuthAdminMemoria
 from tests.fakes_checklist import ArmazenamentoMemoria
+from tests.fakes_foto import ArmazenamentoAvataresMemoria
 
 ISSUER = "https://projeto.supabase.co/auth/v1"
 AUDIENCE = "authenticated"
@@ -64,6 +66,11 @@ def storage() -> ArmazenamentoMemoria:
 
 
 @pytest.fixture
+def avatares() -> ArmazenamentoAvataresMemoria:
+    return ArmazenamentoAvataresMemoria()
+
+
+@pytest.fixture
 def auth_admin(repo: RepoMemoria) -> AuthAdminMemoria:
     return AuthAdminMemoria(repo)
 
@@ -72,7 +79,12 @@ URL_ACEITE = "https://app.exemplo.gov.br/aceitar-convite"
 
 
 @pytest.fixture
-def app(repo: RepoMemoria, auth_admin: AuthAdminMemoria, storage: ArmazenamentoMemoria):  # type: ignore[no-untyped-def]
+def app(  # type: ignore[no-untyped-def]
+    repo: RepoMemoria,
+    auth_admin: AuthAdminMemoria,
+    storage: ArmazenamentoMemoria,
+    avatares: ArmazenamentoAvataresMemoria,
+):
     cfg = Config(
         jwt_issuer=ISSUER, jwt_audience=AUDIENCE, testing=True, url_aceite_convite=URL_ACEITE
     )
@@ -80,11 +92,17 @@ def app(repo: RepoMemoria, auth_admin: AuthAdminMemoria, storage: ArmazenamentoM
         issuer=ISSUER, audience=AUDIENCE, resolvedor_chave=lambda _t: _CHAVE.public_key()
     )
     aplicacao = create_app(
-        cfg, repo=repo, verificador=verificador, auth_admin=auth_admin, armazenamento=storage
+        cfg,
+        repo=repo,
+        verificador=verificador,
+        auth_admin=auth_admin,
+        armazenamento=storage,
+        armazenamento_avatares=avatares,
     )
     limiter.reset()
     CONTROLE.reiniciar()
     EMISSOES.reiniciar()
+    EMISSOES_FOTO.reiniciar()
     INDICE_EMAILS.reiniciar()
     return aplicacao
 

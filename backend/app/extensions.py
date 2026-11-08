@@ -11,8 +11,10 @@ from app.auth.jwt import VerificadorJWT
 from app.config import Config
 from app.notificacoes import Notificador, NotificadorNulo
 from app.repositorios.armazenamento import Armazenamento
+from app.repositorios.armazenamento_avatares import ArmazenamentoAvatares
 from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
+from app.services.registro_acessos import RegistradorAcessos
 
 
 def ip_cliente() -> str:
@@ -48,7 +50,9 @@ class Dependencias:
     verificador: VerificadorJWT
     auth_admin: AuthAdmin | None = None
     armazenamento: Armazenamento | None = None
+    armazenamento_avatares: ArmazenamentoAvatares | None = None
     notificador: Notificador = field(default_factory=NotificadorNulo)
+    registrador_acessos: RegistradorAcessos | None = None
 
 
 def deps() -> Dependencias:

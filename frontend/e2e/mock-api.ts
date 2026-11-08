@@ -65,6 +65,12 @@ export interface Opcoes {
   pendenteSoApos409?: boolean;
   /** O primeiro envio ao Storage falha (500). */
   falharPrimeiroUpload?: boolean;
+  /** O usuário logado já tem foto de perfil ativa (eu.foto_url e *_foto_url nas requisições). */
+  comFoto?: boolean;
+  /** A imagem da foto (URL assinada) responde 404, como após expirar. */
+  fotoQuebrada?: boolean;
+  /** O POST /api/eu/foto (confirmação) responde 400 com este código e mensagem. */
+  erroConfirmacao?: { status: number; codigo: string; mensagem: string };
   /** Requisições já existentes (ex.: viagem em uso), mescladas sobre uma base. */
   sementes?: Partial<Req>[];
 }
@@ -168,8 +174,20 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
         ...(rotulo === 'Saída registrada' && r.km_saida !== null ? { km: r.km_saida } : {}),
         ...(rotulo === 'Chegada registrada' && r.km_chegada !== null ? { km: r.km_chegada } : {}),
       }));
+  // Foto de perfil: a URL assinada é cross-origin (Supabase) e curta; aqui só um marcador.
+  let fotoAtiva = !!opcoes.comFoto;
+  const FOTO_PERFIL_URL =
+    'https://exemplo.supabase.co/storage/v1/object/sign/avatares/p.jpg?token=t';
+  const fotoUrl = () => (fotoAtiva ? FOTO_PERFIL_URL : null);
+  const pedidosFotoPerfil: unknown[] = [];
+  const confirmacoesFoto: unknown[] = [];
+  const uploadsAvatar: string[] = [];
   const ver = (papel: Papel, r: Req) => ({
     ...r,
+    solicitante_foto_url: fotoUrl(),
+    autorizado_por_foto_url: r.autorizado_por_nome ? fotoUrl() : null,
+    saida_registrada_por_foto_url: r.saida_registrada_por_nome ? fotoUrl() : null,
+    chegada_registrada_por_foto_url: r.chegada_registrada_por_nome ? fotoUrl() : null,
     veiculo_descricao: 'Veículo 01',
     historico: historico(r),
     acoes_permitidas: acoes(papel, r),
@@ -258,8 +276,50 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
         role: papel,
         permissoes: p.permissoes,
         recursos: opcoes.checklist ? { checklist: true } : {},
+        foto_url: fotoUrl(),
       },
     });
+  });
+
+  // Foto de perfil (contrato: backend/app/rotas/api.py).
+  await page.route('**/storage/v1/object/sign/avatares/**', (route) =>
+    opcoes.fotoQuebrada
+      ? route.fulfill({ status: 404, json: { error: 'not_found' } })
+      : route.fulfill({
+          contentType: 'image/png',
+          body: Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+            'base64',
+          ),
+        }),
+  );
+  await page.route('**/api/eu/foto/upload-url', (route) => {
+    const papel = papelDoToken(route);
+    if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
+    pedidosFotoPerfil.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 201,
+      json: {
+        id: 'abababab-abab-4bab-8bab-abababababab',
+        url_upload: 'https://exemplo.supabase.co/storage/v1/object/upload/sign/x',
+        token: 'token-de-teste',
+      },
+    });
+  });
+  await page.route('**/api/eu/foto', (route) => {
+    const papel = papelDoToken(route);
+    if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
+    if (route.request().method() === 'DELETE') {
+      fotoAtiva = false;
+      return route.fulfill({ json: { foto_url: null } });
+    }
+    confirmacoesFoto.push(route.request().postDataJSON());
+    if (opcoes.erroConfirmacao) {
+      const e = opcoes.erroConfirmacao;
+      return erro(route, e.status, e.codigo, e.mensagem);
+    }
+    fotoAtiva = true;
+    return route.fulfill({ json: { foto_url: FOTO_PERFIL_URL } });
   });
 
   await page.route('**/api/veiculos', (route) =>
@@ -344,10 +404,12 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     if (opcoes.falharPrimeiroUpload && uploads === 1) {
       return route.fulfill({ status: 500, json: { message: 'falha', error: 'erro' } });
     }
-    const caminho = decodeURIComponent(new URL(route.request().url()).pathname).replace(
-      /^.*\/object\/upload\/sign\/checklists\//,
-      '',
-    );
+    const completo = decodeURIComponent(new URL(route.request().url()).pathname);
+    if (completo.includes('/object/upload/sign/avatares/')) {
+      uploadsAvatar.push(completo.replace(/^.*\/object\/upload\/sign\/avatares\//, ''));
+      return route.fulfill({ json: { Key: 'avatares/x' } });
+    }
+    const caminho = completo.replace(/^.*\/object\/upload\/sign\/checklists\//, '');
     fotosEnviadas.add(caminho);
     await route.fulfill({ json: { Key: `checklists/${caminho}` } });
   });
@@ -509,5 +571,14 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     await route.fulfill({ json: ver(papel, r) });
   });
 
-  return { reqs, corpos, corposAcao, registrosChecklist, pedidosUpload };
+  return {
+    reqs,
+    corpos,
+    corposAcao,
+    registrosChecklist,
+    pedidosUpload,
+    pedidosFotoPerfil,
+    confirmacoesFoto,
+    uploadsAvatar,
+  };
 }

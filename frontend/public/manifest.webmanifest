@@ -1,7 +1,7 @@
 {
-  "name": "Controle de veículos - AGU",
-  "short_name": "Veículos AGU",
-  "description": "Solicitação, autorização e registro de saída e chegada de veículos da AGU.",
+  "name": "Controle de Veículos | AGU",
+  "short_name": "Veículos",
+  "description": "Sistema interno para solicitar, autorizar e registrar a saída e a chegada de veículos da AGU.",
   "lang": "pt-BR",
   "start_url": "/",
   "scope": "/",
@@ -11,7 +11,7 @@
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

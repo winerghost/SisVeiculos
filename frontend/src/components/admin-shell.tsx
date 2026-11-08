@@ -14,6 +14,7 @@ const ABAS = [
   { href: '/admin/convites', rotulo: 'Convites' },
   { href: '/admin/configuracoes', rotulo: 'Configurações' },
 ];
+const ABA_ACESSOS = { href: '/admin/acessos', rotulo: 'Acessos' };
 
 function Corpo({ comAbas, children }: { comAbas: boolean; children: React.ReactNode }) {
   const { eu } = useAuth();
@@ -22,11 +23,13 @@ function Corpo({ comAbas, children }: { comAbas: boolean; children: React.ReactN
   if (!eu?.permissoes.includes('administrar')) {
     return <Alerta>Você não tem permissão para acessar a administração.</Alerta>;
   }
+  // A aba "Acessos" só aparece quando /api/eu informa `ver_acessos`.
+  const abas = eu.permissoes.includes('ver_acessos') ? [...ABAS, ABA_ACESSOS] : ABAS;
   return (
     <>
       {comAbas ? (
         <nav aria-label="Administração" className="-mx-5 mb-5 flex gap-2 overflow-x-auto px-5">
-          {ABAS.map((a) => {
+          {abas.map((a) => {
             const ativa = caminho === a.href || caminho.startsWith(`${a.href}/`);
             return (
               <Link

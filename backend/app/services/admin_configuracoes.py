@@ -54,6 +54,24 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "requisição). Exige o servidor de e-mail configurado no ambiente do sistema.",
         (),
     ),
+    "motorista": (
+        "Perfil Motorista",
+        "Permite atribuir um motorista à viagem autorizada. O motorista vê apenas as viagens "
+        "atribuídas a ele.",
+        (),
+    ),
+    "motorista_registra": (
+        "Motorista registra saída e chegada",
+        "O motorista passa a registrar a saída e a chegada das próprias viagens (km e "
+        "checklist continuam obrigatórios quando ligados).",
+        ("motorista",),
+    ),
+    "motorista_localizacao": (
+        "Localização do motorista",
+        "O motorista só registra saída e chegada informando a localização (latitude e "
+        "longitude); sem ela o registro é bloqueado. Apenas administradores veem as coordenadas.",
+        ("motorista_registra",),
+    ),
 }
 ROTULOS_RECURSOS = {k: v[0] for k, v in CATALOGO.items()}
 

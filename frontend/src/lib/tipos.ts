@@ -26,6 +26,17 @@ export interface Veiculo {
   acoes_permitidas: string[];
 }
 
+/** Motorista designado (recurso opcional Perfil Motorista). */
+export interface Motorista {
+  id: string;
+  nome: string;
+}
+
+/** GET /api/motoristas (staff): candidatos para o seletor da autorização. */
+export interface ListaMotoristas {
+  itens: Motorista[];
+}
+
 export interface Requisicao {
   id: string;
   usuario_id: string;
@@ -60,6 +71,8 @@ export interface Requisicao {
   saida_registrada_por_foto_url?: string | null;
   chegada_registrada_por_foto_url?: string | null;
   veiculo_descricao: string | null;
+  /** Motorista designado na autorização; ausente/null com o recurso desligado ou sem designação. */
+  motorista?: Motorista | null;
   /** Odômetro gravado; null se nunca gravado (permanece visível com o recurso desligado). */
   km_saida: number | null;
   km_chegada: number | null;
@@ -86,6 +99,11 @@ export interface UploadFotoPerfil {
   id: string;
   url_upload: string;
   token: string;
+}
+
+/** Upload de foto de OUTRO usuário (admin): `caminho` é o objeto de staging ditado pela API. */
+export interface UploadFotoUsuario extends UploadFotoPerfil {
+  caminho: string;
 }
 
 export interface RespostaFotoPerfil {
@@ -131,10 +149,33 @@ export interface RespostaChecklists {
   url_expira_em_segundos: number;
 }
 
-export type CampoAcao = 'km_saida' | 'km_chegada';
+export type CampoKm = 'km_saida' | 'km_chegada';
+/** Coordenadas: a API as lista quando exige a localização do aparelho (recurso opcional). */
+export type CampoLocal = 'latitude' | 'longitude';
+export type CampoAcao = CampoKm | CampoLocal;
 
-/** Corpo opcional do POST /saida e /chegada: só os campos que a API pediu. */
-export type CorpoAcao = Partial<Record<CampoAcao, number>>;
+/**
+ * Corpo opcional do POST de ação: km (só os campos que a API pediu), coordenadas (idem; graus
+ * decimais e precisão em metros) e, ao autorizar, o `motorista_id` escolhido (a API valida).
+ */
+export type CorpoAcao = Partial<Record<CampoAcao, number>> & {
+  precisao_m?: number;
+  motorista_id?: string;
+};
+
+/** GET /api/admin/requisicoes/<id>/localizacoes (só admin; 403 para os demais). */
+export interface LocalizacaoRegistro {
+  momento: MomentoChecklist;
+  latitude: number;
+  longitude: number;
+  precisao_m: number | null;
+  registrado_em: string;
+  registrado_por_nome: string | null;
+}
+
+export interface ListaLocalizacoes {
+  itens: LocalizacaoRegistro[];
+}
 
 export interface EventoHistorico {
   rotulo: string;
@@ -281,6 +322,20 @@ export interface ConfiguracaoIA {
   teto_tokens_mes: number | null;
   teto_efetivo_tokens_mes: number;
   acoes_permitidas: string[];
+  /** Chaves de provedor que a API permite testar; vazio = nenhum botão. */
+  testes_disponiveis: string[];
+}
+
+/** Resposta de POST /admin/ia/testar. Só exibida, nunca interpretada no cliente. */
+export interface ResultadoTesteIA {
+  ok: boolean;
+  provedor: string;
+  modelo: string;
+  latencia_ms: number | null;
+  tokens_entrada: number;
+  tokens_saida: number;
+  tipo: string | null;
+  mensagem: string;
 }
 
 export type CorpoIA = Partial<{
@@ -362,6 +417,9 @@ export interface RespostaPainel<T> {
   /** Filtros efetivos (com os padrões que o servidor aplicou). */
   filtros: Record<string, string | null | undefined>;
   dados: T;
+  /** Só no painel `operacao`: lista na raiz da resposta. */
+  itens?: Requisicao[];
+  itens_truncados?: boolean;
 }
 
 export interface MaisAntiga {
@@ -376,7 +434,6 @@ export interface DadosOperacao {
   solicitadas: { total: number; mais_antiga: MaisAntiga | null };
   autorizadas_sem_saida: { total: number; mais_antiga: MaisAntiga | null };
   em_uso: { total: number; decorrido_medio_s: number | null; decorrido_max_s: number | null };
-  itens: Requisicao[];
 }
 
 export interface DadosVolume {

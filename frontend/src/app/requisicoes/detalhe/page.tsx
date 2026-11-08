@@ -11,6 +11,7 @@ import { AppShell } from '@/components/app-shell';
 import { Avatar } from '@/components/avatar';
 import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
+import { LocalizacaoRegistroSecao } from '@/components/localizacao-registro';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { Alerta } from '@/components/ui/alert';
 import { StatusChip } from '@/components/ui/status-chip';
@@ -48,6 +49,7 @@ function Detalhe({ id }: { id: string }) {
             Solicitante: {r.nome_solicitante} · {r.unidade}
           </span>
         </p>
+        {r.motorista ? <p className="mt-1 text-texto-2">Motorista: {r.motorista.nome}</p> : null}
         <p className="mt-1 text-texto-2">Saída prevista: {dataHora(r.hora_saida)}</p>
         {r.saida_real_em ? (
           <p className="mt-1 text-texto-2">Saída registrada: {dataHora(r.saida_real_em)}</p>
@@ -70,6 +72,10 @@ function Detalhe({ id }: { id: string }) {
       </section>
 
       <ChecklistRegistrado requisicaoId={r.id} versao={versaoChecklist(r)} />
+
+      {r.saida_real_em ? (
+        <LocalizacaoRegistroSecao requisicaoId={r.id} versao={versaoChecklist(r)} />
+      ) : null}
 
       <BotoesAcao
         req={r}

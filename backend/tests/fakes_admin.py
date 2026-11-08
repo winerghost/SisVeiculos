@@ -347,6 +347,10 @@ class AdminMemoria:
                 self._exigir_admin_ativo(ator_id)
                 if novo["abastecimento_manutencao"] and not novo["quilometragem"]:
                     raise erro_db("AG010")
+                if novo["motorista_registra"] and not novo["motorista"]:
+                    raise erro_db("AG010", "O registro pelo motorista exige o Perfil Motorista.")
+                if novo["motorista_localizacao"] and not novo["motorista_registra"]:
+                    raise erro_db("AG010", "A localização do motorista exige o registro ligado.")
                 for k in novo:
                     if novo[k] != antigo[k]:
                         self._audit(
@@ -362,13 +366,19 @@ class AdminMemoria:
             return self.config
 
     def registrar_auditoria(
-        self, *, tabela: str, registro_id: str | None, ator_id: str, detalhes: dict[str, Any]
+        self,
+        *,
+        tabela: str,
+        registro_id: str | None,
+        ator_id: str,
+        detalhes: dict[str, Any],
+        acao: str = "acao_administrativa",
     ) -> None:
         if self.falha_auditoria is not None:
             raise self.falha_auditoria
         if ator_id not in self.perfis:
             raise erro_db("AG002")
-        self._audit(tabela, registro_id, "acao_administrativa", ator_id, detalhes=detalhes)
+        self._audit(tabela, registro_id, acao, ator_id, detalhes=detalhes)
 
     # -- histórico de acessos: emula as RPCs da migration 20261107122430 --------------------
     def registrar_acesso_login(

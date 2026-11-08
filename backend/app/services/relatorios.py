@@ -193,6 +193,8 @@ ACOES_AUDITORIA = (
     ("foto_perfil_removida", "Foto de perfil removida"),
     ("relatorio_gerado", "Relatório gerado"),
     ("relatorio_enviado", "Relatório enviado"),
+    ("motorista_designado", "Motorista designado"),
+    ("localizacao_registrada", "Localização registrada"),
 )
 
 _STATUS = {
@@ -741,7 +743,7 @@ class ServicoRelatorios:
         alvo = self._repo.obter_perfil(destinatario_id)
         if alvo is None or not alvo.ativo:
             raise DestinatarioInvalido("O destinatário não existe ou está inativo.")
-        if alvo.role == "solicitante" and alvo.id != perfil.id:
+        if alvo.role not in STAFF and alvo.id != perfil.id:
             # O relatório de staff tem escopo global: nunca vai a um solicitante alheio.
             raise ErroApi(
                 "Relatórios de autorizadores e administradores só podem ser enviados a "

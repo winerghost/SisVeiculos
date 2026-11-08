@@ -7,6 +7,7 @@ UPDATE condicional por status e carimbos do servidor.
 from __future__ import annotations
 
 import itertools
+import math
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -45,11 +46,15 @@ class RepoMemoria(
         self._init_dashboards()
         self._init_relatorios()
         self._init_notificacoes()
+        self._seq_eventos = 0
         self.perfis: dict[str, Perfil] = {}
         self.veiculos: dict[str, dict[str, Any]] = {}
         self.requisicoes: dict[str, Requisicao] = {}
         self.auditoria: list[tuple[str, str | None, str]] = []
         self.config = Configuracoes()
+        # Tabela `localizacoes_viagem` (dado sensível) e as chamadas da RPC do motorista.
+        self.localizacoes: list[dict[str, Any]] = []
+        self.chamadas_rpc_motorista: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._seq = itertools.count(1)
 
@@ -124,6 +129,7 @@ class RepoMemoria(
                 "cancelada_em": None,
                 "km_saida": None,
                 "km_chegada": None,
+                "motorista_id": None,
                 "criado_em": agora,
                 "atualizado_em": agora,
                 **dados,
@@ -137,21 +143,31 @@ class RepoMemoria(
         return dict(r) if r else None
 
     def listar_requisicoes(
-        self, *, usuario_id: str | None, status: str | None, limite: int, offset: int
+        self,
+        *,
+        usuario_id: str | None,
+        status: str | None,
+        limite: int,
+        offset: int,
+        motorista_id: str | None = None,
     ) -> list[Requisicao]:
         itens = [
             dict(r)
             for r in self.requisicoes.values()
             if (usuario_id is None or r["usuario_id"] == usuario_id)
+            and (motorista_id is None or r.get("motorista_id") == motorista_id)
             and (status is None or r["status"] == status)
         ]
         return itens[offset : offset + limite]
 
-    def contar_requisicoes(self, *, usuario_id: str | None, status: str | None) -> int:
+    def contar_requisicoes(
+        self, *, usuario_id: str | None, status: str | None, motorista_id: str | None = None
+    ) -> int:
         return sum(
             1
             for r in self.requisicoes.values()
             if (usuario_id is None or r["usuario_id"] == usuario_id)
+            and (motorista_id is None or r.get("motorista_id") == motorista_id)
             and (status is None or r["status"] == status)
         )
 
@@ -165,15 +181,203 @@ class RepoMemoria(
         self, requisicao_id: str, status_atual: str, campos: dict[str, Any]
     ) -> Requisicao | None:
         with self._lock:
+            return self._transicionar(requisicao_id, status_atual, campos)
+
+    def _transicionar(
+        self, requisicao_id: str, status_atual: str, campos: dict[str, Any]
+    ) -> Requisicao | None:
+        """UPDATE condicional (chamar com `self._lock`). Todos os triggers rodam ANTES de qualquer
+        mutação: se um levantar, nada foi alterado (como o rollback do banco)."""
+        r = self.requisicoes.get(requisicao_id)
+        if r is None or r["status"] != status_atual:
+            return None
+        campos = dict(campos)
+        ator_motorista = campos.pop("motorista_alterado_por", None)  # coluna de transporte
+        self._triggers_km(r, campos)
+        self._triggers_checklist(r, campos)
+        self._trigger_motorista(r, campos, ator_motorista, campos["status"])
+        self.auditoria.append((requisicao_id, status_atual, campos["status"]))
+        self._seq_eventos += 1
+        if "motorista_id" in campos:
+            self.emular_designacao(
+                requisicao_id,
+                r.get("motorista_id"),
+                campos["motorista_id"],
+                ator_motorista,
+                f"ev{self._seq_eventos}",
+            )
+        if campos["status"] == "cancelada":
+            self.emular_cancelamento(
+                requisicao_id, r.get("motorista_id"), campos.get("cancelada_por")
+            )
+        r.update(campos)
+        r[CARIMBOS[campos["status"]]] = datetime.now(UTC).isoformat()
+        return dict(r)
+
+    def atribuir_motorista(
+        self,
+        requisicao_id: str,
+        motorista_id: str | None,
+        status_permitidos: list[str],
+        *,
+        ator_id: str,
+    ) -> Requisicao | None:
+        with self._lock:
             r = self.requisicoes.get(requisicao_id)
-            if r is None or r["status"] != status_atual:
+            if r is None or r["status"] not in status_permitidos:
                 return None
-            self._triggers_km(r, campos)
-            self._triggers_checklist(r, campos)
-            self.auditoria.append((requisicao_id, status_atual, campos["status"]))
-            r.update(campos)
-            r[CARIMBOS[campos["status"]]] = datetime.now(UTC).isoformat()
+            # Como o PostgREST: o UPDATE leva motorista_id + a coluna de transporte juntos.
+            self._trigger_motorista(r, {"motorista_id": motorista_id}, ator_id, r["status"])
+            self.auditoria.append((requisicao_id, r["status"], "motorista_atribuido"))
+            self._seq_eventos += 1
+            self.emular_designacao(
+                requisicao_id,
+                r.get("motorista_id"),
+                motorista_id,
+                ator_id,
+                f"ev{self._seq_eventos}",
+            )
+            r["motorista_id"] = motorista_id
             return dict(r)
+
+    def _trigger_motorista(
+        self, r: Requisicao, campos: dict[str, Any], ator: str | None, status_novo: str
+    ) -> None:
+        """Emula `requisicoes_validar_motorista` (migration 20261111120100). `ator` é o valor de
+        `motorista_alterado_por` enviado no UPDATE (None = não enviado)."""
+        muda = "motorista_id" in campos and campos["motorista_id"] != r.get("motorista_id")
+        if not muda:
+            if ator is not None:
+                raise erro_db("AG004", "Responsável pelo motorista informado sem mudança.")
+            return
+        if status_novo not in {"autorizada", "em_uso"}:
+            raise erro_db("AG032", "Motorista só com a requisição autorizada ou em uso.")
+        quem = self.perfis.get(ator or "")
+        if quem is None or not quem.ativo or quem.role not in {"autorizador", "admin"}:
+            raise erro_db("AG002", "Apenas autorizador ou admin ativo pode definir o motorista.")
+        novo = campos["motorista_id"]
+        if novo is not None:
+            if not self.config.motorista:
+                raise erro_db("AG033", "O Perfil Motorista está desligado.")
+            alvo = self.perfis.get(novo)
+            if alvo is None or not alvo.ativo or alvo.role != "motorista":
+                raise erro_db("AG031", "Motorista inexistente, inativo ou sem o perfil.")
+        self.eventos.append(
+            {
+                "tabela": "requisicoes",
+                "registro_id": r["id"],
+                "acao": "motorista_designado",
+                "ator_id": ator,
+                "de": r.get("motorista_id"),
+                "para": novo,
+                "detalhes": {"recurso": "motorista", "status": status_novo},
+            }
+        )
+
+    # -- RPC do motorista (migration 20261112120200): localização + transição numa transação ----
+    def registrar_transicao_motorista(
+        self,
+        *,
+        requisicao_id: str,
+        momento: str,
+        ator_id: str,
+        latitude: float | None,
+        longitude: float | None,
+        precisao_m: float | None,
+        km_saida: int | None,
+        km_chegada: int | None,
+    ) -> dict[str, Any]:
+        self.chamadas_rpc_motorista.append(
+            {
+                "requisicao_id": requisicao_id,
+                "momento": momento,
+                "ator_id": ator_id,
+                "latitude": latitude,
+                "longitude": longitude,
+                "precisao_m": precisao_m,
+                "km_saida": km_saida,
+                "km_chegada": km_chegada,
+            }
+        )
+        with self._lock:
+            if momento not in {"saida", "chegada"}:
+                raise erro_db("AG037", "Momento inválido.")
+            r = self.requisicoes.get(requisicao_id)
+            if r is None:
+                raise erro_db("AG037", "Requisição inexistente.")
+            p = self.perfis.get(ator_id)
+            if p is None or not p.ativo or p.role != "motorista":
+                raise erro_db("AG002", "Apenas motorista ativo usa este registro.")
+            if not (self.config.motorista and self.config.motorista_registra):
+                raise erro_db("AG034", "Registro pelo motorista desligado.")
+            if r.get("motorista_id") != ator_id:
+                raise erro_db("AG035", "Somente o motorista designado registra.")
+            esperado = {"saida": "autorizada", "chegada": "em_uso"}[momento]
+            if r["status"] != esperado:
+                raise erro_db("AG001", "Momento incompatível com o status.")
+
+            antes = (len(self.localizacoes), len(self.eventos))  # início da "transação"
+            if self.config.motorista_localizacao:
+                self._validar_coordenadas_rpc(latitude, longitude, precisao_m)
+                self.localizacoes.append(
+                    {
+                        "requisicao_id": requisicao_id,
+                        "momento": momento,
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "precisao_m": precisao_m,
+                        "registrado_por": ator_id,
+                        "registrado_em": datetime.now(UTC).isoformat(),
+                    }
+                )
+                # Auditoria do banco: sem latitude, longitude nem precisão.
+                self.eventos.append(
+                    {
+                        "tabela": "requisicoes",
+                        "registro_id": requisicao_id,
+                        "acao": "localizacao_registrada",
+                        "ator_id": ator_id,
+                        "de": None,
+                        "para": None,
+                        "detalhes": {"recurso": "motorista_localizacao", "momento": momento},
+                    }
+                )
+            campos: dict[str, Any] = (
+                {"status": "em_uso", "saida_registrada_por": ator_id}
+                if momento == "saida"
+                else {"status": "concluida", "chegada_registrada_por": ator_id}
+            )
+            if km_saida is not None:
+                campos["km_saida"] = km_saida
+            if km_chegada is not None:
+                campos["km_chegada"] = km_chegada
+            try:
+                atualizada = self._transicionar(requisicao_id, esperado, campos)
+            except Exception:
+                del self.localizacoes[antes[0] :], self.eventos[antes[1] :]  # ROLLBACK
+                raise
+            assert atualizada is not None
+            return {
+                "status": atualizada["status"],
+                "localizacao_gravada": self.config.motorista_localizacao,
+            }
+
+    @staticmethod
+    def _validar_coordenadas_rpc(
+        latitude: float | None, longitude: float | None, precisao_m: float | None
+    ) -> None:
+        def ruim(v: float | None, lim: float) -> bool:
+            return v is None or isinstance(v, bool) or not math.isfinite(v) or abs(v) > lim
+
+        if ruim(latitude, 90) or ruim(longitude, 180):
+            raise erro_db("AG036", "Coordenadas inválidas.")
+        if precisao_m is not None and (
+            not math.isfinite(precisao_m) or precisao_m < 0 or precisao_m > 999_999
+        ):
+            raise erro_db("AG036", "Precisão inválida.")
+
+    def listar_localizacoes(self, requisicao_id: str) -> list[dict[str, Any]]:
+        return [dict(x) for x in self.localizacoes if x["requisicao_id"] == requisicao_id]
 
     @staticmethod
     def _ck(nome: str) -> Exception:

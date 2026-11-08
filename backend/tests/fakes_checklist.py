@@ -66,7 +66,19 @@ class ChecklistMemoria:
             if r["status"] != esperado:
                 raise erro_db("AG014", "Checklist fora da janela.")
             p = self.perfis.get(registrado_por)
-            if p is None or not p.ativo or p.role not in {"autorizador", "admin"}:
+            # Contrato esperado da migration do Motorista: além da equipe, o motorista ATIVO
+            # atribuído à viagem, e só com `motorista_registra` ligado.
+            motorista_da_viagem = (
+                p is not None
+                and p.role == "motorista"
+                and self.config.motorista_registra
+                and r.get("motorista_id") == p.id
+            )
+            if (
+                p is None
+                or not p.ativo
+                or not (p.role in {"autorizador", "admin"} or motorista_da_viagem)
+            ):
                 raise erro_db("AG002", "Apenas autorizador ou admin ativo registra checklist.")
             if avarias != (descricao_avarias is not None):
                 raise erro_db("23514", 'check constraint "ck_checklists_avarias_descricao"')

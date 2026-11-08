@@ -3,7 +3,8 @@
 -- ============================================================================
 -- Rode UMA vez, no SQL Editor do Supabase (papel postgres), depois dos testes com dados
 -- ficticios e ANTES do uso real. NUNCA rode depois que o sistema tiver dados reais: ela apaga
--- requisicoes, checklists, fotos de perfil, acessos de login e (por padrao) a auditoria.
+-- requisicoes, checklists, notificacoes, localizacoes, envios de relatorio, uso de IA, fotos de perfil,
+-- acessos de login e (por padrao) a auditoria.
 -- Passo a passo em linguagem simples: supabase/ops/README.md e docs/limpeza-pre-lancamento.md.
 --
 -- COMO USAR
@@ -12,14 +13,21 @@
 --   2. Para apagar de verdade, mude SOMENTE os parametros marcados abaixo e rode de novo.
 --
 -- O QUE FAZ (tudo em uma unica transacao: ou apaga tudo ou nao apaga nada)
---   APAGA : checklist_fotos, checklists, requisicoes, perfil_fotos, acessos_login e, se
---           v_apagar_auditoria for true, auditoria.
+--   APAGA (10 tabelas, filhas primeiro): checklist_fotos, checklists, notificacoes, localizacoes_viagem,
+--           requisicoes, perfil_fotos, acessos_login, envios_email, ia_uso e, se v_apagar_auditoria
+--           for true, auditoria.
 --   MANTEM: perfis (nao existe DELETE; desative usuarios de teste pelo sistema), veiculos,
---           configuracoes, convites, auth.* e storage.* (arquivos dos buckets 'avatares' e
---           'checklists' sao esvaziados pelo painel; o SQL NAO apaga arquivos).
+--           configuracoes, ia_configuracoes, convites, auth.* e storage.* (arquivos dos buckets
+--           'avatares' e 'checklists' sao esvaziados pelo painel; o SQL NAO apaga arquivos).
 --   Para apagar, desliga SOMENTE os gatilhos NOMEADOS que bloqueiam o DELETE dessas tabelas e os
---   religa com ENABLE ALWAYS. No fim compara o estado de TODOS os gatilhos do schema public com o
+--   religa no MESMO modo de antes (ENABLE ALWAYS, ou ENABLE padrao nos 2 que nasceram assim). No fim compara o estado de TODOS os gatilhos do schema public com o
 --   de antes; qualquer diferenca desfaz tudo.
+--   notificacoes e localizacoes_viagem: no sistema o DELETE delas so passa com marcador transacional
+--   do expurgo E piso de idade (30 dias / 12 meses). Dado de teste e recente, entao o marcador nao
+--   serve: esta limpeza desliga o gatilho nomeado (trg_notificacoes_proteger e
+--   trg_localizacoes_viagem_imutavel) como nas demais e o religa, sem tocar nas funcoes de expurgo nem
+--   no piso do sistema. Os gatilhos de TRUNCATE (trg_*_sem_truncate) nunca sao tocados.
+--   PRE-REQUISITO: aplicar ANTES a migration 20261114120000 (db push); sem ela o script recusa (LD004).
 --
 -- ANTES DE RODAR (ensaio ou real): deixe o sistema PARADO (na VPS: `docker compose stop backend`,
 --   ou rode fora de horario; depois `docker compose start backend`). Nao ha LOCK TABLE: o lock
@@ -48,8 +56,9 @@ declare
   v_executar         boolean := false;
   -- Para apagar de verdade escreva exatamente:  APAGAR DADOS DE TESTE ofwvoztarroglekfwohs
   v_confirmacao      text    := '';
-  -- SEGUNDA CONFIRMACAO: copie do ENSAIO o TOTAL de linhas das 6 tabelas do escopo (requisicoes +
-  -- checklists + checklist_fotos + perfil_fotos + acessos_login + auditoria; "COPIE ESTE NUMERO ...").
+  -- SEGUNDA CONFIRMACAO: copie do ENSAIO o TOTAL de linhas das 10 tabelas do escopo (checklist_fotos,
+  -- checklists, notificacoes, localizacoes_viagem, requisicoes, perfil_fotos, acessos_login,
+  -- envios_email, ia_uso e auditoria; "COPIE ESTE NUMERO ...").
   -- Na execucao real tem de ser igual ao total ATUAL (0 so vale se o total for 0); -1 nunca e
   -- aceito. Assim um texto salvo e reaproveitado depois nao apaga nada.
   v_confere_total    int     := -1;
@@ -71,14 +80,21 @@ declare
   v_dono        oid;
   v_frase       text;
 
-  -- Ordem do DELETE: filhas primeiro (checklist_fotos -> checklists -> requisicoes).
-  -- v_gatilhos[i] e o UNICO gatilho que bloqueia o DELETE de v_tabelas[i].
-  v_tabelas   text[] := array['checklist_fotos', 'checklists', 'requisicoes',
-                              'perfil_fotos', 'acessos_login', 'auditoria'];
+  -- Ordem do DELETE: filhas primeiro. Dependem de requisicoes: checklists (-> checklist_fotos),
+  -- notificacoes e localizacoes_viagem; por isso vem antes dela. envios_email e ia_uso so referenciam
+  -- perfis (mantida). A auditoria e sempre a ULTIMA (v_qtd = 9 a deixa de fora).
+  -- v_gatilhos[i] e o UNICO gatilho de DELETE de v_tabelas[i] (sera desligado e religado).
+  v_tabelas   text[] := array['checklist_fotos', 'checklists', 'notificacoes', 'localizacoes_viagem',
+                              'requisicoes', 'perfil_fotos', 'acessos_login', 'envios_email',
+                              'ia_uso', 'auditoria'];
   v_gatilhos  text[] := array['trg_checklist_fotos_imutavel', 'trg_checklists_imutavel',
+                              'trg_notificacoes_proteger', 'trg_localizacoes_viagem_imutavel',
                               'trg_requisicoes_sem_delete', 'trg_perfil_fotos_sem_delete',
-                              'trg_acessos_login_imutavel', 'trg_auditoria_append_only'];
-  v_mantidas  text[] := array['perfis', 'veiculos', 'configuracoes', 'convites'];
+                              'trg_acessos_login_imutavel', 'trg_envios_email_sem_delete',
+                              'trg_ia_uso_imutavel', 'trg_auditoria_append_only'];
+  v_mantidas  text[] := array['perfis', 'veiculos', 'configuracoes', 'ia_configuracoes', 'convites'];
+  v_total_tab constant int := 10;  -- tamanho de v_tabelas
+  v_modos     text[] := '{}';      -- modo original ('A' ou 'O') de cada gatilho a religar
   v_qtd       int;                 -- quantas de v_tabelas entram (auditoria e a ultima)
   v_oids      oid[];
   i           int;
@@ -139,11 +155,11 @@ begin
   end if;
 
   -- ---- 2. Estrutura esperada -------------------------------------------------------------
-  v_qtd := case when v_apagar_auditoria then 6 else 5 end;
+  v_qtd := case when v_apagar_auditoria then v_total_tab else v_total_tab - 1 end;
 
-  for i in 1 .. 6 loop
+  for i in 1 .. v_total_tab loop
     if to_regclass('public.' || v_tabelas[i]) is null then
-      raise exception 'ESTRUTURA INESPERADA: a tabela public.% nao existe (as migrations 1 a 29 foram aplicadas?). Nada foi apagado.', v_tabelas[i]
+      raise exception 'ESTRUTURA INESPERADA: a tabela public.% nao existe (as migrations 1 a 47, ate 20261114120000, foram aplicadas?). Nada foi apagado.', v_tabelas[i]
         using errcode = 'LD004';
     end if;
   end loop;
@@ -153,6 +169,17 @@ begin
         using errcode = 'LD004';
     end if;
   end loop;
+
+  -- A migration 20261114120000 (retencao das localizacoes) precisa estar aplicada ANTES: ela troca o
+  -- gatilho de localizacoes_viagem e acrescenta 'localizacao_expurgada' a ck_auditoria_acao (23 valores).
+  -- 'acao_administrativa' (usada no registro da limpeza) tambem precisa constar.
+  select pg_get_constraintdef(k.oid) into v_texto from pg_constraint k
+   where k.conrelid = 'public.auditoria'::regclass and k.conname = 'ck_auditoria_acao';
+  if v_texto is null or position('''localizacao_expurgada''' in v_texto) = 0
+     or position('''acao_administrativa''' in v_texto) = 0 then
+    raise exception 'ESTRUTURA INESPERADA: a migration 20261114120000 nao foi aplicada (ck_auditoria_acao sem localizacao_expurgada). Rode o db push antes. Nada foi apagado.'
+      using errcode = 'LD004';
+  end if;
 
   select array_agg(to_regclass('public.' || v_tabelas[g])::oid)
     into v_oids from generate_series(1, v_qtd) g;
@@ -165,7 +192,10 @@ begin
     end if;
   end loop;
 
-  -- Cada gatilho a desligar deve existir e estar em ENABLE ALWAYS ('A').
+  -- Cada gatilho a desligar deve existir e estar LIGADO: 'A' (ENABLE ALWAYS) ou 'O' (ENABLE padrao).
+  -- Desligado ('D') ou so em replica ('R') e recusado. O modo original e guardado em v_modos e
+  -- restaurado igual no fim (a fotografia dos gatilhos prova). Hoje trg_envios_email_sem_delete e
+  -- trg_ia_uso_imutavel estao em 'O' (as migrations deles nao usam ENABLE ALWAYS); os demais em 'A'.
   for i in 1 .. v_qtd loop
     select t.tgenabled into v_estado
       from pg_trigger t
@@ -173,10 +203,11 @@ begin
     if v_estado is null then
       raise exception 'ESTRUTURA INESPERADA: gatilho % nao encontrado em public.%. Nada foi apagado.', v_gatilhos[i], v_tabelas[i]
         using errcode = 'LD004';
-    elsif v_estado <> 'A' then
-      raise exception 'ESTRUTURA INESPERADA: gatilho % de public.% nao esta em ENABLE ALWAYS (estado %). Nada foi apagado.', v_gatilhos[i], v_tabelas[i], v_estado
+    elsif v_estado not in ('A', 'O') then
+      raise exception 'ESTRUTURA INESPERADA: gatilho % de public.% nao esta ligado (estado %). Nada foi apagado.', v_gatilhos[i], v_tabelas[i], v_estado
         using errcode = 'LD004';
     end if;
+    v_modos := v_modos || v_estado::text;
   end loop;
 
   -- Nenhum OUTRO gatilho de DELETE (ex.: auditoria de delete) nas tabelas do escopo.
@@ -200,9 +231,9 @@ begin
       using errcode = 'LD004';
   end if;
 
-  -- Segunda confirmacao: TOTAL de linhas das 6 tabelas do escopo (independe de v_apagar_auditoria).
+  -- Segunda confirmacao: TOTAL de linhas das 10 tabelas do escopo (independe de v_apagar_auditoria).
   v_total := 0;
-  for i in 1 .. 6 loop
+  for i in 1 .. v_total_tab loop
     execute format('select count(*) from public.%I', v_tabelas[i]) into n;
     v_total := v_total + n;
   end loop;
@@ -257,7 +288,9 @@ begin
 
   -- >>> RELIGAR (nao mude esta linha de comentario: os testes dependem dela)
   for i in 1 .. v_qtd loop
-    execute format('alter table public.%I enable always trigger %I', v_tabelas[i], v_gatilhos[i]);
+    execute format(case when v_modos[i] = 'A' then 'alter table public.%I enable always trigger %I'
+                        else 'alter table public.%I enable trigger %I' end,
+                   v_tabelas[i], v_gatilhos[i]);
   end loop;
 
   -- ---- 5. Verificacoes (qualquer falha desfaz TUDO) ---------------------------------------
@@ -320,12 +353,12 @@ begin
   end if;
 
   -- ---- 8. Relatorio -----------------------------------------------------------------------
-  v_rel := rpad('TABELA', 18) || lpad('ANTES', 8) || lpad('APAGADAS', 10) || E'\n';
+  v_rel := rpad('TABELA', 22) || lpad('ANTES', 8) || lpad('APAGADAS', 10) || E'\n';
   for i in 1 .. v_qtd loop
-    v_rel := v_rel || rpad(v_tabelas[i], 18) || lpad(v_antes[i]::text, 8) || lpad(v_apagadas[i]::text, 10) || E'\n';
+    v_rel := v_rel || rpad(v_tabelas[i], 22) || lpad(v_antes[i]::text, 8) || lpad(v_apagadas[i]::text, 10) || E'\n';
   end loop;
   if not v_apagar_auditoria then
-    v_rel := v_rel || rpad('auditoria', 18) || lpad(v_aud_antes::text, 8) || lpad('preservada', 10) || E'\n';
+    v_rel := v_rel || rpad('auditoria', 22) || lpad(v_aud_antes::text, 8) || lpad('preservada', 10) || E'\n';
   end if;
   v_rel := v_rel || E'\nMANTIDAS (nao mudam): ';
   for i in 1 .. array_length(v_mantidas, 1) loop
@@ -361,19 +394,24 @@ $limpeza$;
 -- apagadas_agora mostra quantas linhas foram apagadas. COPIE/FOTOGRAFE este resultado.
 select r.tabela, r.linhas, a.j ->> r.tabela as apagadas_agora, r.situacao
 from (
-  select 1 as o, 'requisicoes' as tabela, count(*) as linhas, 'apagada' as situacao from public.requisicoes
+  select 1 as o, 'checklist_fotos' as tabela, count(*) as linhas, 'apagada' as situacao from public.checklist_fotos
   union all select 2, 'checklists', count(*), 'apagada' from public.checklists
-  union all select 3, 'checklist_fotos', count(*), 'apagada' from public.checklist_fotos
-  union all select 4, 'perfil_fotos', count(*), 'apagada' from public.perfil_fotos
-  union all select 5, 'acessos_login', count(*), 'apagada' from public.acessos_login
-  union all select 6, 'auditoria', count(*), 'apagada (se v_apagar_auditoria = true); resta o registro da limpeza' from public.auditoria
-  union all select 7, 'perfis', count(*), 'mantida' from public.perfis
-  union all select 8, 'veiculos', count(*), 'mantida' from public.veiculos
-  union all select 9, 'configuracoes', count(*), 'mantida' from public.configuracoes
-  union all select 10, 'convites', count(*), 'mantida' from public.convites
-  union all select 11, 'LACRE do banco', 0, coalesce(nullif(shobj_description(
+  union all select 3, 'notificacoes', count(*), 'apagada' from public.notificacoes
+  union all select 4, 'localizacoes_viagem', count(*), 'apagada' from public.localizacoes_viagem
+  union all select 5, 'requisicoes', count(*), 'apagada' from public.requisicoes
+  union all select 6, 'perfil_fotos', count(*), 'apagada' from public.perfil_fotos
+  union all select 7, 'acessos_login', count(*), 'apagada' from public.acessos_login
+  union all select 8, 'envios_email', count(*), 'apagada' from public.envios_email
+  union all select 9, 'ia_uso', count(*), 'apagada' from public.ia_uso
+  union all select 10, 'auditoria', count(*), 'apagada (se v_apagar_auditoria = true); resta o registro da limpeza' from public.auditoria
+  union all select 11, 'perfis', count(*), 'mantida' from public.perfis
+  union all select 12, 'veiculos', count(*), 'mantida' from public.veiculos
+  union all select 13, 'configuracoes', count(*), 'mantida' from public.configuracoes
+  union all select 14, 'ia_configuracoes', count(*), 'mantida' from public.ia_configuracoes
+  union all select 15, 'convites', count(*), 'mantida' from public.convites
+  union all select 16, 'LACRE do banco', 0, coalesce(nullif(shobj_description(
       (select oid from pg_database where datname = current_database()), 'pg_database'), ''), '(sem lacre)')
-  union all select 12, 'Comentario anterior (so se lacrou agora)', 0,
+  union all select 17, 'Comentario anterior (so se lacrou agora)', 0,
       coalesce(nullif(current_setting('sisveiculos.comentario_anterior', true), ''), '-')
 ) r
 cross join (select nullif(current_setting('sisveiculos.apagadas', true), '')::jsonb as j) a

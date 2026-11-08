@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import type {
   Acao,
   ConfiguracaoIA,
+  ResultadoTesteIA,
   ConfiguracoesAdmin,
   CorpoAcao,
   CorpoIA,
@@ -10,6 +11,8 @@ import type {
   DadosVeiculo,
   EnvioRelatorio,
   ListaDestinatarios,
+  ListaLocalizacoes,
+  ListaMotoristas,
   FiltrosDashboard,
   FormatoRelatorio,
   Eu,
@@ -33,6 +36,7 @@ import type {
   Status,
   UploadFoto,
   UploadFotoPerfil,
+  UploadFotoUsuario,
   UsuarioAdmin,
   Veiculo,
   VeiculoAdmin,
@@ -172,6 +176,11 @@ export const admin = {
   /** Só aparece com `remover_foto` em acoes_permitidas; responde com o usuário atualizado. */
   removerFotoUsuario: (id: string) =>
     chamar<UsuarioAdmin>(`/admin/usuarios/${enc(id)}/foto`, { method: 'DELETE' }),
+  /** Só com `trocar_foto` em acoes_permitidas. */
+  solicitarUploadFotoUsuario: (id: string, d: { mime: string; tamanho: number }) =>
+    chamar<UploadFotoUsuario>(`/admin/usuarios/${enc(id)}/foto/upload-url`, JSON_POST(d)),
+  confirmarFotoUsuario: (id: string, fotoId: string) =>
+    chamar<UsuarioAdmin>(`/admin/usuarios/${enc(id)}/foto`, JSON_POST({ id: fotoId })),
   convidar: (d: NovoConvite) => chamar<{ convite: Convite }>('/admin/usuarios', JSON_POST(d)),
 
   convites: (p: { estado?: string; limite: number; offset: number }) =>
@@ -188,12 +197,20 @@ export const admin = {
     offset: number;
   }) => chamar<ListaAcessos>(`/admin/acessos${query(p)}`),
 
+  /** Coordenadas gravadas nos registros de saída/chegada. A API responde 403 a quem não é admin. */
+  localizacoes: (id: string) =>
+    chamar<ListaLocalizacoes>(`/admin/requisicoes/${enc(id)}/localizacoes`),
   configuracoes: () => chamar<ConfiguracoesAdmin>('/admin/configuracoes'),
   atualizarConfiguracoes: (d: Record<string, boolean>) =>
     chamar<ConfiguracoesAdmin>('/admin/configuracoes', { method: 'PUT', body: JSON.stringify(d) }),
   ia: () => chamar<ConfiguracaoIA>('/admin/ia'),
   atualizarIA: (d: CorpoIA) =>
     chamar<ConfiguracaoIA>('/admin/ia', { method: 'PUT', body: JSON.stringify(d) }),
+  testarIA: (provedor: string) =>
+    chamar<ResultadoTesteIA>('/admin/ia/testar', {
+      method: 'POST',
+      body: JSON.stringify({ provedor }),
+    }),
 };
 
 export const api = {
@@ -212,6 +229,17 @@ export const api = {
   requisicao: (id: string) => chamar<Requisicao>(`/requisicoes/${encodeURIComponent(id)}`),
   criar: (dados: NovaRequisicao) =>
     chamar<Requisicao>('/requisicoes', { method: 'POST', body: JSON.stringify(dados) }),
+  /** Seletor de motorista da autorização (staff). Recurso desligado: a API recusa. */
+  motoristas: () => chamar<ListaMotoristas>('/motoristas'),
+  /** Viagens atribuídas ao próprio motorista (Perfil Motorista). */
+  viagensMotorista: () => chamar<ListaRequisicoes>('/motorista/viagens'),
+  viagemMotorista: (id: string) => chamar<Requisicao>(`/motorista/viagens/${enc(id)}`),
+  /** Troca o motorista (só com `atribuir_motorista` em acoes_permitidas); a API valida. */
+  atribuirMotorista: (id: string, motoristaId: string) =>
+    chamar<Requisicao>(
+      `/requisicoes/${enc(id)}/motorista`,
+      JSON_POST({ motorista_id: motoristaId }),
+    ),
   /** Ações: autorizar, negar, saida, chegada, cancelar (rotas da API). */
   executar: (id: string, rota: RotaAcao, corpo?: CorpoAcao) =>
     chamar<Requisicao>(`/requisicoes/${encodeURIComponent(id)}/${rota}`, JSON_POST(corpo)),

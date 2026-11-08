@@ -25,6 +25,8 @@ interface Req {
   atualizado_em: string;
   km_saida: number | null;
   km_chegada: number | null;
+  /** Perfil Motorista: designado na autorização. */
+  motorista?: { id: string; nome: string } | null;
 }
 
 const VEICULO_ID = '11111111-1111-4111-8111-111111111111';
@@ -548,7 +550,6 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
           mais_antiga: maisAntiga(por('autorizada')),
         },
         em_uso: { total: por('em_uso').length, decorrido_medio_s: 3600, decorrido_max_s: 7200 },
-        itens: abertas.map((r) => ver(papel, r)),
       },
       volume: {
         totais: {
@@ -610,7 +611,16 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     };
     if (!(painel in dados))
       return erro(route, 404, 'painel_desconhecido', 'Painel não encontrado.');
-    await route.fulfill({ json: { painel, filtros, dados: dados[painel] } });
+    await route.fulfill({
+      json: {
+        painel,
+        filtros,
+        ...(painel === 'operacao'
+          ? { itens_truncados: false, itens: abertas.map((r) => ver(papel, r)) }
+          : {}),
+        dados: dados[painel],
+      },
+    });
   });
 
   const FOTO_URL = 'https://exemplo.supabase.co/storage/v1/object/sign/checklists/';
@@ -780,6 +790,10 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     r.atualizado_em = agora;
     const nome = PESSOAS[papel].nome;
     if (acao === 'autorizar') {
+      // Perfil Motorista: o corpo traz `motorista_id` opcional (a API real valida).
+      if (typeof kmBody.motorista_id === 'string') {
+        r.motorista = { id: kmBody.motorista_id, nome: 'Carlos Lima' };
+      }
       r.autorizado_em = agora;
       r.autorizado_por_nome = nome;
     }

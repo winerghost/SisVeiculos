@@ -93,6 +93,8 @@ export function PainelOperacao() {
   }, [recarregar]);
 
   const d = op.dados?.dados;
+  const itens = op.dados?.itens ?? [];
+  const truncados = op.dados?.itens_truncados === true;
   return (
     <>
       <ExportarPainel painel="operacao" efetivos={op.dados?.filtros} />
@@ -136,11 +138,16 @@ export function PainelOperacao() {
           </p>
 
           <h2 className="mt-5 mb-3 text-base font-medium text-texto-2">Requisições em aberto</h2>
-          {d.itens.length === 0 ? (
+          {truncados ? (
+            <p className="mb-3 text-sm text-texto-2">
+              Exibindo apenas as requisições mais urgentes.
+            </p>
+          ) : null}
+          {itens.length === 0 ? (
             <Vazio>Nenhuma requisição em aberto.</Vazio>
           ) : (
             <ul className="flex flex-col gap-3">
-              {d.itens.map((r) => (
+              {itens.map((r) => (
                 <CartaoRequisicao
                   key={r.id}
                   req={r}

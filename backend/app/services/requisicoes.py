@@ -13,6 +13,7 @@ from typing import Any
 from app.errors import (
     ChecklistObrigatorio,
     NaoEncontrado,
+    RecursoDesligado,
     RequisicaoInvalida,
     SemPermissao,
     TransicaoInvalida,
@@ -23,12 +24,19 @@ from app.modelos import Configuracoes, Perfil, Requisicao
 from app.notificacoes import Notificador, NotificadorNulo
 from app.repositorios.base import Repositorio
 from app.services.fotos_exibicao import FotosExibicao
+from app.services.localizacao import validar_localizacao
 from app.services.validacao import validar_criacao, validar_km, validar_uuid
 
 STAFF = frozenset({"autorizador", "admin"})
 STATUS_VALIDOS = frozenset(
     {"solicitada", "autorizada", "em_uso", "concluida", "negada", "cancelada"}
 )
+MSG_MOTORISTA_DESLIGADO = "O perfil Motorista está desligado nas Configurações."
+MSG_MOTORISTA_INVALIDO = (
+    "O motorista informado não existe, está inativo ou não tem o perfil motorista."
+)
+ESTADOS_ATRIBUICAO = ("autorizada", "em_uso")  # onde o motorista pode ser atribuído ou trocado
+ACOES_MOTORISTA = frozenset({"registrar_saida", "registrar_chegada"})
 MSG_OCUPADO = (
     "Este veículo já possui uma requisição em aberto. "
     "Ele só aceita novo pedido após a conclusão, negativa ou cancelamento da anterior."
@@ -267,10 +275,18 @@ class ServicoRequisicoes:
         self._autoauto = permitir_autoautorizacao
 
     # -- permissões -----------------------------------------------------------------
-    def _pode(self, acao: str, perfil: Perfil, req: Requisicao) -> bool:
+    def _pode(self, acao: str, perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
         t = TRANSICOES[acao]
         if req["status"] not in t.origem:
             return False
+        if perfil.role == "motorista":
+            # Só registra saída/chegada das PRÓPRIAS viagens e só com o recurso ligado.
+            return (
+                acao in ACOES_MOTORISTA
+                and config.motorista
+                and config.motorista_registra
+                and req.get("motorista_id") == perfil.id
+            )
         if acao == "cancelar":
             if perfil.role in STAFF:
                 return True
@@ -282,8 +298,18 @@ class ServicoRequisicoes:
             return req["usuario_id"] != perfil.id
         return True
 
-    def acoes_permitidas(self, perfil: Perfil, req: Requisicao) -> list[str]:
-        return [a for a in TRANSICOES if self._pode(a, perfil, req)]
+    def acoes_permitidas(
+        self, perfil: Perfil, req: Requisicao, config: Configuracoes | None = None
+    ) -> list[str]:
+        config = config or self._repo.ler_configuracoes()
+        acoes = [a for a in TRANSICOES if self._pode(a, perfil, req, config)]
+        if self._pode_atribuir(perfil, req, config):
+            acoes.append("atribuir_motorista")
+        return acoes
+
+    @staticmethod
+    def _pode_atribuir(perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
+        return config.motorista and perfil.role in STAFF and req["status"] in ESTADOS_ATRIBUICAO
 
     def campos_acao(
         self,
@@ -297,12 +323,16 @@ class ServicoRequisicoes:
         `checklist_pendente`: momento cujo checklist ainda precisa ser registrado antes da ação
         (só com o recurso ligado). Na chegada só se exige o checklist de chegada.
         """
-        if not config.quilometragem and not config.checklist:
-            return {}
-        feitos = (checklists or {}).get(req["id"], set())
         saida: dict[str, dict[str, Any]] = {}
+        if config.motorista and self._pode("autorizar", perfil, req, config):
+            saida["autorizar"] = {"campos_obrigatorios": [], "campos_opcionais": ["motorista_id"]}
+        # Localização: só o motorista a informa (autorizador/admin registrando não coleta).
+        coleta = perfil.role == "motorista" and config.motorista_localizacao
+        if not config.quilometragem and not config.checklist and not coleta:
+            return saida
+        feitos = (checklists or {}).get(req["id"], set())
         for acao, momento in (("registrar_saida", "saida"), ("registrar_chegada", "chegada")):
-            if not self._pode(acao, perfil, req):
+            if not self._pode(acao, perfil, req, config):
                 continue
             campos: list[str] = []
             if config.quilometragem:
@@ -318,6 +348,9 @@ class ServicoRequisicoes:
                         ]
                     )
             entrada: dict[str, Any] = {"campos_obrigatorios": campos}
+            if coleta:
+                entrada["campos_obrigatorios"] = [*campos, "latitude", "longitude"]
+                entrada["campos_opcionais"] = ["precisao_m"]
             if config.checklist and momento not in feitos:
                 entrada["checklist_pendente"] = momento
             saida[acao] = entrada
@@ -338,7 +371,9 @@ class ServicoRequisicoes:
             if r.get(c) and (staff or r[c] == r.get("usuario_id"))
         }
         ids_veiculos = {r["veiculo_id"] for r in reqs if r.get("veiculo_id")}
+        ids_motoristas = {r["motorista_id"] for r in reqs if r.get("motorista_id")}
         nomes = self._repo.nomes_perfis(ids_perfis)
+        nomes_motoristas = self._repo.nomes_perfis(ids_motoristas) if ids_motoristas else {}
         veiculos = self._repo.descricoes_veiculos(ids_veiculos)
         # Fotos só de quem aparece nestas requisições (já filtradas por dono/role); inativo e
         # falha do Storage resultam em null, nunca em erro.
@@ -355,7 +390,9 @@ class ServicoRequisicoes:
                 # o que já foi gravado.
                 "km_saida": r.get("km_saida"),
                 "km_chegada": r.get("km_chegada"),
-                "acoes_permitidas": self.acoes_permitidas(perfil, r),
+                "acoes_permitidas": self.acoes_permitidas(perfil, r, config),
+                # Só id e nome (nunca e-mail nem unidade); null enquanto não atribuído.
+                "motorista": self._motorista(r, nomes_motoristas),
                 "campos_acao": self.campos_acao(perfil, r, config, checklists),
                 "historico": montar_historico(r, nomes, incluir_por=staff),
                 "linha_do_tempo": montar_linha_do_tempo(
@@ -367,6 +404,11 @@ class ServicoRequisicoes:
             }
             for r in reqs
         ]
+
+    @staticmethod
+    def _motorista(r: Requisicao, nomes: dict[str, str]) -> dict[str, Any] | None:
+        mid = r.get("motorista_id")
+        return {"id": mid, "nome": nomes.get(mid)} if mid else None
 
     @staticmethod
     def _sem_equipe(r: Requisicao, staff: bool) -> Requisicao:
@@ -395,10 +437,20 @@ class ServicoRequisicoes:
     # -- leitura (anti-IDOR) --------------------------------------------------------
     def obter(self, perfil: Perfil, requisicao_id: str) -> Requisicao:
         req = self._repo.obter_requisicao(validar_uuid(requisicao_id))
+        if perfil.role == "motorista":
+            # Motorista: só as viagens atribuídas a ele, com o recurso ligado.
+            self.exigir_motorista_ligado()
+            if req is None or req.get("motorista_id") != perfil.id:
+                raise NaoEncontrado("Viagem não encontrada.")
+            return req
         # 404 (e não 403) para não revelar a existência de requisição alheia.
         if req is None or (perfil.role not in STAFF and req["usuario_id"] != perfil.id):
             raise NaoEncontrado("Requisição não encontrada.")
         return req
+
+    def exigir_motorista_ligado(self) -> None:
+        if not self._repo.ler_configuracoes().motorista:
+            raise RecursoDesligado(MSG_MOTORISTA_DESLIGADO)
 
     def listar(
         self, perfil: Perfil, *, status: str | None, limite: int, offset: int
@@ -407,15 +459,57 @@ class ServicoRequisicoes:
             raise RequisicaoInvalida("Status inválido.")
         limite = max(1, min(limite, 100))
         offset = max(0, offset)
-        dono = None if perfil.role in STAFF else perfil.id
+        dono: str | None = None if perfil.role in STAFF else perfil.id
+        motorista: str | None = None
+        if perfil.role == "motorista":
+            # O motorista nunca é dono: enxerga só as viagens atribuídas (filtro na consulta).
+            self.exigir_motorista_ligado()
+            dono, motorista = None, perfil.id
         itens = self._repo.listar_requisicoes(
-            usuario_id=dono, status=status, limite=limite, offset=offset
+            usuario_id=dono, status=status, limite=limite, offset=offset, motorista_id=motorista
         )
-        total = self._repo.contar_requisicoes(usuario_id=dono, status=status)
+        total = self._repo.contar_requisicoes(
+            usuario_id=dono, status=status, motorista_id=motorista
+        )
         return {"itens": self.apresentar_lote(perfil, itens), "total": total}
+
+    # -- motorista ------------------------------------------------------------------
+    def validar_motorista(self, valor: Any) -> str:
+        """Id de um motorista ATIVO com role motorista (lido de `perfis`, nunca do cliente)."""
+        mid = validar_uuid(valor, "motorista_id")
+        alvo = self._repo.obter_perfil(mid)
+        if alvo is None or not alvo.ativo or alvo.role != "motorista":
+            raise RequisicaoInvalida(MSG_MOTORISTA_INVALIDO, "motorista_invalido")
+        return mid
+
+    def atribuir_motorista(self, perfil: Perfil, requisicao_id: str, corpo: Any) -> dict[str, Any]:
+        """Atribui, troca (ou remove, com null) o motorista de requisição autorizada/em uso."""
+        if perfil.role not in STAFF:
+            raise SemPermissao("Você não tem permissão para esta ação.")
+        self.exigir_motorista_ligado()
+        req = self.obter(perfil, requisicao_id)
+        if not isinstance(corpo, dict) or set(corpo) != {"motorista_id"}:
+            raise RequisicaoInvalida("Envie um objeto JSON apenas com 'motorista_id'.")
+        if req["status"] not in ESTADOS_ATRIBUICAO:
+            raise TransicaoInvalida(
+                "O motorista só pode ser atribuído a uma requisição autorizada ou em uso."
+            )
+        bruto = corpo["motorista_id"]
+        alvo = None if bruto is None else self.validar_motorista(bruto)
+        if alvo == req.get("motorista_id"):
+            return self.apresentar(perfil, req)  # sem mudança: nada a gravar (o banco recusaria)
+        # O ator (autorizador/admin do JWT) viaja no mesmo UPDATE: exigência do trigger do banco.
+        atualizada = self._repo.atribuir_motorista(
+            req["id"], alvo, list(ESTADOS_ATRIBUICAO), ator_id=perfil.id
+        )
+        if atualizada is None:
+            raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
+        return self.apresentar(perfil, atualizada)
 
     # -- escrita --------------------------------------------------------------------
     def criar(self, perfil: Perfil, corpo: Any) -> dict[str, Any]:
+        if perfil.role == "motorista":
+            raise SemPermissao("Você não tem permissão para esta ação.")
         dados = validar_criacao(corpo)
         veiculo = self._repo.obter_veiculo(dados["veiculo_id"])
         if veiculo is None or not veiculo.get("ativo", True):
@@ -435,15 +529,71 @@ class ServicoRequisicoes:
         req = self.obter(perfil, requisicao_id)  # anti-IDOR antes de qualquer outra coisa
         if req["status"] not in t.origem:
             raise TransicaoInvalida(t.mensagem_estado)
-        if not self._pode(acao, perfil, req):
+        config = self._repo.ler_configuracoes()
+        if not self._pode(acao, perfil, req, config):
             raise SemPermissao(self._mensagem_negada(acao, perfil, req))
         self._exigir_checklist(acao, req)
-        campos = {"status": t.destino, t.campo_ator: perfil.id, **self._km(acao, req, corpo)}
+        if perfil.role == "motorista":
+            return self._executar_motorista(acao, perfil, req, corpo, config)
+        campos = {
+            "status": t.destino,
+            t.campo_ator: perfil.id,
+            **self._km(acao, req, corpo),
+            # Autorizador/admin NÃO coleta localização: latitude/longitude do corpo são ignoradas.
+            **self._motorista_na_autorizacao(acao, perfil, corpo, config),
+        }
         atualizada = self._repo.transicionar(req["id"], req["status"], campos)
         if atualizada is None:  # outra requisição mudou o estado no meio do caminho
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
         self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada)  # após o commit
         return self.apresentar(perfil, atualizada)
+
+    def _executar_motorista(
+        self, acao: str, perfil: Perfil, req: Requisicao, corpo: Any, config: Configuracoes
+    ) -> dict[str, Any]:
+        """Saída/chegada pelo motorista: SEMPRE pela RPC `registrar_transicao_motorista`, que grava
+        a localização e a transição na mesma transação (falhou uma, nenhuma persiste).
+
+        Km e checklist seguem as mesmas validações do registro da equipe. Com a localização ligada,
+        latitude e longitude são obrigatórias (sem exceção); desligada, são ignoradas.
+        """
+        km = self._km(acao, req, corpo)
+        coordenadas = validar_localizacao(corpo) if config.motorista_localizacao else None
+        momento = "saida" if acao == "registrar_saida" else "chegada"
+        resultado = self._repo.registrar_transicao_motorista(
+            requisicao_id=req["id"],
+            momento=momento,
+            ator_id=perfil.id,
+            latitude=coordenadas.latitude if coordenadas else None,
+            longitude=coordenadas.longitude if coordenadas else None,
+            precisao_m=coordenadas.precisao_m if coordenadas else None,
+            km_saida=km.get("km_saida"),
+            km_chegada=km.get("km_chegada"),
+        )
+        atualizada = self._repo.obter_requisicao(req["id"])
+        if atualizada is None or atualizada["status"] != resultado["status"]:
+            raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
+        self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada)  # após o commit
+        return self.apresentar(perfil, atualizada)
+
+    def _motorista_na_autorizacao(
+        self, acao: str, perfil: Perfil, corpo: Any, config: Configuracoes
+    ) -> dict[str, str]:
+        """Autorizar aceita `motorista_id` opcional. Recurso desligado: o campo é ignorado.
+
+        `motorista_alterado_por` (o autorizador/admin do JWT) vai no MESMO UPDATE que muda
+        `motorista_id`: o trigger do banco o exige (AG002) e o zera em seguida.
+        """
+        if acao != "autorizar" or not config.motorista or corpo is None:
+            return {}
+        if not isinstance(corpo, dict):
+            raise RequisicaoInvalida("Envie um objeto JSON.")
+        if corpo.get("motorista_id") is None:
+            return {}
+        return {
+            "motorista_id": self.validar_motorista(corpo["motorista_id"]),
+            "motorista_alterado_por": perfil.id,
+        }
 
     def _exigir_checklist(self, acao: str, req: Requisicao) -> None:
         """Recurso ligado: o checklist do momento precisa existir antes da saída/chegada.

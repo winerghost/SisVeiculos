@@ -40,8 +40,14 @@ export interface OpcoesAdmin {
   anaComFoto?: boolean;
   /** DELETE da foto de usuário responde 403 sem_permissao. */
   removerFotoNegado?: boolean;
+  /** Os POSTs de troca de foto respondem com este erro da API. */
+  trocarFotoErro?: { status: number; codigo: string; mensagem: string };
   /** Quantidade de registros de acesso devolvidos (padrão 45; 0 = estado vazio). */
   totalAcessos?: number;
+  /** Chaves em `testes_disponiveis` (padrão: ['anthropic']; [] = sem botão de teste). */
+  testesIA?: string[];
+  /** Resultado de POST /admin/ia/testar (padrão 'ok'); 'conflito' responde 409. */
+  resultadoTesteIA?: 'ok' | 'falha' | 'conflito';
 }
 
 const ACESSO_BASE = Date.parse('2026-11-05T15:00:00Z');
@@ -86,7 +92,13 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         },
       ]
     : [];
-  const config = { quilometragem: false, abastecimento_manutencao: false };
+  const config = {
+    quilometragem: false,
+    abastecimento_manutencao: false,
+    motorista: false,
+    motorista_registra: false,
+    motorista_localizacao: false,
+  };
   const ia: { mestre: boolean; saudacao: boolean; provedor: unknown; modelo: unknown } = {
     mestre: false,
     saudacao: false,
@@ -100,6 +112,11 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     senha: unknown[];
     config: unknown[];
     ia: Record<string, unknown>[];
+    iaTestar: unknown[];
+    /** Corpos de POST /admin/usuarios/:id/foto/upload-url e /foto, e objetos enviados ao Storage. */
+    uploadUrlFoto: unknown[];
+    confirmarFoto: unknown[];
+    uploadsStorage: string[];
     consultas: string[];
     /** Query string de cada GET /api/admin/acessos recebido. */
     acessos: string[];
@@ -116,9 +133,20 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     senha: [],
     config: [],
     ia: [],
+    iaTestar: [],
+    uploadUrlFoto: [],
+    confirmarFoto: [],
+    uploadsStorage: [],
   };
   let aceito = false;
   let mfaConcluido = !opcoes.exigirMfa;
+
+  const FOTO_UPLOAD_ID = 'abababab-abab-4bab-8bab-abababababab';
+  await page.route('**/storage/v1/object/upload/sign/**', (route) => {
+    const completo = decodeURIComponent(new URL(route.request().url()).pathname);
+    corpos.uploadsStorage.push(completo.replace(/^.*\/object\/upload\/sign\/avatares\//, ''));
+    return route.fulfill({ json: { Key: 'avatares/x' } });
+  });
 
   let anaFoto = !!opcoes.anaComFoto;
   const FOTO_URL = 'https://exemplo.supabase.co/storage/v1/object/sign/avatares/ana.jpg?token=t';
@@ -131,6 +159,8 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     acoes_permitidas: [
       'editar',
       ...(temFoto(u) ? ['remover_foto'] : []),
+      // Conta ativa de outra pessoa pode ter a foto trocada pelo admin.
+      ...(u.ativo && u.id !== ADMIN_ID ? ['trocar_foto'] : []),
       ...(u.id === ADMIN_ID ? [] : ['alterar_role']),
       // Conta inativa também oferece `desativar` (refaz o bloqueio no Auth).
       ...(u.ativo ? (u.id === ADMIN_ID ? [] : ['desativar']) : ['ativar', 'desativar']),
@@ -341,6 +371,29 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         if (u.id === ANA_ID) anaFoto = false;
         return route.fulfill({ json: apresentar(u) });
       }
+      if (acao === 'foto' && m === 'POST') {
+        const sub = partes[3];
+        const corpo = req.postDataJSON();
+        if (opcoes.trocarFotoErro) {
+          const e = opcoes.trocarFotoErro;
+          return erro(route, e.status, e.codigo, e.mensagem);
+        }
+        if (sub === 'upload-url') {
+          corpos.uploadUrlFoto.push(corpo);
+          return route.fulfill({
+            status: 201,
+            json: {
+              id: FOTO_UPLOAD_ID,
+              url_upload: 'https://exemplo.supabase.co/storage/v1/object/upload/sign/x',
+              token: 'token-de-teste',
+              caminho: `tmp/${u.id}/${FOTO_UPLOAD_ID}`,
+            },
+          });
+        }
+        corpos.confirmarFoto.push(corpo);
+        if (u.id === ANA_ID) anaFoto = true;
+        return route.fulfill({ json: apresentar(u) });
+      }
       if (m === 'PATCH') {
         Object.assign(u, req.postDataJSON());
         return route.fulfill({ json: apresentar(u) });
@@ -439,6 +492,15 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
             "'Abastecimento e manutenção' exige 'Quilometragem' ligado.",
           );
         }
+        // Dependência: 'Motorista registra' exige o Perfil Motorista ligado.
+        if (pedido.motorista_registra && !config.motorista && !pedido.motorista) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            "'Motorista registra saída e chegada' exige 'Perfil Motorista' ligado.",
+          );
+        }
         Object.assign(config, pedido);
       }
       const itens = [
@@ -462,6 +524,40 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           acoes_permitidas: [config.abastecimento_manutencao ? 'desligar' : 'ligar'],
         },
         {
+          chave: 'motorista',
+          rotulo: 'Perfil Motorista',
+          descricao: 'Permite designar um motorista, que acompanha as próprias viagens.',
+          habilitado: config.motorista,
+          exige: [],
+          motivo_indisponibilidade: null,
+          acoes_permitidas: [config.motorista ? 'desligar' : 'ligar'],
+        },
+        {
+          chave: 'motorista_registra',
+          rotulo: 'Motorista registra saída e chegada',
+          descricao: 'O motorista designado registra a saída e a chegada da própria viagem.',
+          habilitado: config.motorista_registra,
+          exige: ['motorista'],
+          motivo_indisponibilidade: config.motorista ? null : 'Ligue antes o Perfil Motorista.',
+          acoes_permitidas: config.motorista
+            ? [config.motorista_registra ? 'desligar' : 'ligar']
+            : [],
+        },
+        {
+          chave: 'motorista_localizacao',
+          rotulo: 'Localização no registro do motorista',
+          descricao:
+            'Coleta a localização do aparelho quando o motorista registra saída e chegada.',
+          habilitado: config.motorista_localizacao,
+          exige: ['motorista_registra'],
+          motivo_indisponibilidade: config.motorista_registra
+            ? null
+            : 'Ligue antes o motorista registra saída e chegada.',
+          acoes_permitidas: config.motorista_registra
+            ? [config.motorista_localizacao ? 'desligar' : 'ligar']
+            : [],
+        },
+        {
           chave: 'mfa',
           rotulo: 'Verificação em duas etapas (MFA)',
           descricao: 'Exige segundo fator no login.',
@@ -472,6 +568,32 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         },
       ];
       return route.fulfill({ json: { recursos: config, itens, acoes_permitidas: ['editar'] } });
+    }
+    if (recurso === 'ia' && id === 'testar' && m === 'POST') {
+      corpos.iaTestar.push(req.postDataJSON());
+      if (opcoes.resultadoTesteIA === 'conflito') {
+        return erro(
+          route,
+          409,
+          'dependencia_recurso',
+          'Ligue a chave geral de IA antes de testar a conexão.',
+        );
+      }
+      const ok = opcoes.resultadoTesteIA !== 'falha';
+      return route.fulfill({
+        json: {
+          ok,
+          provedor: 'anthropic',
+          modelo: 'claude-haiku-5-5',
+          latencia_ms: ok ? 412 : null,
+          tokens_entrada: ok ? 12 : 0,
+          tokens_saida: ok ? 3 : 0,
+          tipo: ok ? null : 'autenticacao',
+          mensagem: ok
+            ? 'Conexão com o provedor funcionando.'
+            : 'O provedor recusou a chave configurada no servidor.',
+        },
+      });
     }
     if (recurso === 'ia') {
       if (m === 'PUT') {
@@ -534,6 +656,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           teto_tokens_mes: null,
           teto_efetivo_tokens_mes: 200000,
           acoes_permitidas: ['editar'],
+          testes_disponiveis: opcoes.testesIA ?? ['anthropic'],
         },
       });
     }

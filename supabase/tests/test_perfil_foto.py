@@ -137,7 +137,8 @@ def test_colunas_tipos_e_caminho_gerado() -> None:
             ).fetchall()
         }
     assert set(cols) == {
-        "id", "usuario_id", "mime", "tamanho_bytes", "caminho", "criado_em", "removida_em", "removida_por"
+        "id", "usuario_id", "mime", "tamanho_bytes", "caminho", "criado_em", "removida_em", "removida_por",
+        "criada_por",
     }  # fmt: skip
     assert cols["removida_por"][0] == "uuid" and cols["removida_por"][1] == "YES"
     assert cols["id"][0] == "uuid" and cols["usuario_id"][0] == "uuid"
@@ -571,10 +572,10 @@ def test_auditoria_sem_pii_e_com_as_acoes_novas(usuario: uuid.UUID) -> None:
     ]
     for acao, _, ator, de, para, det in linhas:
         assert ator == usuario and de is None and para is None
-        # remocao do dono (ou pela troca) grava por_admin=false; a alteracao nao tem a chave.
-        assert set(det) == ({"mime", "tamanho_bytes"} | ({"por_admin"} if acao.endswith("removida") else set()))
+        # dono (ou troca): por_admin=false nas duas acoes (a alteracao ganhou a chave na migration de troca por admin).
+        assert set(det) == {"mime", "tamanho_bytes", "por_admin"}
         assert det.get("por_admin", False) is False
-    assert linhas[0][5] == {"mime": "image/jpeg", "tamanho_bytes": 111}
+    assert linhas[0][5] == {"mime": "image/jpeg", "tamanho_bytes": 111, "por_admin": False}
     texto = str(linhas)
     assert ".jpg" not in texto and ".webp" not in texto and str(usuario) not in str([x[5] for x in linhas])
 
@@ -611,8 +612,8 @@ def test_ck_auditoria_preserva_valores_antigos_e_inclui_os_novos() -> None:
             ).fetchall()
         )
     assert len(ACOES_ANTIGAS) == 15 and len(TABELAS_ANTIGAS_AUD) == 6
-    # Contagem exata: 17 acoes / 7 tabelas + as da migration de relatorios (19 acoes / 9 tabelas).
-    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))) == 19
+    # Contagem exata: 17 acoes / 7 tabelas + relatorios (19 acoes / 9 tabelas) + motorista_designado (20 acoes).
+    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))) == 20
     assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_tabela"]))) == 9
     for v in (*ACOES_ANTIGAS, "foto_perfil_alterada", "foto_perfil_removida",
               "relatorio_gerado", "relatorio_enviado"):
@@ -860,7 +861,7 @@ def test_remocao_pelo_dono_via_rpc_nova_grava_ator_dono(usuario: uuid.UUID) -> N
     assert _ativas(usuario) == []
     assert _removida_por(pid) == usuario
     assert _audit_foto(pid) == [
-        ("foto_perfil_alterada", usuario, {"mime": "image/jpeg", "tamanho_bytes": 77}),
+        ("foto_perfil_alterada", usuario, {"mime": "image/jpeg", "tamanho_bytes": 77, "por_admin": False}),
         ("foto_perfil_removida", usuario, {"mime": "image/jpeg", "tamanho_bytes": 77, "por_admin": False}),
     ]
 

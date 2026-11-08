@@ -81,6 +81,19 @@ TEXTOS: dict[str, tuple[str, str]] = {
         "Falha em envio do sistema",
         "Um envio automático do sistema falhou. Confira as configurações.",
     ),
+    # Motorista (somente sino): texto fixo, sem nome, placa nem trajeto.
+    "motorista_designado": (
+        "Você foi designado para uma viagem",
+        "Você foi designado como motorista de uma viagem. Toque para ver os detalhes.",
+    ),
+    "motorista_removido": (
+        "Você foi removido de uma viagem",
+        "Você foi removido como motorista de uma viagem. Consulte suas viagens.",
+    ),
+    "viagem_cancelada_motorista": (
+        "Viagem cancelada",
+        "Uma viagem em que você era o motorista foi cancelada. Toque para ver os detalhes.",
+    ),
 }
 
 _MOMENTOS = {"saida": " na saída", "chegada": " na chegada"}
@@ -101,8 +114,19 @@ TIPOS_COM_REQUISICAO = frozenset(
         "requisicao_cancelada_terceiros",
         "requisicao_cancelada_pelo_solicitante",
         "checklist_avaria",
+        "motorista_designado",
+        "motorista_removido",
+        "viagem_cancelada_motorista",
     }
 )
+# Tipos que só aparecem no sino: nunca geram e-mail (nem n8n). O banco os cria não críticos.
+TIPOS_SO_SINO = frozenset(
+    {"motorista_designado", "motorista_removido", "viagem_cancelada_motorista"}
+)
+# Destinos do motorista: o detalhe da viagem (só se ainda for dele) ou a lista, no caso de remoção.
+DESTINO_VIAGEM_MOTORISTA = "/motorista/detalhe?id="
+DESTINO_LISTA_MOTORISTA = "/motorista"
+_TIPOS_DESTINO_VIAGEM = frozenset({"motorista_designado", "viagem_cancelada_motorista"})
 # Destinos fixos por tipo (allowlist). Os de requisição levam o id, validado como UUID.
 DESTINOS_FIXOS: dict[str, str] = {
     "convite_aceito": "/admin/convites",
@@ -135,6 +159,11 @@ def _uuid_ou_none(valor: Any) -> str | None:
 
 
 def montar_destino(tipo: str, requisicao_id: Any) -> str | None:
+    if tipo == "motorista_removido":  # já não enxerga a viagem (anti-IDOR): vai para a lista
+        return DESTINO_LISTA_MOTORISTA
+    if tipo in _TIPOS_DESTINO_VIAGEM:
+        rid = _uuid_ou_none(requisicao_id)
+        return f"{DESTINO_VIAGEM_MOTORISTA}{rid}" if rid else None
     if tipo in TIPOS_COM_REQUISICAO:
         rid = _uuid_ou_none(requisicao_id)
         return f"{DESTINO_REQUISICAO}{rid}" if rid else None

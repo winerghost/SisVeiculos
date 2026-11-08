@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -192,6 +193,30 @@ def test_ia_uso_checks(campo: str, valor: object) -> None:
                 base,
             )
     assert h.sqlstate(exc) == "23514"
+
+
+def test_ia_uso_aceita_funcao_teste() -> None:
+    u = h.criar_usuario("sol-ia-teste")
+    with h.conectar() as c:
+        c.execute(
+            "insert into public.ia_uso (funcao, provedor, modelo, usuario_id, status, "
+            "tokens_entrada) values ('teste', 'openai', 'm', %s, 'ok', 0)",
+            (u,),
+        )
+
+
+def test_migration_funcao_teste_e_idempotente() -> None:
+    sql = (
+        Path(__file__).resolve().parents[1] / "migrations" / "20261111120200_ia_uso_funcao_teste.sql"
+    ).read_text(encoding="utf-8")
+    with h.conectar() as c:
+        c.execute(sql)
+        c.execute(sql)
+        (defn,) = c.execute(
+            "select pg_get_constraintdef(oid) from pg_constraint "
+            "where conname = 'ck_ia_uso_funcao' and conrelid = 'public.ia_uso'::regclass"
+        ).fetchone() or ("",)
+    assert "saudacao" in defn and "teste" in defn
 
 
 def test_ia_consumo_conta_tentativas_e_soma_tokens_do_mes() -> None:

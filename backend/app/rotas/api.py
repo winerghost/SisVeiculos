@@ -12,6 +12,7 @@ from app.extensions import chave_usuario, deps, limiter
 from app.services.checklist import ServicoChecklist
 from app.services.foto_perfil import ServicoFotoPerfil
 from app.services.fotos_exibicao import FotosExibicao
+from app.services.motorista import ServicoMotorista
 from app.services.perfis import montar_eu
 from app.services.requisicoes import ServicoRequisicoes
 from app.services.veiculos import ServicoVeiculos
@@ -129,7 +130,7 @@ def listar_requisicoes() -> Any:
 
 
 @api.post("/requisicoes")
-@requer_auth()
+@requer_auth("solicitante", "autorizador", "admin")
 @limiter.limit(_limite_escrita)
 def criar_requisicao() -> Any:
     corpo = request.get_json(silent=True)
@@ -152,7 +153,7 @@ def _acao(acao: str, requisicao_id: str, *, com_corpo: bool = False) -> Any:
 @requer_auth("autorizador", "admin")
 @limiter.limit(_limite_escrita)
 def autorizar(requisicao_id: str) -> Any:
-    return _acao("autorizar", requisicao_id)
+    return _acao("autorizar", requisicao_id, com_corpo=True)  # corpo opcional: motorista_id
 
 
 @api.post("/requisicoes/<requisicao_id>/negar")
@@ -163,17 +164,49 @@ def negar(requisicao_id: str) -> Any:
 
 
 @api.post("/requisicoes/<requisicao_id>/saida")
-@requer_auth("autorizador", "admin")
+@requer_auth("autorizador", "admin", "motorista")  # motorista: o service confere flag e dono
 @limiter.limit(_limite_escrita)
 def registrar_saida(requisicao_id: str) -> Any:
     return _acao("registrar_saida", requisicao_id, com_corpo=True)
 
 
 @api.post("/requisicoes/<requisicao_id>/chegada")
-@requer_auth("autorizador", "admin")
+@requer_auth("autorizador", "admin", "motorista")  # motorista: o service confere flag e dono
 @limiter.limit(_limite_escrita)
 def registrar_chegada(requisicao_id: str) -> Any:
     return _acao("registrar_chegada", requisicao_id, com_corpo=True)
+
+
+@api.post("/requisicoes/<requisicao_id>/motorista")
+@requer_auth("autorizador", "admin")
+@limiter.limit(_limite_escrita)
+def atribuir_motorista(requisicao_id: str) -> Any:
+    corpo = request.get_json(silent=True)
+    return jsonify(_req().atribuir_motorista(g.perfil, requisicao_id, corpo))
+
+
+@api.get("/motoristas")
+@requer_auth("autorizador", "admin")
+def listar_motoristas() -> Any:
+    return jsonify(ServicoMotorista(deps().repo, _req()).listar_motoristas())
+
+
+@api.get("/motorista/viagens")
+@requer_auth("motorista")
+def listar_viagens_motorista() -> Any:
+    resultado = ServicoMotorista(deps().repo, _req()).listar_viagens(
+        g.perfil,
+        status=request.args.get("status"),
+        limite=_inteiro("limite", 50),
+        offset=_inteiro("offset", 0),
+    )
+    return jsonify(resultado)
+
+
+@api.get("/motorista/viagens/<requisicao_id>")
+@requer_auth("motorista")
+def obter_viagem_motorista(requisicao_id: str) -> Any:
+    return jsonify(ServicoMotorista(deps().repo, _req()).obter_viagem(g.perfil, requisicao_id))
 
 
 @api.post("/requisicoes/<requisicao_id>/cancelar")
@@ -204,7 +237,7 @@ def _limite_leitura_fotos_ip() -> str:
 # segunda camada. A autenticação (`requer_auth`) é o decorator mais externo, então `g.perfil`
 # já existe quando o limite decorado é avaliado.
 @api.post("/requisicoes/<requisicao_id>/checklist/<momento>/fotos")
-@requer_auth("autorizador", "admin")
+@requer_auth("autorizador", "admin", "motorista")
 @limiter.limit(_limite_upload_ip)
 @limiter.limit(_limite_upload, key_func=chave_usuario)
 def solicitar_upload_foto(requisicao_id: str, momento: str) -> Any:
@@ -213,7 +246,7 @@ def solicitar_upload_foto(requisicao_id: str, momento: str) -> Any:
 
 
 @api.post("/requisicoes/<requisicao_id>/checklist/<momento>")
-@requer_auth("autorizador", "admin")
+@requer_auth("autorizador", "admin", "motorista")
 @limiter.limit(_limite_escrita)
 def registrar_checklist(requisicao_id: str, momento: str) -> Any:
     corpo = request.get_json(silent=True)

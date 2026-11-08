@@ -67,6 +67,44 @@ class NotificacoesMemoria:
         self.notificacoes.append(n)
         return n
 
+    # -- emulação do trigger da migration 20261113120000 (sino do motorista) ---------------------
+    def _notificar_motorista(
+        self, tipo: str, usuario: str | None, requisicao_id: str, ator: str | None, evento: str
+    ) -> None:
+        """Como `privado.notificar`: recurso ligado, perfil ativo, nunca o ator, não crítica
+        (sem e-mail) e idempotente por (usuário, tipo, requisição, evento)."""
+        if usuario is None or not self.config.motorista or usuario == ator:
+            return
+        perfil = self.perfis.get(usuario)
+        if perfil is None or not perfil.ativo:
+            return
+        with self._lock_notif:
+            if any(
+                n["usuario_id"] == usuario
+                and n["tipo"] == tipo
+                and n["requisicao_id"] == requisicao_id
+                and n["referencia_id"] == evento
+                for n in self.notificacoes
+            ):
+                return
+        n = self.nova_notificacao(usuario, tipo, requisicao_id=requisicao_id, critica=False)
+        n["referencia_id"] = evento
+
+    def emular_designacao(
+        self, rid: str, de: str | None, para: str | None, ator: str | None, evento: str
+    ) -> None:
+        if de == para:
+            return  # sem mudança de motorista não há auditoria nem notificação
+        if para is not None:
+            self._notificar_motorista("motorista_designado", para, rid, ator, evento)
+        if de is not None:
+            self._notificar_motorista("motorista_removido", de, rid, ator, evento)
+
+    def emular_cancelamento(self, rid: str, motorista: str | None, ator: str | None) -> None:
+        self._notificar_motorista(
+            "viagem_cancelada_motorista", motorista, rid, ator, f"cancelada:{rid}"
+        )
+
     # -- leitura -----------------------------------------------------------------------------
     def listar_notificacoes(
         self, usuario: str, *, limite: int, offset: int, somente_nao_lidas: bool

@@ -9,7 +9,7 @@ from app.errors import ConviteInvalido, RequisicaoInvalida
 from app.modelos import UNIDADES
 from app.services.validacao import MAX_NOME, validar_texto
 
-ROLES = ("solicitante", "autorizador", "admin")
+ROLES = ("solicitante", "autorizador", "admin", "motorista")
 # Mesmo critério do CHECK ck_convites_email_dominio: Gmail ou *.agu.gov.br.
 _EMAIL = re.compile(r"^[a-z0-9._%+-]+@(gmail\.com|([a-z0-9-]+\.)*agu\.gov\.br)$")
 _PLACA = re.compile(r"^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$")
@@ -24,6 +24,9 @@ RECURSOS = (
     "relatorio_email",
     "relatorio_whatsapp",
     "notificacao_email_criticos",
+    "motorista",
+    "motorista_registra",
+    "motorista_localizacao",
 )
 
 
@@ -71,7 +74,9 @@ def validar_busca(valor: str | None) -> str | None:
 
 def _role(valor: Any) -> str:
     if valor not in ROLES:
-        raise RequisicaoInvalida("O campo 'role' deve ser solicitante, autorizador ou admin.")
+        raise RequisicaoInvalida(
+            "O campo 'role' deve ser solicitante, autorizador, admin ou motorista."
+        )
     return str(valor)
 
 

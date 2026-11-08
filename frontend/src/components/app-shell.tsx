@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3,
   ChevronLeft,
+  Car,
   Clock,
   FileText,
   ListChecks,
@@ -74,13 +75,16 @@ export function AppShell({
   }
 
   const permissoes = new Set(eu.permissoes);
-  const itens: ItemNav[] = [
-    { href: '/requisicoes', rotulo: 'Requisições', icone: <ListChecks aria-hidden /> },
-  ];
+  // Perfil Motorista: a API devolve `ver_viagens_atribuidas` (e o recurso ligado em `recursos`).
+  // Quem tem a página dedicada não vê os itens genéricos de requisições/viagem.
+  const comViagens = permissoes.has('ver_viagens_atribuidas') && eu.recursos.motorista === true;
+  const itens: ItemNav[] = comViagens
+    ? [{ href: '/motorista', rotulo: 'Minhas viagens', icone: <Car aria-hidden /> }]
+    : [{ href: '/requisicoes', rotulo: 'Requisições', icone: <ListChecks aria-hidden /> }];
   if (permissoes.has('autorizar')) {
     itens.push({ href: '/autorizar', rotulo: 'Autorizar', icone: <ShieldCheck aria-hidden /> });
   }
-  if (permissoes.has('registrar_chegada')) {
+  if (permissoes.has('registrar_chegada') && !comViagens) {
     itens.push({ href: '/viagem', rotulo: 'Viagem', icone: <Clock aria-hidden /> });
   }
   // Visível só se GET /api/dashboards respondeu com ao menos um painel.

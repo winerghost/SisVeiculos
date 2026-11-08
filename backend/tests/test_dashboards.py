@@ -286,6 +286,26 @@ def test_operacao_corta_em_200_preservando_a_ordem(client, auth, c, repo, monkey
     assert j["itens_truncados"] is True and set(completo) == set(ids)
 
 
+# ---------------------------------------------------------------- contrato com o frontend
+def test_contrato_operacao_itens_na_raiz_e_nao_em_dados(client, auth, c):  # type: ignore[no-untyped-def]
+    criar(client, auth, c.sol, c.veiculo)
+    j = get(client, auth, c.aut, "/api/dashboards/operacao").get_json()
+    assert set(j) == {"painel", "filtros", "itens_truncados", "itens", "dados"}
+    assert isinstance(j["itens"], list) and j["itens"]
+    assert j["itens_truncados"] is False
+    assert "itens" not in j["dados"]
+    assert {"gerado_em", "veiculos", "solicitadas", "autorizadas_sem_saida", "em_uso"} <= set(
+        j["dados"]
+    )
+
+
+@pytest.mark.parametrize("painel", [p for p in PAINEIS_STAFF if p != "operacao"])
+def test_contrato_outros_paineis_sem_itens_na_raiz(client, auth, c, painel):  # type: ignore[no-untyped-def]
+    j = get(client, auth, c.aut, f"/api/dashboards/{painel}").get_json()
+    assert "itens" not in j and "itens_truncados" not in j
+    assert set(j) == {"painel", "filtros", "dados"}
+
+
 def test_operacao_limite_padrao_e_200() -> None:
     from app.services.dashboards import MAX_ITENS_OPERACAO
 

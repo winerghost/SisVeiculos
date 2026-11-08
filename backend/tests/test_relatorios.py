@@ -587,6 +587,9 @@ def test_repo_le_e_grava_as_novas_chaves():  # type: ignore[no-untyped-def]
         "relatorio_email": True,
         "relatorio_whatsapp": False,
         "notificacao_email_criticos": False,
+        "motorista": False,
+        "motorista_registra": False,
+        "motorista_localizacao": False,
     }
     r._c.table.return_value.select.return_value.limit.return_value.execute.return_value.data = [
         linha

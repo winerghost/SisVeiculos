@@ -9,6 +9,8 @@ uma mensagem fixa e genérica (nunca dados da requisição). O resultado volta a
 Garantias:
   * Notificações `sistema_falha_envio` NÃO geram e-mail: são marcadas `ignorado` (código
     `sistema`) sem envio, para evitar o laço "falha de e-mail avisa por e-mail".
+  * Tipos só-sino (motorista_designado, motorista_removido, viagem_cancelada_motorista) nascem
+    sem e-mail no banco; se algum chegasse à fila, seria `ignorado` (código `so_sino`).
   * Entrega "pelo menos uma vez": se o envio der certo mas gravar `enviado` falhar (3 tentativas
     curtas), a linha fica `enviando` e o banco a reentrega depois (possível e-mail repetido).
   * Teto por hora (`EMAIL_NOTIF_MAX_POR_HORA`) em JANELA DESLIZANTE EM MEMÓRIA, por processo:
@@ -33,7 +35,11 @@ from app.config import Config
 from app.notificacoes.email import ConfigSmtp, EnviadorEmail, EnviadorSmtp, FalhaEmail
 from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
-from app.services.notificacoes import CODIGOS_SEM_ALERTA, registrar_falha_sistema
+from app.services.notificacoes import (
+    CODIGOS_SEM_ALERTA,
+    TIPOS_SO_SINO,
+    registrar_falha_sistema,
+)
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +126,9 @@ class Despachante:
         nid = str(item["id"])
         if item.get("tipo") == "sistema_falha_envio":
             self._marcar(nid, "ignorado", "sistema")  # sem envio: evita laço de alertas
+            return 0
+        if item.get("tipo") in TIPOS_SO_SINO:  # defesa extra: motorista é só sino
+            self._marcar(nid, "ignorado", "so_sino")
             return 0
         email = self._email_do(str(item.get("usuario_id") or ""))
         if email is None:

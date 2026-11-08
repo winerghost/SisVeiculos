@@ -125,11 +125,18 @@ class ServicoChecklist:
         if not self._repo.ler_configuracoes().checklist:
             raise RecursoDesligado(MSG_DESLIGADO)
 
-    def _requisicao_staff(self, perfil: Perfil, requisicao_id: str) -> Requisicao:
+    def _requisicao_operador(
+        self, perfil: Perfil, requisicao_id: str, *, escrita: bool
+    ) -> Requisicao:
+        """Staff, ou o motorista da própria viagem (escrita só com `motorista_registra`)."""
         req = self._requisicoes.obter(perfil, requisicao_id)  # 404 para requisição alheia
-        if perfil.role not in STAFF:
-            raise SemPermissao("Você não tem permissão para esta ação.")
-        return req
+        if perfil.role in STAFF:
+            return req
+        if perfil.role == "motorista" and not (
+            escrita and not self._repo.ler_configuracoes().motorista_registra
+        ):
+            return req  # `obter` já garantiu: viagem dele e recurso Motorista ligado
+        raise SemPermissao("Você não tem permissão para esta ação.")
 
     @staticmethod
     def _exigir_janela(req: Requisicao, momento: str) -> None:
@@ -146,7 +153,7 @@ class ServicoChecklist:
     ) -> tuple[Requisicao, str]:
         self._exigir_ligado()
         momento = validar_momento(momento)
-        req = self._requisicao_staff(perfil, requisicao_id)
+        req = self._requisicao_operador(perfil, requisicao_id, escrita=True)
         self._exigir_janela(req, momento)
         if momento in self._repo.momentos_checklist({req["id"]}).get(req["id"], set()):
             raise Conflito(MSG_JA_REGISTRADO, "checklist_ja_registrado")
@@ -268,7 +275,7 @@ class ServicoChecklist:
     # -- (d) leitura -----------------------------------------------------------------
     def listar(self, perfil: Perfil, requisicao_id: str) -> dict[str, Any]:
         self._exigir_ligado()
-        req = self._requisicao_staff(perfil, requisicao_id)
+        req = self._requisicao_operador(perfil, requisicao_id, escrita=False)
         checklists = self._repo.obter_checklists(req["id"])
         nomes = self._repo.nomes_perfis({c["registrado_por"] for c in checklists})
         por_momento: dict[str, Any] = {"saida": None, "chegada": None}

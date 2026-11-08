@@ -7,6 +7,7 @@ nunca aparecem aqui: só o booleano `chave_configurada`.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from app.errors import DependenciaRecurso, ErroApi, RecursoDesligado, RequisicaoInvalida
@@ -124,6 +125,7 @@ class ServicoIAAdmin:
             "teto_tokens_mes": banco.teto_tokens_mes,
             "teto_efetivo_tokens_mes": teto_efetivo_tokens(cfg, banco),
             "acoes_permitidas": ["editar"] if servidor else [],
+            "testes_disponiveis": self.testes_disponiveis(banco),
         }
 
     def _provedor_ativo_valido(self, banco: ConfigIABanco) -> bool:
@@ -133,6 +135,40 @@ class ServicoIAAdmin:
     def obter(self, admin: Perfil) -> dict[str, Any]:
         exigir_admin(admin)
         return self.apresentar(self._repo.ler_config())
+
+    def testes_disponiveis(self, banco: ConfigIABanco) -> list[str]:
+        """Provedores testáveis: ativo e reserva (quando definidos) com chave no servidor."""
+        if not self._ia.cfg.habilitado:
+            return []
+        candidatos = [banco.provedor, banco.provedor_reserva]
+        return [p for p in candidatos if p in PROVEDORES and self._ia.cfg.tem_chave(p)]
+
+    def testar(self, admin: Perfil, corpo: Any) -> dict[str, Any]:
+        """Teste de conexão com o provedor já salvo. Falha do provedor volta como ok=false."""
+        exigir_admin(admin)
+        if corpo is None:
+            corpo = {}
+        if not isinstance(corpo, dict):
+            raise RequisicaoInvalida("O corpo deve ser um objeto JSON.")
+        extras = sorted(set(corpo) - {"provedor"})
+        if extras:
+            raise RequisicaoInvalida("Campos não reconhecidos: " + ", ".join(extras) + ".")
+        pedido = corpo.get("provedor")
+        if pedido is not None and (not isinstance(pedido, str) or pedido not in PROVEDORES):
+            raise RequisicaoInvalida(
+                "O campo 'provedor' deve ser um de: " + ", ".join(PROVEDORES) + "."
+            )
+        if not self._ia.cfg.habilitado:
+            raise RecursoDesligado(MSG_DESLIGADO_SERVIDOR)
+        banco = self._repo.ler_config()
+        provedor = pedido or banco.provedor
+        if provedor is None:
+            raise DependenciaRecurso("Escolha e salve um provedor antes de testar a conexão.")
+        if provedor not in self.testes_disponiveis(banco):
+            raise DependenciaRecurso(
+                "Só é possível testar o provedor ativo ou o reserva, com chave no servidor."
+            )
+        return asdict(self._ia.testar(provedor, banco=banco, perfil=admin))
 
     def atualizar(self, admin: Perfil, corpo: Any) -> dict[str, Any]:
         exigir_admin(admin)

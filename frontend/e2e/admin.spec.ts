@@ -109,6 +109,61 @@ test('admin: configurações exibem 409 dependencia_recurso como veio e respeita
   ]);
 });
 
+test('admin: IA mostra um botão de teste por provedor em testes_disponiveis', async ({ page }) => {
+  await entrarAdmin(page, { testesIA: ['anthropic', 'openai'] });
+  await page.goto('/admin/configuracoes');
+  await expect(page.getByRole('button', { name: 'Testar Anthropic' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Testar OpenAI' })).toBeVisible();
+});
+
+test('admin: IA sem testes_disponiveis não mostra botão de teste', async ({ page }) => {
+  await entrarAdmin(page, { testesIA: [] });
+  await page.goto('/admin/configuracoes');
+  await expect(page.getByLabel('Provedor', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Testar / })).toHaveCount(0);
+});
+
+test('admin: IA teste ok mostra mensagem, provedor, modelo, latência e tokens', async ({
+  page,
+}) => {
+  const mock = await entrarAdmin(page);
+  await page.goto('/admin/configuracoes');
+  const botao = page.getByRole('button', { name: 'Testar Anthropic' });
+  expect((await botao.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await botao.click();
+  const status = page
+    .getByRole('status')
+    .filter({ hasText: 'Conexão com o provedor funcionando.' });
+  await expect(status).toBeVisible();
+  await expect(status).toContainText('Provedor: anthropic');
+  await expect(status).toContainText('Modelo: claude-haiku-5-5');
+  await expect(status).toContainText('Latência: 412 ms');
+  await expect(status).toContainText('Tokens: 12 de entrada, 3 de saída');
+  expect(mock.corpos.iaTestar).toEqual([{ provedor: 'anthropic' }]);
+});
+
+test('admin: IA teste com ok=false mostra a mensagem de falha da API', async ({ page }) => {
+  await entrarAdmin(page, { resultadoTesteIA: 'falha' });
+  await page.goto('/admin/configuracoes');
+  await page.getByRole('button', { name: 'Testar Anthropic' }).click();
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'O provedor recusou a chave configurada no servidor.' }),
+  ).toBeVisible();
+});
+
+test('admin: IA teste recusado com 409 aparece no alerta', async ({ page }) => {
+  await entrarAdmin(page, { resultadoTesteIA: 'conflito' });
+  await page.goto('/admin/configuracoes');
+  await page.getByRole('button', { name: 'Testar Anthropic' }).click();
+  await expect(
+    page
+      .getByRole('alert')
+      .filter({ hasText: 'Ligue a chave geral de IA antes de testar a conexão.' }),
+  ).toBeVisible();
+});
+
 test('admin: IA mostra a recusa da API e só envia a intenção do admin', async ({ page }) => {
   const mock = await entrarAdmin(page);
   await page.goto('/admin/configuracoes');
@@ -366,4 +421,83 @@ test('MFA: conta sem autenticador cadastra o TOTP (QR code e verificação)', as
   await page.getByRole('button', { name: 'Confirmar cadastro' }).click();
   // Verificado: a API volta a aceitar o token e a área logada abre.
   await expect(page.getByRole('heading', { name: 'Requisições' })).toBeVisible();
+});
+
+// ---- Troca de foto de outro usuário (acao `trocar_foto`) ----
+
+const PNG_FOTO = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+const arquivoFoto = { name: 'ana.png', mimeType: 'image/png', buffer: PNG_FOTO };
+
+test('admin: Trocar foto só aparece com trocar_foto em acoes_permitidas', async ({ page }) => {
+  await entrarAdmin(page);
+  await page.goto('/admin/usuarios');
+  // Conta do próprio admin: a API não oferece trocar_foto.
+  await abrir(page, page.getByRole('link', { name: /^Marcos Silva/ }));
+  await expect(page.getByRole('heading', { name: 'Marcos Silva' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Trocar foto/ })).toHaveCount(0);
+
+  await page.goto('/admin/usuarios');
+  await abrir(page, page.getByRole('link', { name: /Ana Souza/ }));
+  const botao = page.getByRole('button', { name: 'Trocar foto de Ana Souza' });
+  await expect(botao).toBeVisible();
+  expect((await botao.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+});
+
+test('admin: troca a foto de outro usuário e a tela reflete a nova foto_url', async ({ page }) => {
+  const mock = await entrarAdmin(page);
+  await page.goto('/admin/usuarios');
+  await abrir(page, page.getByRole('link', { name: /Ana Souza/ }));
+  await expect(page.getByRole('button', { name: 'Remover foto' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Trocar foto de Ana Souza' }).click();
+  await expect(
+    page.getByText('A foto será exibida no perfil do usuário, que poderá removê-la'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enviar foto' })).toBeDisabled();
+  await page.locator('#foto-usuario-arquivo').setInputFiles(arquivoFoto);
+  await expect(page.getByAltText('Pré-visualização da nova foto')).toBeVisible();
+  await page.getByRole('button', { name: 'Enviar foto' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Foto atualizada.' })).toBeVisible();
+
+  const pedido = mock.corpos.uploadUrlFoto[0] as { mime: string; tamanho: number };
+  expect(Object.keys(pedido).sort()).toEqual(['mime', 'tamanho']);
+  expect(pedido.mime).toBe('image/jpeg');
+  expect(pedido.tamanho).toBeGreaterThan(0);
+  // O caminho de staging é o devolvido pela API, sem montagem no cliente.
+  expect(mock.corpos.uploadsStorage).toEqual([
+    'tmp/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/abababab-abab-4bab-8bab-abababababab',
+  ]);
+  expect(mock.corpos.confirmarFoto).toEqual([{ id: 'abababab-abab-4bab-8bab-abababababab' }]);
+
+  // A linha atualizada passa a oferecer remover_foto e o avatar do cabeçalho do usuário aparece.
+  await page.getByRole('button', { name: 'Fechar' }).click();
+  await expect(page.getByRole('button', { name: 'Remover foto' })).toBeVisible();
+  await expect(page.locator('section img').first()).toBeVisible();
+});
+
+test('admin: erro 409 da API na troca de foto aparece no alerta sem alteração', async ({
+  page,
+}) => {
+  const mock = await entrarAdmin(page, {
+    trocarFotoErro: {
+      status: 409,
+      codigo: 'conta_inativa',
+      mensagem: 'Não é possível trocar a foto de uma conta inativa.',
+    },
+  });
+  await page.goto('/admin/usuarios');
+  await abrir(page, page.getByRole('link', { name: /Ana Souza/ }));
+  await page.getByRole('button', { name: 'Trocar foto de Ana Souza' }).click();
+  await page.locator('#foto-usuario-arquivo').setInputFiles(arquivoFoto);
+  await page.getByRole('button', { name: 'Enviar foto' }).click();
+  await expect(
+    page
+      .getByRole('alert')
+      .filter({ hasText: 'Não é possível trocar a foto de uma conta inativa.' }),
+  ).toBeVisible();
+  expect(mock.corpos.confirmarFoto).toHaveLength(0);
+  await expect(page.getByRole('button', { name: 'Enviar foto' })).toBeEnabled();
 });

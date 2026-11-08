@@ -12,7 +12,7 @@ from flask import Blueprint, g, jsonify, request
 
 from app.auth.decoradores import autenticar, tem_segundo_fator
 from app.errors import ErroApi, RequisicaoInvalida, SemPermissao
-from app.extensions import deps, limiter
+from app.extensions import chave_usuario, deps, limiter
 from app.services.acessos import ServicoAcessos
 from app.services.admin_configuracoes import ServicoConfiguracoes
 from app.services.admin_ia import ServicoIAAdmin
@@ -21,6 +21,7 @@ from app.services.admin_veiculos import ServicoVeiculosAdmin
 from app.services.convites import ServicoConvites
 from app.services.foto_perfil import ServicoFotoPerfil
 from app.services.fotos_exibicao import FotosExibicao
+from app.services.localizacoes_admin import ServicoLocalizacoes
 
 admin = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -58,7 +59,9 @@ def _usuarios() -> ServicoUsuarios:
     return ServicoUsuarios(
         d.repo,
         _auth_admin(),
-        fotos=ServicoFotoPerfil(d.repo, d.armazenamento_avatares),
+        fotos=ServicoFotoPerfil(
+            d.repo, d.armazenamento_avatares, max_emissoes=d.config.max_emissoes_foto_perfil
+        ),
         exibicao=FotosExibicao(d.repo, d.armazenamento_avatares),
     )
 
@@ -125,6 +128,30 @@ def ativar_usuario(usuario_id: str) -> Any:
 @limiter.limit(_limite_escrita)
 def desativar_usuario(usuario_id: str) -> Any:
     return jsonify(_usuarios().desativar(g.perfil, usuario_id))
+
+
+def _limite_foto() -> str:
+    return deps().config.limite_foto_perfil
+
+
+def _limite_foto_ip() -> str:
+    return deps().config.limite_foto_perfil_ip
+
+
+@admin.post("/usuarios/<usuario_id>/foto/upload-url")
+@limiter.limit(_limite_foto_ip)
+@limiter.limit(_limite_foto, key_func=chave_usuario)
+def solicitar_upload_foto_usuario(usuario_id: str) -> Any:
+    """URL assinada para o admin enviar a foto de outra conta (staging sob o id do admin)."""
+    return jsonify(_usuarios().solicitar_upload_foto(g.perfil, usuario_id, _corpo())), 201
+
+
+@admin.post("/usuarios/<usuario_id>/foto")
+@limiter.limit(_limite_foto_ip)
+@limiter.limit(_limite_foto, key_func=chave_usuario)
+def trocar_foto_usuario(usuario_id: str) -> Any:
+    """Confirma o upload e troca a foto da conta (ator = admin do JWT; auditado pelo banco)."""
+    return jsonify(_usuarios().trocar_foto(g.perfil, usuario_id, _corpo()))
 
 
 @admin.delete("/usuarios/<usuario_id>/foto")
@@ -206,6 +233,14 @@ def listar_acessos() -> Any:
     return jsonify(ServicoAcessos(deps().repo).listar(g.perfil, request.args.to_dict(flat=False)))
 
 
+# ------------------------------------------------------------------------- localizações
+@admin.get("/requisicoes/<requisicao_id>/localizacoes")
+@limiter.limit(_limite_busca)
+def listar_localizacoes(requisicao_id: str) -> Any:
+    """Coordenadas de saída/chegada do motorista (dado sensível: só admin; leitura auditada)."""
+    return jsonify(ServicoLocalizacoes(deps().repo).listar(g.perfil, requisicao_id))
+
+
 # ------------------------------------------------------------------------- configurações
 @admin.get("/configuracoes")
 def obter_configuracoes() -> Any:
@@ -235,6 +270,15 @@ def _ia_admin() -> ServicoIAAdmin:
 @admin.get("/ia")
 def obter_ia() -> Any:
     return jsonify(_ia_admin().obter(g.perfil))
+
+
+@admin.post("/ia/testar")
+@limiter.limit("5 per minute", key_func=chave_usuario)
+def testar_ia() -> Any:
+    corpo = _corpo()
+    if corpo is None and request.get_data():  # corpo presente, mas não é JSON válido
+        raise RequisicaoInvalida("O corpo deve ser um objeto JSON.")
+    return jsonify(_ia_admin().testar(g.perfil, corpo))
 
 
 @admin.put("/ia")

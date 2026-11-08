@@ -52,8 +52,21 @@ class DashboardsMemoria:
             ),
             key=lambda r: (ORDEM_URGENCIA[r["status"]], str(r[desde[r["status"]]]), r["id"]),
         )
+
+        def total(st: str) -> int:
+            return sum(1 for r in abertas if r["status"] == st)
+
+        # Espelha o contrato da RPC dash_operacao_agora (migration 20261108120000).
         return {
             "gerado_em": agora_iso(),
+            "veiculos": {"ativos": 0, "livres": 0, "reservados": 0, "em_uso": 0},
+            "solicitadas": {"total": total("solicitada"), "mais_antiga": None},
+            "autorizadas_sem_saida": {"total": total("autorizada"), "mais_antiga": None},
+            "em_uso": {
+                "total": total("em_uso"),
+                "decorrido_medio_s": None,
+                "decorrido_max_s": None,
+            },
             "abertas": [
                 {
                     "id": r["id"],

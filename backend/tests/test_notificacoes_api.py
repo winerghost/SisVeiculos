@@ -12,6 +12,7 @@ from app.services.notificacoes import (
     DESTINOS_FIXOS,
     TEXTOS,
     TIPOS_COM_REQUISICAO,
+    TIPOS_SO_SINO,
     apresentar,
     montar_destino,
     montar_texto,
@@ -229,7 +230,7 @@ def test_textos_fixos_do_enunciado():
 
 def test_destino_so_da_allowlist():
     rid = str(uuid.uuid4())
-    for tipo in TIPOS_COM_REQUISICAO:
+    for tipo in TIPOS_COM_REQUISICAO - TIPOS_SO_SINO:
         assert montar_destino(tipo, rid) == f"{DESTINO_REQUISICAO}{rid}"
         assert montar_destino(tipo, None) is None
         assert montar_destino(tipo, "nao-uuid") is None

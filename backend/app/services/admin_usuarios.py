@@ -21,6 +21,7 @@ from app.errors import (
     UltimoAdmin,
 )
 from app.modelos import Perfil
+from app.repositorios.armazenamento_avatares import caminho_staging
 from app.repositorios.auth_admin import AuthAdmin, IndiceEmails
 from app.repositorios.base import Repositorio
 from app.services.foto_perfil import ServicoFotoPerfil
@@ -119,6 +120,8 @@ class ServicoUsuarios:
             # "desativar" é idempotente e refaz o bloqueio, então segue disponível.
             if not eu:
                 acoes.append("desativar")
+        if alvo["ativo"]:  # trocar a foto exige conta ativa (o banco reforça), com ou sem foto
+            acoes.append("trocar_foto")
         if tem_foto:  # só com foto ativa (mesmo conta inativa: a remoção segue permitida)
             acoes.append("remover_foto")
         return acoes
@@ -299,6 +302,30 @@ class ServicoUsuarios:
             raise ErroApi("Remoção de foto indisponível.", "indisponivel", 503)
         alvo = self._carregar(usuario_id)
         self._fotos.remover_de(usuario_id=alvo["id"], ator_id=admin.id)
+        return self.obter(admin, alvo["id"])
+
+    def _alvo_ativo_para_foto(
+        self, admin: Perfil, usuario_id: str
+    ) -> tuple[dict[str, Any], ServicoFotoPerfil]:
+        exigir_admin(admin)
+        if self._fotos is None:
+            raise ErroApi("Troca de foto indisponível.", "indisponivel", 503)
+        alvo = self._carregar(usuario_id)
+        if not alvo["ativo"]:
+            raise SemPermissao("Conta sem acesso ao sistema.", codigo="conta_inativa")
+        return alvo, self._fotos
+
+    def solicitar_upload_foto(self, admin: Perfil, usuario_id: str, corpo: Any) -> dict[str, Any]:
+        """URL de upload para a foto de outra conta. O staging fica sob o id do ADMIN (JWT)."""
+        _, fotos = self._alvo_ativo_para_foto(admin, usuario_id)
+        emitido = fotos.solicitar_upload(admin, corpo, escopo="avatar-admin")
+        # O cliente usa este objeto no upload, sem conhecer a convenção de caminhos.
+        return {**emitido, "caminho": caminho_staging(admin.id, emitido["id"])}
+
+    def trocar_foto(self, admin: Perfil, usuario_id: str, corpo: Any) -> dict[str, Any]:
+        """Registra a foto enviada pelo admin para a conta alvo; ator = admin do JWT."""
+        alvo, fotos = self._alvo_ativo_para_foto(admin, usuario_id)
+        fotos.registrar_para(admin, alvo["id"], corpo, via_admin=True)
         return self.obter(admin, alvo["id"])
 
     def ativar(self, admin: Perfil, usuario_id: str) -> dict[str, Any]:

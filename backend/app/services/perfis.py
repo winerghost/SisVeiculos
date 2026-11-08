@@ -28,6 +28,7 @@ _PERMISSOES: dict[str, list[str]] = {
         "administrar",
         "ver_acessos",
     ],
+    "motorista": ["ver_viagens_atribuidas"],
 }
 
 
@@ -35,11 +36,19 @@ _ROTULOS_ROLE = {
     "solicitante": "Solicitante",
     "autorizador": "Autorizador",
     "admin": "Administrador",
+    "motorista": "Motorista",
 }
 
 
 def rotulo_perfil(perfil: Perfil) -> str:
     return f"{perfil.unidade} · {_ROTULOS_ROLE[perfil.role]}"
+
+
+def _permissoes(perfil: Perfil, config: Configuracoes) -> list[str]:
+    permissoes = list(_PERMISSOES[perfil.role])
+    if perfil.role == "motorista" and config.motorista and config.motorista_registra:
+        permissoes += ["registrar_saida", "registrar_chegada"]
+    return permissoes
 
 
 def montar_eu(perfil: Perfil, config: Configuracoes, foto_url: str | None = None) -> dict[str, Any]:
@@ -51,7 +60,7 @@ def montar_eu(perfil: Perfil, config: Configuracoes, foto_url: str | None = None
         "rotulo_perfil": rotulo_perfil(perfil),
         "foto_url": foto_url,  # URL assinada curta da própria foto (ou null)
         "unidades": list(UNIDADES_ORDEM),
-        "permissoes": _PERMISSOES[perfil.role],
+        "permissoes": _permissoes(perfil, config),
         # Recursos opcionais habilitados (todos desligados por padrão).
         "recursos": config.como_dict(),
     }

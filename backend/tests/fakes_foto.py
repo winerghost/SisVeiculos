@@ -24,6 +24,7 @@ class FotoPerfilMemoria:
     def _init_foto(self) -> None:
         self.fotos: list[dict[str, Any]] = []  # linhas de perfil_fotos
         self.chamadas_trocar: list[dict[str, Any]] = []
+        self.chamadas_trocar_por: list[dict[str, Any]] = []
         self.chamadas_remover: list[dict[str, str]] = []
         self.falha_trocar: Exception | None = None  # levantada ANTES de gravar
         self.perder_resposta_trocar = False  # grava e levanta ErroInterno (resposta perdida)
@@ -71,6 +72,26 @@ class FotoPerfilMemoria:
         if self.perder_resposta_trocar:
             raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
         return anterior
+
+    def trocar_foto_perfil_por(
+        self, *, usuario_id: str, ator_id: str, foto_id: str, mime: str, tamanho: int
+    ) -> str | None:
+        self.chamadas_trocar_por.append(
+            {
+                "usuario_id": usuario_id,
+                "ator_id": ator_id,
+                "foto_id": foto_id,
+                "mime": mime,
+                "tamanho": tamanho,
+            }
+        )
+        with self._lock:
+            a = self.perfis.get(ator_id)
+            if a is None or a.role != "admin" or not a.ativo:
+                raise erro_db("AG022", "Troca da foto de perfil não autorizada.")
+        return self.trocar_foto_perfil(
+            usuario_id=usuario_id, foto_id=foto_id, mime=mime, tamanho=tamanho
+        )
 
     def _baixar_ativa(self, usuario_id: str, *, por: str | None) -> str | None:
         for f in self.fotos:

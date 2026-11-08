@@ -138,11 +138,15 @@ class ServicoFotoPerfil:
             self._apagar(caminho)
 
     # -- (1) URL assinada de upload --------------------------------------------------
-    def solicitar_upload(self, perfil: Perfil, corpo: Any) -> dict[str, Any]:
+    def solicitar_upload(
+        self, perfil: Perfil, corpo: Any, *, escopo: str = "avatar"
+    ) -> dict[str, Any]:
+        """O staging fica SEMPRE sob `perfil.id` (o do JWT). `escopo` separa a cota do admin
+        que envia a foto de outra conta da cota da própria foto."""
         self._exigir_ativo(perfil)
         validar_upload(corpo)  # o mime/tamanho declarados só servem para recusar cedo
         arm = self._storage()
-        chave = (perfil.id, "avatar")
+        chave = (perfil.id, escopo)
         if not EMISSOES_FOTO.reservar(chave, self._max_emissoes):
             raise ErroApi(MSG_LIMITE, "limite_fotos", 429)
         foto_id = str(uuid.uuid4())
@@ -151,14 +155,33 @@ class ServicoFotoPerfil:
         except Exception:
             EMISSOES_FOTO.devolver(chave)
             raise
-        return {"id": foto_id, "url_upload": assinado["url"], "token": assinado["token"]}
+        return {
+            "id": foto_id,
+            "url_upload": assinado["url"],
+            "token": assinado["token"],
+        }
 
     # -- (3) confirmação: valida, recodifica, grava e troca ------------------------
     def registrar(self, perfil: Perfil, corpo: Any) -> dict[str, Any]:
-        self._exigir_ativo(perfil)
+        return self.registrar_para(perfil, perfil.id, corpo)
+
+    def registrar_para(
+        self, ator: Perfil, alvo_id: str, corpo: Any, *, via_admin: bool = False
+    ) -> dict[str, Any]:
+        """Registra a foto de `alvo_id`. O staging é lido do prefixo do ATOR (JWT). Com
+        `via_admin`, a RPC `trocar_foto_perfil_por` confere o papel no banco (AG022).
+
+        Defesa em profundidade: este método não depende de o chamador ter validado o papel.
+        Trocar a foto de OUTRA conta exige `via_admin` e ator com role admin (revisão M1).
+        """
+        self._exigir_ativo(ator)
+        if alvo_id != ator.id and not via_admin:
+            raise SemPermissao("Você não tem permissão para esta ação.")
+        if via_admin and ator.role != "admin":
+            raise SemPermissao("Você não tem permissão para esta ação.")
         foto_id = validar_registro(corpo)
         arm = self._storage()
-        staging = caminho_staging(perfil.id, foto_id)  # sempre sob o usuário do JWT
+        staging = caminho_staging(ator.id, foto_id)  # sempre sob o usuário do JWT
         dados, mime = self._ler_staging(arm, staging)
         try:
             jpeg = recodificar(dados, mime)
@@ -167,23 +190,39 @@ class ServicoFotoPerfil:
             if e.animada:
                 raise RequisicaoInvalida(MSG_ANIMADA, "foto_invalida") from None
             raise RequisicaoInvalida(MSG_INVALIDA, "foto_invalida") from None
-        final = caminho_final(perfil.id, foto_id, MIME_SAIDA)
+        final = caminho_final(alvo_id, foto_id, MIME_SAIDA)
         try:
             arm.gravar(final, jpeg, MIME_SAIDA)
         except ObjetoJaExiste:
             # Registro concorrente do mesmo id: não apaga nada, o outro pode ter vencido.
             raise Conflito(MSG_EM_PROCESSAMENTO, "foto_em_processamento") from None
-        anterior = self._trocar(perfil.id, foto_id, len(jpeg), final, staging)
+        por = ator.id if via_admin else None
+        anterior = self._trocar(alvo_id, foto_id, len(jpeg), final, staging, por=por)
         self._apagar(staging)
-        self._apagar_anterior(perfil.id, anterior, manter=final)
+        self._apagar_anterior(alvo_id, anterior, manter=final)
         return {"foto_url": self._assinar(final)}
 
     def _trocar(
-        self, usuario_id: str, foto_id: str, tamanho: int, final: str, staging: str
+        self,
+        usuario_id: str,
+        foto_id: str,
+        tamanho: int,
+        final: str,
+        staging: str,
+        *,
+        por: str | None = None,
     ) -> str | None:
         """Chama a RPC. Devolve o caminho anterior. Falha definitiva: remove final e staging;
         transitória: só o final (o staging permite repetir)."""
         try:
+            if por is not None:
+                return self._repo.trocar_foto_perfil_por(
+                    usuario_id=usuario_id,
+                    ator_id=por,
+                    foto_id=foto_id,
+                    mime=MIME_SAIDA,
+                    tamanho=tamanho,
+                )
             return self._repo.trocar_foto_perfil(
                 usuario_id=usuario_id, foto_id=foto_id, mime=MIME_SAIDA, tamanho=tamanho
             )

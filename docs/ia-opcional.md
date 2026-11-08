@@ -34,6 +34,18 @@ documentação do provedor antes de ligar**; o padrão do código é só um pont
 - Alterações de configuração vão para `auditoria` (`configuracao_alterada`, `detalhes.recurso`
   começando por `ia.`), com o ator vindo do JWT.
 
+## Teste de conexão (admin)
+
+- `POST /api/admin/ia/testar` (corpo opcional `{"provedor": "openai"|"anthropic"}`; limite de 5 por
+  minuto por usuário) faz uma chamada mínima com prompt fixo, sem dado pessoal, usando o provedor e
+  o modelo já salvos. Serve para validar chave e modelo antes de ligar a chave geral.
+- Exige `AI_ENABLED=true` (senão 404) e chave no servidor; só testa o provedor ativo ou o reserva
+  (senão 409). `GET /api/admin/ia` lista em `testes_disponiveis` o que pode ser testado.
+- Falha do provedor volta 200 com `ok=false`, `tipo` (`auth`, `limite`, `timeout`, `rede`, `http`,
+  `formato`, `cota`, `erro`) e `mensagem` em pt-BR. O texto devolvido pelo modelo é descartado.
+- Ignora circuito aberto como bloqueio, mas o resultado o atualiza; passa pela cota; registra uso
+  em `ia_uso` com `funcao='teste'` (exige a migration que amplia o CHECK).
+
 ## Atualizar o servidor
 
 - Mudou `backend/`, `frontend/` ou `docker-compose.yml`: `docker compose up -d --build`.
@@ -60,3 +72,17 @@ documentação do provedor antes de ligar**; o padrão do código é só um pont
   ou alterar provedor/modelo/teto é recusado.
 - **Fase 1:** a saudação deve exigir JWT (sem perfil só vale o teto mensal global) e montar o
   prompt apenas com a data comemorativa, sem nome, unidade, e-mail, placa ou trajeto.
+
+## Ordem de deploy do teste de conexão (revisão de segurança)
+
+- **Aplique a migration `20261111120200_ia_uso_funcao_teste.sql` ANTES de subir o backend com
+  `--build`.** Sem ela, o INSERT em `ia_uso` com `funcao = 'teste'` viola o CHECK; o teste continua
+  funcionando, mas deixa de contar na cota por usuário/unidade/mês (a falha só aparece no log
+  `ia_uso_nao_registrado`).
+- **Antes do `supabase db push`**, rode `supabase migration list`. Se já existirem migrations
+  remotas com timestamp posterior (ex.: `20261112*`/`20261113*`), o push recusa uma migration mais
+  antiga; nesse caso renomeie a ainda não aplicada para um timestamp maior que o último remoto.
+- **Efeitos aceitos:** o teste consome a cota da hora do admin e da unidade dele, e uma falha de
+  teste conta no circuito do provedor (um teste com sucesso fecha um circuito aberto). O limite de
+  5 testes por minuto é por processo (memória): com vários workers o teto efetivo é maior; o gasto
+  real é limitado pela cota por hora, pelo teto mensal de tokens e por `AI_MAX_TOKENS`.

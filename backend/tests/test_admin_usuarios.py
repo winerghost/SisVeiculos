@@ -33,8 +33,11 @@ def test_listar_com_email_total_e_acoes(client, auth, cen):  # type: ignore[no-u
     por_id = {i["id"]: i for i in j["itens"]}
     sol = por_id[cen.sol.id]
     assert sol["email"].endswith("@agu.gov.br") and sol["rotulo_perfil"] == "PU · Solicitante"
-    assert sol["acoes_permitidas"] == ["editar", "alterar_role", "desativar"]
-    assert por_id[cen.admin.id]["acoes_permitidas"] == ["editar"]  # a si mesmo: sem role/desativar
+    assert sol["acoes_permitidas"] == ["editar", "alterar_role", "desativar", "trocar_foto"]
+    assert por_id[cen.admin.id]["acoes_permitidas"] == [
+        "editar",
+        "trocar_foto",
+    ]  # a si mesmo: sem role/desativar
     assert "token_hash" not in json.dumps(j)
 
 
@@ -76,7 +79,7 @@ def test_alterar_nome_unidade_e_role_audita_sem_duplicar(client, auth, cen, repo
     assert r.status_code == 200
     j = r.get_json()
     assert (j["nome"], j["unidade"], j["role"]) == ("Nome Novo", "CJU", "autorizador")
-    assert j["acoes_permitidas"] == ["editar", "alterar_role", "desativar"]
+    assert j["acoes_permitidas"] == ["editar", "alterar_role", "desativar", "trocar_foto"]
     # role e unidade: uma linha cada, gravadas pelo "trigger" com o admin como ator
     papel = repo.eventos_de("perfil_alterado")
     assert [(e["de"], e["para"], e["ator_id"]) for e in papel] == [
@@ -162,7 +165,10 @@ def test_ultimo_admin_pre_checagem_do_servico(client, auth, cen, repo, monkeypat
     assert repo.perfis[alvo].role == "admin" and repo.perfis[alvo].ativo
     lista = client.get("/api/admin/usuarios", headers=h).get_json()["itens"]
     ultimo = next(i for i in lista if i["id"] == alvo)
-    assert ultimo["acoes_permitidas"] == ["editar"]  # a UI nem oferece rebaixar/desativar
+    assert ultimo["acoes_permitidas"] == [
+        "editar",
+        "trocar_foto",
+    ]  # a UI nem oferece rebaixar/desativar
 
 
 @pytest.mark.parametrize(

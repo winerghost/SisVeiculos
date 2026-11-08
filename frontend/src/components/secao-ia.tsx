@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { admin } from '@/lib/api';
-import type { CorpoIA } from '@/lib/tipos';
+import type { CorpoIA, ResultadoTesteIA } from '@/lib/tipos';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { Alerta } from '@/components/ui/alert';
@@ -19,6 +19,13 @@ import { Switch } from '@/components/ui/switch';
 export function SecaoIA() {
   const cfg = useCarga(() => admin.ia());
   const envio = useEnvio();
+  const [teste, setTeste] = React.useState<ResultadoTesteIA | null>(null);
+
+  async function testar(provedor: string) {
+    setTeste(null);
+    const r = await envio.executar(() => admin.testarIA(provedor));
+    if (r.ok) setTeste(r.valor);
+  }
 
   async function enviar(corpo: CorpoIA) {
     const r = await envio.executar(() => admin.atualizarIA(corpo));
@@ -172,6 +179,45 @@ export function SecaoIA() {
               </Button>
             </form>
           </div>
+
+          {d.testes_disponiveis.length > 0 ? (
+            <div className="mt-4 flex flex-col gap-3 rounded-xl border border-borda bg-white p-4">
+              <h3 className="text-lg font-semibold">Testar conexão</h3>
+              <div className="flex flex-wrap gap-2">
+                {d.testes_disponiveis.map((chave) => {
+                  const rotulo = d.provedores.find((p) => p.chave === chave)?.rotulo ?? chave;
+                  return (
+                    <Button
+                      key={chave}
+                      type="button"
+                      variante="contorno"
+                      disabled={envio.ocupado}
+                      onClick={() => void testar(chave)}
+                    >
+                      Testar {rotulo}
+                    </Button>
+                  );
+                })}
+              </div>
+              <div role="status" aria-live="polite">
+                {teste ? (
+                  <div
+                    className={`rounded-padrao px-3 py-2 ${
+                      teste.ok ? 'bg-[#d9f2e6] text-[#0a5a3a]' : 'bg-[#fff1d6] text-[#7a4a00]'
+                    }`}
+                  >
+                    <p className="font-semibold">{teste.mensagem}</p>
+                    <p>Provedor: {teste.provedor}</p>
+                    <p>Modelo: {teste.modelo}</p>
+                    <p>Latência: {teste.latencia_ms === null ? '-' : `${teste.latencia_ms} ms`}</p>
+                    <p>
+                      Tokens: {teste.tokens_entrada} de entrada, {teste.tokens_saida} de saída
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </section>

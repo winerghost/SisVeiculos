@@ -51,7 +51,8 @@ INDICE_VEICULO_ABERTO = "ux_requisicoes_veiculo_aberta"
 COLUNAS_REQ = (
     "id,usuario_id,nome_solicitante,unidade,hora_saida,trajeto,observacao,veiculo_id,status,"
     "autorizado_por,autorizado_em,saida_real_em,chegada_real_em,saida_registrada_por,"
-    "chegada_registrada_por,cancelada_por,cancelada_em,km_saida,km_chegada,criado_em,atualizado_em"
+    "chegada_registrada_por,cancelada_por,cancelada_em,km_saida,km_chegada,motorista_id,"
+    "criado_em,atualizado_em"
 )
 
 COLUNAS_REQ_SET = frozenset(COLUNAS_REQ.split(","))
@@ -64,7 +65,7 @@ MSG_VEICULO_OCUPADO = (
 
 COLUNAS_CONFIG = (
     "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
-    "notificacao_email_criticos"
+    "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao"
 )
 
 
@@ -77,6 +78,9 @@ def _configuracoes(r: dict[str, Any]) -> Configuracoes:
         relatorio_email=bool(r.get("relatorio_email")),
         relatorio_whatsapp=bool(r.get("relatorio_whatsapp")),
         notificacao_email_criticos=bool(r.get("notificacao_email_criticos")),
+        motorista=bool(r.get("motorista")),
+        motorista_registra=bool(r.get("motorista_registra")),
+        motorista_localizacao=bool(r.get("motorista_localizacao")),
     )
 
 
@@ -84,6 +88,8 @@ COLUNAS_CHECKLIST = (
     "id,requisicao_id,momento,combustivel,avarias,descricao_avarias,registrado_por,registrado_em"
 )
 COLUNAS_CHECKLIST_FOTO = "id,requisicao_id,momento,posicao,mime_type,tamanho_bytes,caminho"
+COLUNAS_LOCALIZACAO = "momento,latitude,longitude,precisao_m,registrado_em,registrado_por"
+_SET_LOCALIZACAO = frozenset(COLUNAS_LOCALIZACAO.split(","))
 COLUNAS_PERFIL_ADMIN = "id,nome,unidade,role,ativo,criado_em,atualizado_em"
 COLUNAS_CONVITE = (
     "id,email,role,unidade,criado_por,criado_em,expira_em,usado_em,usado_por,"
@@ -128,6 +134,20 @@ MSG_KM_JA_GRAVADO = "A quilometragem já registrada não pode ser alterada."
 MSG_KM_CHEGADA_MENOR = "O km de chegada não pode ser menor que o km de saída."
 MSG_KM_INVALIDO = "Quilometragem inválida: use números inteiros, sem negativos."
 MSG_KM_ESTOURO = "Quilometragem acima do valor máximo aceito (2147483647)."
+
+MSG_MOTORISTA_DESLIGADO = "O perfil Motorista está desligado nas Configurações."
+MSG_MOTORISTA_INVALIDO = (
+    "O motorista informado não existe, está inativo ou não tem o perfil motorista."
+)
+MSG_REGISTRO_MOTORISTA_DESLIGADO = (
+    "O registro de saída e chegada pelo motorista está desligado nas Configurações."
+)
+MSG_LOCALIZACAO_OBRIGATORIA = (
+    "Informe a localização (latitude e longitude) para registrar a saída ou a chegada."
+)
+MSG_REGISTRO_INVALIDO = "Não foi possível registrar: viagem ou momento inválido."
+MSG_DEP_MOTORISTA_REGISTRA = "'Motorista registra' exige o perfil Motorista ligado."
+MSG_DEP_LOCALIZACAO = "'Localização do motorista' exige 'Motorista registra' ligado."
 
 MSG_CHECKLIST_SAIDA = "O checklist de saída é obrigatório antes de registrar a saída."
 MSG_CHECKLIST_CHEGADA = "O checklist de chegada é obrigatório antes de registrar a chegada."
@@ -256,6 +276,30 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         )
     if codigo == "AG009":
         return UltimoAdmin("Deve existir ao menos um administrador ativo.")
+    if codigo == "AG031":  # motorista inexistente, inativo ou sem o perfil
+        return RequisicaoInvalida(MSG_MOTORISTA_INVALIDO, "motorista_invalido")
+    if codigo == "AG032":
+        return TransicaoInvalida(
+            "O motorista só pode ser atribuído a uma requisição autorizada ou em uso."
+        )
+    if codigo == "AG033":
+        return RecursoDesligado(MSG_MOTORISTA_DESLIGADO)
+    if codigo == "AG034":  # registro pelo motorista (ou sua localização) desligado
+        return RecursoDesligado(MSG_REGISTRO_MOTORISTA_DESLIGADO)
+    if codigo == "AG035":  # não é o motorista designado: mesma resposta de viagem inexistente
+        return NaoEncontrado("Viagem não encontrada.")
+    if codigo == "AG036":  # mensagem fixa: nunca ecoa as coordenadas
+        return RequisicaoInvalida(MSG_LOCALIZACAO_OBRIGATORIA, "localizacao_obrigatoria")
+    if codigo == "AG037":
+        return RequisicaoInvalida(MSG_REGISTRO_INVALIDO, "registro_invalido")
+    if codigo == "23514" and "ck_configuracoes_localizacao" in texto:
+        return DependenciaRecurso(MSG_DEP_LOCALIZACAO)
+    if codigo == "23514" and "ck_configuracoes_motorista" in texto:
+        return DependenciaRecurso(MSG_DEP_MOTORISTA_REGISTRA)
+    if codigo == "AG010" and "localiza" in texto.lower():
+        return DependenciaRecurso(MSG_DEP_LOCALIZACAO)
+    if codigo == "AG010" and "motorista" in texto.lower():
+        return DependenciaRecurso(MSG_DEP_MOTORISTA_REGISTRA)
     if codigo == "AG010" or (codigo == "23514" and "ck_configuracoes_abastecimento" in texto):
         return DependenciaRecurso("Abastecimento e manutenção exigem a Quilometragem ligada.")
     if codigo == "23514" and "ck_convites_email_dominio" in texto:
@@ -387,23 +431,35 @@ class SupabaseRepositorio:
         return res.data[0] if res.data else None
 
     def listar_requisicoes(
-        self, *, usuario_id: str | None, status: str | None, limite: int, offset: int
+        self,
+        *,
+        usuario_id: str | None,
+        status: str | None,
+        limite: int,
+        offset: int,
+        motorista_id: str | None = None,
     ) -> list[Requisicao]:
         def consulta() -> Any:
             q = self._c.table("requisicoes").select(COLUNAS_REQ)
             if usuario_id is not None:
                 q = q.eq("usuario_id", usuario_id)
+            if motorista_id is not None:
+                q = q.eq("motorista_id", motorista_id)
             if status is not None:
                 q = q.eq("status", status)
             return q.order("criado_em", desc=True).range(offset, offset + limite - 1).execute()
 
         return list(_exec(consulta).data)
 
-    def contar_requisicoes(self, *, usuario_id: str | None, status: str | None) -> int:
+    def contar_requisicoes(
+        self, *, usuario_id: str | None, status: str | None, motorista_id: str | None = None
+    ) -> int:
         def consulta() -> Any:
             q = self._c.table("requisicoes").select("id", count="exact").limit(1)  # type: ignore[arg-type]
             if usuario_id is not None:
                 q = q.eq("usuario_id", usuario_id)
+            if motorista_id is not None:
+                q = q.eq("motorista_id", motorista_id)
             if status is not None:
                 q = q.eq("status", status)
             return q.execute()
@@ -877,6 +933,70 @@ class SupabaseRepositorio:
         )
         return filtrar_colunas(res.data[0]) if res.data else None
 
+    def atribuir_motorista(
+        self,
+        requisicao_id: str,
+        motorista_id: str | None,
+        status_permitidos: list[str],
+        *,
+        ator_id: str,
+    ) -> Requisicao | None:
+        # `motorista_alterado_por` viaja no MESMO UPDATE: o trigger valida o ator e o zera.
+        res = _exec(
+            lambda: self._c.table("requisicoes")
+            .update({"motorista_id": motorista_id, "motorista_alterado_por": ator_id})
+            .eq("id", requisicao_id)
+            .in_("status", status_permitidos)
+            .execute(),
+            repetir_lock=True,
+        )
+        return filtrar_colunas(res.data[0]) if res.data else None
+
+    def registrar_transicao_motorista(
+        self,
+        *,
+        requisicao_id: str,
+        momento: str,
+        ator_id: str,
+        latitude: float | None,
+        longitude: float | None,
+        precisao_m: float | None,
+        km_saida: int | None,
+        km_chegada: int | None,
+    ) -> dict[str, Any]:
+        params = {
+            "p_requisicao_id": requisicao_id,
+            "p_momento": momento,
+            "p_ator": ator_id,
+            "p_latitude": latitude,
+            "p_longitude": longitude,
+            "p_precisao_m": precisao_m,
+            "p_km_saida": km_saida,
+            "p_km_chegada": km_chegada,
+        }
+        # Corpo da chamada nunca é logado; erros do banco são traduzidos sem ecoar valores.
+        res = _exec(
+            lambda: self._c.rpc("registrar_transicao_motorista", params).execute(),
+            repetir_lock=True,
+        )
+        if not isinstance(res.data, dict) or "status" not in res.data:
+            log.error("erro_banco resposta_invalida rpc=registrar_transicao_motorista")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return {
+            "status": str(res.data["status"]),
+            "localizacao_gravada": bool(res.data.get("localizacao_gravada")),
+        }
+
+    def listar_localizacoes(self, requisicao_id: str) -> list[dict[str, Any]]:
+        res = _exec(
+            lambda: self._c.table("localizacoes_viagem")
+            .select(COLUNAS_LOCALIZACAO)
+            .eq("requisicao_id", requisicao_id)
+            .order("registrado_em")
+            .execute()
+        )
+        return [_so(r, _SET_LOCALIZACAO) for r in res.data]
+
     # -- administração (contrato em base.py) ---------------------------------------------
     @staticmethod
     def _filtrar_perfis(
@@ -1092,7 +1212,13 @@ class SupabaseRepositorio:
         return _configuracoes(res.data[0])
 
     def registrar_auditoria(
-        self, *, tabela: str, registro_id: str | None, ator_id: str, detalhes: dict[str, Any]
+        self,
+        *,
+        tabela: str,
+        registro_id: str | None,
+        ator_id: str,
+        detalhes: dict[str, Any],
+        acao: str = "acao_administrativa",
     ) -> None:
         _exec(
             lambda: self._c.rpc(
@@ -1100,7 +1226,7 @@ class SupabaseRepositorio:
                 {
                     "p_tabela": tabela,
                     "p_registro_id": registro_id,
-                    "p_acao": "acao_administrativa",
+                    "p_acao": acao,
                     "p_ator_id": ator_id,
                     "p_detalhes": detalhes,
                 },
@@ -1205,6 +1331,24 @@ class SupabaseRepositorio:
         params = {"p_usuario": usuario_id, "p_id": foto_id, "p_mime": mime, "p_tamanho": tamanho}
         res = _exec(lambda: self._c.rpc("trocar_foto_perfil", params).execute(), repetir_lock=True)
         return self._caminho_anterior(res.data)
+
+    def trocar_foto_perfil_por(
+        self, *, usuario_id: str, ator_id: str, foto_id: str, mime: str, tamanho: int
+    ) -> str | None:
+        params = {
+            "p_usuario": usuario_id,
+            "p_ator": ator_id,
+            "p_foto": foto_id,
+            "p_mime": mime,
+            "p_tamanho": tamanho,
+        }
+        res = _exec(
+            lambda: self._c.rpc("trocar_foto_perfil_por", params).execute(),
+            repetir_lock=True,
+            admin=ator_id != usuario_id,
+        )
+        # Esta RPC devolve `text` (o caminho anterior), não uma tabela como as demais.
+        return res.data if isinstance(res.data, str) and res.data else None
 
     def remover_foto_perfil_por(self, *, usuario_id: str, ator_id: str) -> str | None:
         params = {"p_usuario": usuario_id, "p_ator": ator_id}

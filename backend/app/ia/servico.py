@@ -34,6 +34,42 @@ class ResultadoGeracao:
     modelo: str
 
 
+TESTE_SISTEMA = "Você é um verificador de conectividade."
+TESTE_USUARIO = "Responda apenas com a palavra: ok"
+MENSAGENS_TESTE: dict[str, str] = {
+    "auth": "O provedor recusou a chave: ela é inválida, expirou ou não tem permissão.",
+    "limite": "O provedor limitou as requisições (limite de uso ou de crédito). Tente mais tarde.",
+    "timeout": "Tempo esgotado: o provedor não respondeu dentro do prazo (AI_TIMEOUT_S).",
+    "rede": "Sem conexão com o provedor: verifique a rede e o acesso de saída do servidor.",
+    "http": (
+        "O provedor rejeitou a requisição: o modelo pode não existir ou a chave não tem acesso "
+        "a ele, ou o provedor está com problemas."
+    ),
+    "formato": (
+        "Resposta vazia ou inesperada do provedor. Em modelos de raciocínio isso pode ser "
+        "AI_MAX_TOKENS baixo demais: tente aumentá-lo."
+    ),
+    "cota": "Cota de uso de IA atingida (por hora ou teto mensal). Tente mais tarde.",
+    "erro": "Falha inesperada ao testar a conexão com o provedor.",
+}
+
+
+@dataclass(frozen=True)
+class ResultadoTeste:
+    ok: bool
+    provedor: str
+    modelo: str
+    latencia_ms: int | None
+    tokens_entrada: int
+    tokens_saida: int
+    tipo: str | None
+    mensagem: str
+
+
+def _falha(provedor: str, modelo: str, tipo: str, latencia_ms: int | None) -> ResultadoTeste:
+    return ResultadoTeste(False, provedor, modelo, latencia_ms, 0, 0, tipo, MENSAGENS_TESTE[tipo])
+
+
 def modelo_efetivo(cfg: ConfigIA, banco: ConfigIABanco, provedor: str) -> str | None:
     """Modelo do provedor: o escolhido na tela (só para o ativo, e só se estiver na lista
     permitida); senão o primeiro da lista permitida."""
@@ -167,6 +203,71 @@ class ServicoIA:
             )
             return ResultadoGeracao(r.texto, nome, modelo)
         return None
+
+    # -- teste de conexão ----------------------------------------------------------------
+    def testar(
+        self, provedor: str, *, banco: ConfigIABanco, perfil: Perfil | None = None
+    ) -> ResultadoTeste:
+        """Chamada mínima e fixa ao provedor para o admin validar chave/modelo. Nunca lança.
+
+        Ignora a chave geral, a função e o circuito aberto como bloqueio (o admin precisa
+        diagnosticar), mas passa pela cota e atualiza o circuito. O texto do modelo é descartado.
+        """
+        modelo = modelo_efetivo(self.cfg, banco, provedor) or ""
+        try:
+            return self._testar(provedor, modelo, banco, perfil)
+        except Exception as exc:  # noqa: BLE001 - o teste nunca vira erro 500
+            log.warning("ia_teste_erro_inesperado tipo=%s", type(exc).__name__)
+            return _falha(provedor, modelo, "erro", None)
+
+    def _testar(
+        self, provedor: str, modelo: str, banco: ConfigIABanco, perfil: Perfil | None
+    ) -> ResultadoTeste:
+        if not modelo:
+            return _falha(provedor, modelo, "erro", None)
+        if not self._dentro_da_cota(banco, perfil):
+            return _falha(provedor, modelo, "cota", None)
+        circuito = self._circuitos[provedor]
+        inicio = time.monotonic()
+        try:
+            r = self._provedor(provedor).gerar(
+                modelo=modelo,
+                sistema=TESTE_SISTEMA,
+                usuario=TESTE_USUARIO,
+                max_tokens=self.cfg.max_tokens,
+                timeout=self.cfg.timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - qualquer falha conta e libera o circuito
+            tipo = exc.tipo if isinstance(exc, ErroProvedor) else "erro"
+            if tipo not in MENSAGENS_TESTE:
+                tipo = "erro"
+            circuito.falha()
+            log.warning("ia_teste_falha provedor=%s tipo=%s", provedor, tipo)
+            self._registrar(
+                "teste",
+                provedor,
+                modelo,
+                perfil,
+                0,
+                0,
+                "timeout" if tipo == "timeout" else "erro",
+                inicio,
+            )
+            return _falha(provedor, modelo, tipo, int((time.monotonic() - inicio) * 1000))
+        circuito.sucesso()
+        self._registrar(
+            "teste", provedor, modelo, perfil, r.tokens_entrada, r.tokens_saida, "ok", inicio
+        )
+        return ResultadoTeste(
+            ok=True,
+            provedor=provedor,
+            modelo=modelo,
+            latencia_ms=int((time.monotonic() - inicio) * 1000),
+            tokens_entrada=r.tokens_entrada,
+            tokens_saida=r.tokens_saida,
+            tipo=None,
+            mensagem="Conexão funcionando: o provedor respondeu normalmente.",
+        )
 
     # -- internos ------------------------------------------------------------------------
     def _provedor(self, nome: str) -> Provedor:

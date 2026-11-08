@@ -405,7 +405,12 @@ def cfg_servidor() -> ConfigIA:
 
 
 @pytest.fixture
-def app(repo, auth_admin, storage, avatares, repo_ia, cfg_servidor):  # type: ignore[no-untyped-def]
+def servico_ia(repo_ia, cfg_servidor) -> ServicoIA:  # type: ignore[no-untyped-def]
+    return ServicoIA(cfg_servidor, repo_ia)
+
+
+@pytest.fixture
+def app(repo, auth_admin, storage, avatares, repo_ia, servico_ia):  # type: ignore[no-untyped-def]
     verificador = VerificadorJWT(
         issuer=ISSUER, audience=AUDIENCE, resolvedor_chave=lambda _t: _CHAVE.public_key()
     )
@@ -418,7 +423,7 @@ def app(repo, auth_admin, storage, avatares, repo_ia, cfg_servidor):  # type: ig
         auth_admin=auth_admin,
         armazenamento=storage,
         armazenamento_avatares=avatares,
-        servico_ia=ServicoIA(cfg_servidor, repo_ia),
+        servico_ia=servico_ia,
     )
     limiter.reset()
     return aplicacao
@@ -663,3 +668,194 @@ def test_servidor_desligado_permite_so_desligar(repo, auth_admin, storage, avata
     assert put(c, h, {"provedor": "anthropic"}).status_code == 404
     assert put(c, h, {"saudacao": False, "mestre": False}).status_code == 200
     assert banco.config.mestre is False and banco.config.saudacao is False
+
+
+# ------------------------------------------------------------------- teste de conexão
+TEXTO_MODELO = "ok-TEXTO-SECRETO-DO-MODELO"
+ATIVO = ConfigIABanco(provedor="openai", modelo="gpt-5.4-mini", provedor_reserva="anthropic")
+
+
+def _testar(client, h, corpo=None):  # type: ignore[no-untyped-def]
+    if corpo is None:
+        return client.post("/api/admin/ia/testar", headers=h)
+    return client.post("/api/admin/ia/testar", headers=h, json=corpo)
+
+
+def _com(servico_ia, repo_ia, banco=ATIVO, **provs):  # type: ignore[no-untyped-def]
+    repo_ia.config = banco
+    for nome, p in provs.items():
+        servico_ia._provedores[nome] = p  # noqa: SLF001
+
+
+def test_testar_sucesso_usa_provedor_ativo_e_registra_uso(  # type: ignore[no-untyped-def]
+    client, auth, adm, repo_ia, servico_ia
+) -> None:
+    p = ProvedorRoteirizado("openai", [Resultado(TEXTO_MODELO, 12, 3)])
+    _com(servico_ia, repo_ia, openai=p)  # chave geral e função desligadas: não importa
+    r = _testar(client, auth(adm.id))
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["ok"] is True and j["tipo"] is None
+    assert (j["provedor"], j["modelo"]) == ("openai", "gpt-5.4-mini")
+    assert (j["tokens_entrada"], j["tokens_saida"]) == (12, 3)
+    assert isinstance(j["latencia_ms"], int) and j["mensagem"]
+    assert TEXTO_MODELO not in r.get_data(as_text=True)
+    (uso,) = repo_ia.usos
+    assert uso["funcao"] == "teste" and uso["status"] == "ok" and uso["usuario_id"] == adm.id
+    assert (uso["provedor"], uso["modelo"]) == ("openai", "gpt-5.4-mini")
+    assert uso["tokens_entrada"] == 12 and uso["unidade"] == adm.unidade
+    assert p.chamadas[0]["usuario"] == "Responda apenas com a palavra: ok"
+
+
+def test_testar_provedor_reserva_explicito(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    p = ProvedorRoteirizado("anthropic")
+    _com(servico_ia, repo_ia, anthropic=p)
+    j = _testar(client, auth(adm.id), {"provedor": "anthropic"}).get_json()
+    assert j["ok"] is True and j["provedor"] == "anthropic" and j["modelo"] == "claude-haiku-5-5"
+
+
+@pytest.mark.parametrize(
+    ("erro_tipo", "trecho"),
+    [
+        ("auth", "chave"),
+        ("limite", "limitou"),
+        ("timeout", "Tempo esgotado"),
+        ("rede", "Sem conexão"),
+        ("http", "modelo"),
+        ("formato", "AI_MAX_TOKENS"),
+    ],
+)
+def test_testar_falhas_mapeadas_com_200(  # type: ignore[no-untyped-def]
+    client, auth, adm, repo_ia, servico_ia, erro_tipo, trecho
+) -> None:
+    _com(servico_ia, repo_ia, openai=ProvedorRoteirizado("openai", [erro(erro_tipo)]))
+    r = _testar(client, auth(adm.id))
+    assert r.status_code == 200
+    j = r.get_json()
+    assert j["ok"] is False and j["tipo"] == erro_tipo and trecho in j["mensagem"]
+    assert j["tokens_entrada"] == 0 and j["tokens_saida"] == 0
+    esperado = "timeout" if erro_tipo == "timeout" else "erro"
+    assert repo_ia.usos[0]["status"] == esperado and repo_ia.usos[0]["funcao"] == "teste"
+
+
+def test_testar_excecao_inesperada_vira_tipo_erro(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia, openai=ProvedorRoteirizado("openai", [RuntimeError(CHAVE_OPENAI)]))
+    r = _testar(client, auth(adm.id))
+    assert r.status_code == 200 and r.get_json()["tipo"] == "erro"
+    assert CHAVE_OPENAI not in r.get_data(as_text=True)
+
+
+def test_testar_cota_excedida_nao_chama_provedor(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    p = ProvedorRoteirizado("openai")
+    _com(servico_ia, repo_ia, openai=p)
+    repo_ia.consumo_fixo = Consumo(usuario_hora=999, unidade_hora=0, tokens_mes={})
+    j = _testar(client, auth(adm.id)).get_json()
+    assert j["ok"] is False and j["tipo"] == "cota"
+    assert p.chamadas == [] and repo_ia.usos == []
+
+
+def test_testar_ignora_circuito_aberto_e_sucesso_fecha() -> None:
+    p = ProvedorRoteirizado("openai", [erro(), Resultado(TEXTO_MODELO, 1, 1)])
+    s, repo = servico(cfg_ia(circuito_falhas=1, circuito_abertura_s=1000), openai=p)
+    assert gerar(s) is None and s.circuito_aberto("openai")
+    r = s.testar("openai", banco=LIGADO, perfil=PERFIL)  # circuito aberto não bloqueia
+    assert r.ok is True and not s.circuito_aberto("openai")
+    assert [u["funcao"] for u in repo.usos] == ["saudacao", "teste"]
+
+
+def test_testar_falha_conta_no_circuito() -> None:
+    p = ProvedorRoteirizado("openai", [erro("rede")])
+    s, _ = servico(cfg_ia(circuito_falhas=1), openai=p)
+    assert s.testar("openai", banco=LIGADO, perfil=PERFIL).tipo == "rede"
+    assert s.circuito_aberto("openai")
+
+
+@pytest.mark.parametrize("cfg_servidor", [cfg_ia(habilitado=False)])
+def test_testar_servidor_desligado_404_e_testes_vazios(  # type: ignore[no-untyped-def]
+    client, auth, adm, repo_ia, servico_ia
+) -> None:
+    _com(servico_ia, repo_ia)
+    r = _testar(client, auth(adm.id))
+    assert r.status_code == 404 and _cod(r) == "recurso_desligado"
+    assert get(client, auth(adm.id)).get_json()["testes_disponiveis"] == []
+
+
+def test_testar_provedor_nao_configurado_409(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia, banco=ConfigIABanco())  # sem provedor ativo
+    r = _testar(client, auth(adm.id))
+    assert r.status_code == 409 and _cod(r) == "dependencia_recurso"
+    _com(
+        servico_ia, repo_ia, banco=ConfigIABanco(provedor="openai")
+    )  # anthropic não é ativo/reserva
+    r = _testar(client, auth(adm.id), {"provedor": "anthropic"})
+    assert r.status_code == 409 and _cod(r) == "dependencia_recurso"
+
+
+@pytest.mark.parametrize("cfg_servidor", [cfg_ia(anthropic_api_key="")])
+def test_testar_provedor_sem_chave_409(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia)
+    r = _testar(client, auth(adm.id), {"provedor": "anthropic"})
+    assert r.status_code == 409 and _cod(r) == "dependencia_recurso"
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [{"provedor": "gemini"}, {"provedor": 1}, {"outro": 1}, {"provedor": "openai", "x": 1}, [1]],
+)
+def test_testar_corpo_invalido_400(client, auth, adm, repo_ia, servico_ia, corpo) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia)
+    r = _testar(client, auth(adm.id), corpo)
+    assert r.status_code == 400 and _cod(r) == "requisicao_invalida"
+
+
+def test_testar_json_malformado_400(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia)
+    r = client.post(
+        "/api/admin/ia/testar",
+        headers={**auth(adm.id), "Content-Type": "application/json"},
+        data="{nao e json",
+    )
+    assert r.status_code == 400 and _cod(r) == "requisicao_invalida"
+
+
+def test_testar_exige_admin_e_token(client, auth, repo) -> None:  # type: ignore[no-untyped-def]
+    assert _testar(client, {}).status_code == 401
+    for role in ("solicitante", "autorizador"):
+        assert _testar(client, auth(repo.novo_perfil(role).id)).status_code == 403
+
+
+def test_testes_disponiveis_ativo_e_reserva(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia)
+    assert get(client, auth(adm.id)).get_json()["testes_disponiveis"] == ["openai", "anthropic"]
+    _com(servico_ia, repo_ia, banco=ConfigIABanco(provedor="openai"))
+    assert get(client, auth(adm.id)).get_json()["testes_disponiveis"] == ["openai"]
+    _com(servico_ia, repo_ia, banco=ConfigIABanco())
+    assert get(client, auth(adm.id)).get_json()["testes_disponiveis"] == []
+
+
+@pytest.mark.parametrize("cfg_servidor", [cfg_ia(anthropic_api_key="")])
+def test_testes_disponiveis_sem_chave(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia)
+    assert get(client, auth(adm.id)).get_json()["testes_disponiveis"] == ["openai"]
+
+
+def test_testar_nao_vaza_chave_nem_texto_do_modelo_em_logs(  # type: ignore[no-untyped-def]
+    client, auth, adm, repo_ia, servico_ia, caplog
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    respostas: list[Resultado | Exception] = [
+        Resultado(TEXTO_MODELO, 1, 1),
+        RuntimeError(CHAVE_OPENAI),
+    ]
+    _com(servico_ia, repo_ia, openai=ProvedorRoteirizado("openai", respostas))
+    corpos = [_testar(client, auth(adm.id)).get_data(as_text=True) for _ in range(2)]
+    visto = "".join(corpos) + caplog.text + repr(repo_ia.usos)
+    for segredo in (CHAVE_OPENAI, CHAVE_ANTHROPIC, TEXTO_MODELO, "verificador de conectividade"):
+        assert segredo not in visto
+
+
+def test_testar_limite_5_por_minuto_por_usuario(client, auth, adm, repo_ia, servico_ia) -> None:  # type: ignore[no-untyped-def]
+    _com(servico_ia, repo_ia, openai=ProvedorRoteirizado("openai", [Resultado("ok", 1, 1)] * 6))
+    h = auth(adm.id)
+    assert [_testar(client, h).status_code for _ in range(5)] == [200] * 5
+    assert _testar(client, h).status_code == 429

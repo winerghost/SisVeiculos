@@ -10,6 +10,7 @@ import { useEnvio } from '@/lib/use-envio';
 import type { UsuarioAdmin } from '@/lib/tipos';
 import { AdminShell } from '@/components/admin-shell';
 import { Avatar } from '@/components/avatar';
+import { TrocarFotoUsuario } from '@/components/trocar-foto-usuario';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRole, ROLES, rotuloRole } from '@/components/ui/chip';
@@ -43,6 +44,7 @@ function Edicao({
   const podeDesativar = u.acoes_permitidas.includes('desativar');
   const podeAtivar = u.acoes_permitidas.includes('ativar');
   const podeRemoverFoto = u.acoes_permitidas.includes('remover_foto');
+  const podeTrocarFoto = u.acoes_permitidas.includes('trocar_foto');
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
@@ -166,13 +168,22 @@ function Edicao({
         </p>
       ) : null}
 
-      {podeRemoverFoto ? (
-        <section className="rounded-xl border border-borda bg-white p-4">
+      {podeRemoverFoto || podeTrocarFoto ? (
+        <section className="flex flex-col gap-3 rounded-xl border border-borda bg-white p-4">
           <h2 className="text-lg font-semibold">Foto do perfil</h2>
-          <p className="mt-1 mb-3 text-texto-2">
+          <p className="text-texto-2">
             A foto é opcional e serve apenas para identificar a pessoa no sistema.
           </p>
-          {confirmandoFoto ? (
+          {podeTrocarFoto ? (
+            <TrocarFotoUsuario
+              usuario={u}
+              aoAtualizar={(novo) => {
+                setFotoRemovida(false);
+                aoAtualizar(novo);
+              }}
+            />
+          ) : null}
+          {!podeRemoverFoto ? null : confirmandoFoto ? (
             <div className="grid grid-cols-2 gap-3">
               <Button variante="contorno" onClick={() => setConfirmandoFoto(false)}>
                 Cancelar

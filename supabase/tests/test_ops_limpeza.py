@@ -2,9 +2,10 @@
 
 Somente banco local/dev DESCARTAVEL (TEST_DATABASE_URL + TEST_DATABASE_CONFIRM=descartavel + marcador
 `comment on database ... is 'sisveiculos:descartavel'`; sem eles os testes sao pulados). Ver dbhelpers.py.
-ATENCAO: estes testes EXECUTAM a limpeza de verdade: apagam requisicoes, checklists, fotos de perfil,
-acessos de login e auditoria de TODO o banco de teste (perfis, veiculos, configuracoes e convites
-ficam). Os outros testes criam os proprios dados com ids unicos e nao dependem de dados antigos.
+ATENCAO: estes testes EXECUTAM a limpeza de verdade: apagam requisicoes, checklists, notificacoes,
+localizacoes, envios de e-mail, uso de IA, fotos de perfil, acessos de login e auditoria de TODO o banco
+de teste (perfis, veiculos, configuracoes, ia_configuracoes e convites ficam). Exige TODAS as migrations
+(inclusive 20261114120000). Os outros testes criam os proprios dados com ids unicos e nao dependem de dados antigos.
 Alguns testes trocam o comentario do banco (lacre) e o restauram no fim. Sem paralelismo.
 
     pytest supabase/tests/test_ops_limpeza.py -m db_local -p no:xdist
@@ -39,16 +40,38 @@ LACRAR = (_OPS / "lacrar_producao.sql").read_text(encoding="utf-8")
 
 FRASE = "APAGAR DADOS DE TESTE ofwvoztarroglekfwohs"
 FRASE_LACRE = "LACRAR PRODUCAO ofwvoztarroglekfwohs"
-ESCOPO = ("checklist_fotos", "checklists", "requisicoes", "perfil_fotos", "acessos_login", "auditoria")
-MANTIDAS = ("perfis", "veiculos", "configuracoes", "convites")
+ESCOPO = (
+    "checklist_fotos",
+    "checklists",
+    "notificacoes",
+    "localizacoes_viagem",
+    "requisicoes",
+    "perfil_fotos",
+    "acessos_login",
+    "envios_email",
+    "ia_uso",
+    "auditoria",
+)
+MANTIDAS = ("perfis", "veiculos", "configuracoes", "ia_configuracoes", "convites")
 GATILHOS_DESLIGADOS = {
     "checklist_fotos": "trg_checklist_fotos_imutavel",
     "checklists": "trg_checklists_imutavel",
+    "notificacoes": "trg_notificacoes_proteger",
+    "localizacoes_viagem": "trg_localizacoes_viagem_imutavel",
     "requisicoes": "trg_requisicoes_sem_delete",
     "perfil_fotos": "trg_perfil_fotos_sem_delete",
     "acessos_login": "trg_acessos_login_imutavel",
+    "envios_email": "trg_envios_email_sem_delete",
+    "ia_uso": "trg_ia_uso_imutavel",
     "auditoria": "trg_auditoria_append_only",
 }
+# Gatilhos que NUNCA podem ser tocados pela limpeza (TRUNCATE segue bloqueado).
+GATILHOS_TRUNCATE = (
+    ("notificacoes", "trg_notificacoes_sem_truncate"),
+    ("localizacoes_viagem", "trg_localizacoes_viagem_sem_truncate"),
+    ("auditoria", "trg_auditoria_sem_truncate"),
+)
+LIGADOS = ("A", "O")  # ENABLE ALWAYS ou ENABLE padrao (envios_email/ia_uso nasceram em 'O')
 ANCORA = "-- >>> RELIGAR"
 PADRAO = "default administrative connection database"
 
@@ -110,7 +133,7 @@ def rodar(
     confere: int | str | None = "auto",
     papel: str | None = None,
 ) -> Resultado:
-    """confere: 'auto' = total atual das 6 tabelas do escopo; None = deixa o padrao (-1); int = esse valor."""
+    """confere: 'auto' = total atual das 10 tabelas do escopo; None = deixa o padrao (-1); int = esse valor."""
     t = SCRIPT
     t = _param(t, "v_executar", "boolean", "true" if executar else "false")
     t = _param(t, "v_confirmacao", "text", _lit(confirmacao))
@@ -223,9 +246,79 @@ def _foto(uid: uuid.UUID) -> None:
         c.execute("select public.trocar_foto_perfil(%s, %s, 'image/png', 1000)", (uid, uuid.uuid4()))
 
 
+_FLAGS_MOTORISTA = (
+    "motorista_localizacao",
+    "motorista_registra",
+    "motorista",
+    "checklist",
+    "abastecimento_manutencao",
+    "quilometragem",
+)  # dependentes primeiro; o religamento usa a ordem inversa
+
+
+def _flags() -> dict[str, bool]:
+    with h.conectar() as c:
+        row = c.execute(f"select {', '.join(_FLAGS_MOTORISTA)} from public.configuracoes").fetchone()
+    assert row is not None
+    return dict(zip(_FLAGS_MOTORISTA, (bool(v) for v in row), strict=True))
+
+
+def _definir_flag(nome: str, valor: bool, por: uuid.UUID) -> None:
+    with h.conectar() as c:
+        c.execute(f"update public.configuracoes set {nome} = %s, alterado_por = %s where id = true", (valor, por))
+
+
+def _localizacao(admin: uuid.UUID, aut: uuid.UUID, sol: uuid.UUID, mot: uuid.UUID) -> None:
+    """Gera uma linha em localizacoes_viagem pela RPC do motorista (recurso opcional ligado so aqui)."""
+    original = _flags()
+    for f in _FLAGS_MOTORISTA:
+        if original[f]:
+            _definir_flag(f, False, admin)
+    try:
+        for f in ("motorista", "motorista_registra", "motorista_localizacao"):
+            _definir_flag(f, True, admin)
+        with h.conectar() as c:
+            rid = h.inserir_requisicao(c, sol, h.novo_veiculo(admin))
+        h.autorizar(rid, aut)
+        with h.conectar() as c:
+            c.execute(
+                "update public.requisicoes set motorista_id = %s, motorista_alterado_por = %s where id = %s",
+                (mot, aut, rid),
+            )
+            c.execute(
+                "select public.registrar_transicao_motorista(%s, 'saida', %s, -15.793889::numeric, "
+                "-47.882778::numeric, null::numeric, null::integer, null::integer)",
+                (rid, mot),
+            )
+    finally:
+        for f in _FLAGS_MOTORISTA:
+            if _flags()[f]:
+                _definir_flag(f, False, admin)
+        for f in reversed(_FLAGS_MOTORISTA):
+            if original[f]:
+                _definir_flag(f, True, admin)
+
+
+def _envio_e_uso_ia(admin: uuid.UUID, sol: uuid.UUID) -> None:
+    """Uma linha de envios_email (outbox pendente) e uma de ia_uso (sem prompt nem dado pessoal)."""
+    with h.conectar() as c:
+        c.execute(
+            "insert into public.envios_email (solicitado_por, destinatario_id, tipo_relatorio, formato) "
+            "values (%s, %s, 'requisicoes', 'csv')",
+            (admin, admin),
+        )
+        c.execute(
+            "insert into public.ia_uso (funcao, provedor, modelo, usuario_id, status, tokens_entrada) "
+            "values ('saudacao', 'openai', 'm', %s, 'ok', 1)",
+            (sol,),
+        )
+
+
 def popular() -> Mundo:
     """Dados ficticios completos: usuarios, veiculo, requisicoes em varios estados, checklists com
-    fotos, fotos de perfil (uma removida), acessos de login, convite e auditoria."""
+    fotos, fotos de perfil (uma removida), acessos de login, convite, auditoria, notificacoes (nascem
+    por gatilho), localizacao de motorista, envio de e-mail e uso de IA. Tudo RECENTE (< 30 dias),
+    abaixo dos pisos de expurgo do sistema: so o script de limpeza consegue apagar."""
     admin = h.criar_usuario("admin-lmp", "admin")
     aut = h.criar_usuario("aut-lmp", "autorizador")
     sol = h.criar_usuario("sol-lmp")
@@ -260,6 +353,8 @@ def popular() -> Mundo:
     _acesso(sol)
     _acesso(aut)
     h.novo_convite(admin, h.email_unico())
+    _localizacao(admin, aut, sol, h.criar_usuario("mot-lmp", "motorista"))
+    _envio_e_uso_ia(admin, sol)
     return Mundo(admin, aut, sol, veic, ocupada)
 
 
@@ -325,6 +420,8 @@ def test_execucao_real_apaga_exatamente_o_escopo_e_mantem_o_resto() -> None:
     assert snapshot_gatilhos() == gat
     estados = {(rel, nome): est for rel, nome, est in snapshot_gatilhos()}
     for tabela, gatilho in GATILHOS_DESLIGADOS.items():
+        assert estados[(tabela, gatilho)] in LIGADOS, gatilho
+    for tabela, gatilho in GATILHOS_TRUNCATE:  # TRUNCATE nunca foi tocado
         assert estados[(tabela, gatilho)] == "A", gatilho
     # resumo final visivel (segunda consulta) com as contagens finais
     final = {linha[0]: linha[1] for linha in r.tabela_final}
@@ -343,12 +440,41 @@ def test_depois_da_limpeza_os_gatilhos_de_bloqueio_continuam_bloqueando() -> Non
     m = popular()
     assert rodar(executar=True, confirmacao=FRASE).ok
     m2 = popular()
-    for tabela in ("requisicoes", "checklists", "checklist_fotos", "perfil_fotos", "acessos_login", "auditoria"):
+    for tabela in ESCOPO:
         with pytest.raises(psycopg.Error) as exc:
             with h.conectar() as c:
                 c.execute(sql.SQL("delete from public.{} where true").format(sql.Identifier(tabela)))
         assert h.sqlstate(exc) == "AG003", tabela
     assert m.veiculo != m2.veiculo
+
+
+def test_dados_recentes_de_notificacoes_e_localizacoes_sao_apagados_e_protecao_permanece() -> None:
+    """Notificacoes (< 30 dias) e localizacoes (< 12 meses) estao abaixo dos pisos do sistema: o expurgo
+    normal nao as apagaria; a limpeza as apaga desligando o gatilho nomeado e o religa igual."""
+    popular()
+    antes = contagens()
+    for t in ("notificacoes", "localizacoes_viagem", "envios_email", "ia_uso"):
+        assert antes[t] > 0, t
+    gat = snapshot_gatilhos()
+    assert rodar(executar=True, confirmacao=FRASE).ok
+    depois = contagens()
+    for t in ("notificacoes", "localizacoes_viagem", "envios_email", "ia_uso"):
+        assert depois[t] == 0, t
+    assert snapshot_gatilhos() == gat
+    # a funcao de protecao da localizacao continua a nova (retencao de 12 meses) e o piso vale de novo
+    with h.conectar() as c:
+        fn = c.execute(
+            "select p.proname from pg_trigger t join pg_proc p on p.oid = t.tgfoid "
+            "where t.tgrelid = 'public.localizacoes_viagem'::regclass and t.tgname = 'trg_localizacoes_viagem_imutavel'"
+        ).fetchone()
+    assert fn is not None and fn[0] == "localizacoes_viagem_proteger"
+    popular()
+    with pytest.raises(psycopg.Error) as exc:
+        with h.conectar() as c:
+            c.execute("select set_config('sisveiculos.expurgo_localizacoes', '1', true)")
+            c.execute("delete from public.localizacoes_viagem where true")  # marcador sem idade: recusa
+    assert h.sqlstate(exc) == "AG003"
+    assert contagens()["localizacoes_viagem"] > 0
 
 
 # --- (e) o sistema volta a funcionar -----------------------------------------------------------
@@ -407,7 +533,7 @@ def test_falha_simulada_depois_dos_deletes_desfaz_tudo() -> None:
     assert contagens() == antes
     assert snapshot_gatilhos() == gat  # nenhum gatilho ficou desligado
     estados = {(rel, nome): est for rel, nome, est in snapshot_gatilhos()}
-    assert all(estados[(t, g)] == "A" for t, g in GATILHOS_DESLIGADOS.items())
+    assert all(estados[(t, g)] in LIGADOS for t, g in GATILHOS_DESLIGADOS.items())
 
 
 def test_gatilho_de_delete_inesperado_aborta_sem_mudar_nada() -> None:
@@ -441,11 +567,11 @@ def test_tabela_dependente_fora_do_escopo_aborta() -> None:
             c.execute("drop table public.zz_dep")
 
 
-def test_gatilho_que_nao_esta_em_enable_always_aborta() -> None:
+def test_gatilho_desligado_aborta() -> None:
     popular()
     antes = contagens()
     with h.conectar() as c:
-        c.execute("alter table public.requisicoes enable trigger trg_requisicoes_sem_delete")  # 'O'
+        c.execute("alter table public.requisicoes disable trigger trg_requisicoes_sem_delete")  # 'D': desligado
     try:
         r = rodar(executar=True, confirmacao=FRASE)
         assert not r.ok and r.sqlstate == "LD004"

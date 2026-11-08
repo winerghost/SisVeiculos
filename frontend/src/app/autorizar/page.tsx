@@ -4,7 +4,7 @@ import * as React from 'react';
 import { api } from '@/lib/api';
 import { useCarga } from '@/lib/use-carga';
 import { useAcao } from '@/lib/use-acao';
-import type { ListaRequisicoes, Status } from '@/lib/tipos';
+import type { ListaRequisicoes, Motorista, Status } from '@/lib/tipos';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { AppShell } from '@/components/app-shell';
@@ -27,6 +27,19 @@ function Painel() {
     await listas.recarregar();
   });
   const itens = listas.dados?.[aba]?.itens ?? [];
+
+  // Candidatos a motorista vêm da API. Recurso desligado ou recusa: sem seletor, sem erro na tela.
+  const [motoristas, setMotoristas] = React.useState<Motorista[]>([]);
+  React.useEffect(() => {
+    let ativo = true;
+    api
+      .motoristas()
+      .then((r) => ativo && setMotoristas(Array.isArray(r?.itens) ? r.itens : []))
+      .catch(() => ativo && setMotoristas([]));
+    return () => {
+      ativo = false;
+    };
+  }, []);
 
   return (
     <>
@@ -70,6 +83,7 @@ function Painel() {
                 ocupado={acao.ocupado}
                 onAcao={(req, a, c) => void acao.executar(req, a, c)}
                 aoRegistrarChecklist={listas.recarregar}
+                motoristas={motoristas}
               />
             ))}
           </ul>

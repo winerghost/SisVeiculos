@@ -36,3 +36,7 @@ Servem como referência de **layout e visual**. Regras de negócio, validações
 - Chips de status (fundo / texto): solicitada `#FFF1D6` / `#7A4A00`; autorizada `#DCEBFF` / `#0B3C7A`; em uso `#D9F2E6` / `#0A5A3A`; concluída `#E8ECF2` / `#3B4658`; negada ou inativo `#FDE2E0` / `#8A1F17`; admin `#E9E3FA` / `#3F2A7A`.
 - Ação destrutiva (Negar, Desativar conta): borda e texto `#8A1F17`.
 - Logo da AGU no login e no cabeçalho das telas: `logo-agu.webp` nesta pasta é a cópia usada nos mockups. Copie-a para `public/` ou use o arquivo oficial, se houver.
+
+## Telas sem mockup de referência
+
+As telas do Motorista (`/motorista` e `/motorista/detalhe`), o registro de localização e a troca de foto de usuário pelo admin foram implementadas sem mockup de referência, seguindo apenas os tokens e padrões visuais do projeto. Pendente de validação visual.

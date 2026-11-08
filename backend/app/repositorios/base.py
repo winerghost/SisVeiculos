@@ -33,12 +33,21 @@ class Repositorio(Protocol):
     def obter_requisicao(self, requisicao_id: str) -> Requisicao | None: ...
 
     def listar_requisicoes(
-        self, *, usuario_id: str | None, status: str | None, limite: int, offset: int
+        self,
+        *,
+        usuario_id: str | None,
+        status: str | None,
+        limite: int,
+        offset: int,
+        motorista_id: str | None = None,
     ) -> list[Requisicao]:
-        """`usuario_id` não nulo restringe ao dono (anti-IDOR aplicado na consulta)."""
+        """`usuario_id` não nulo restringe ao dono e `motorista_id` ao motorista atribuído
+        (anti-IDOR aplicado na consulta)."""
         ...
 
-    def contar_requisicoes(self, *, usuario_id: str | None, status: str | None) -> int:
+    def contar_requisicoes(
+        self, *, usuario_id: str | None, status: str | None, motorista_id: str | None = None
+    ) -> int:
         """Total com os mesmos filtros de `listar_requisicoes` (sem paginação)."""
         ...
 
@@ -54,6 +63,42 @@ class Repositorio(Protocol):
         self, requisicao_id: str, status_atual: str, campos: dict[str, Any]
     ) -> Requisicao | None:
         """UPDATE condicional (`where status = status_atual`). None se ninguém casou."""
+        ...
+
+    def atribuir_motorista(
+        self,
+        requisicao_id: str,
+        motorista_id: str | None,
+        status_permitidos: list[str],
+        *,
+        ator_id: str,
+    ) -> Requisicao | None:
+        """UPDATE condicional de `motorista_id` (`where status in status_permitidos`).
+        None se ninguém casou. `motorista_id` None desatribui. O trigger do banco exige
+        `motorista_alterado_por` = `ator_id` (autorizador/admin do JWT) no MESMO UPDATE; sem ele,
+        AG002. Só chamar quando `motorista_id` realmente muda (senão AG004)."""
+        ...
+
+    def registrar_transicao_motorista(
+        self,
+        *,
+        requisicao_id: str,
+        momento: str,
+        ator_id: str,
+        latitude: float | None,
+        longitude: float | None,
+        precisao_m: float | None,
+        km_saida: int | None,
+        km_chegada: int | None,
+    ) -> dict[str, Any]:
+        """RPC `registrar_transicao_motorista` (uma transação: localização + transição).
+        `momento`: 'saida' ou 'chegada'. Devolve {status, localizacao_gravada}. Coordenadas são
+        dado sensível: nunca logar nem repassar a outro destino."""
+        ...
+
+    def listar_localizacoes(self, requisicao_id: str) -> list[dict[str, Any]]:
+        """Coordenadas da viagem (`localizacoes_viagem`), por `registrado_em`: momento,
+        latitude, longitude, precisao_m, registrado_em, registrado_por (id). SÓ para o admin."""
         ...
 
     # -- administração ------------------------------------------------------------------
@@ -130,9 +175,17 @@ class Repositorio(Protocol):
         ...
 
     def registrar_auditoria(
-        self, *, tabela: str, registro_id: str | None, ator_id: str, detalhes: dict[str, Any]
+        self,
+        *,
+        tabela: str,
+        registro_id: str | None,
+        ator_id: str,
+        detalhes: dict[str, Any],
+        acao: str = "acao_administrativa",
     ) -> None:
-        """Só para o que os triggers não cobrem (ex.: troca de nome). Sem dados pessoais."""
+        """Só para o que os triggers não cobrem (ex.: troca de nome). Sem dados pessoais.
+
+        `acao` deve constar no CHECK ck_auditoria_acao (ex.: 'localizacao_lida')."""
         ...
 
     # -- checklist (recurso opcional; migrations 19 a 22) ---------------------------------
@@ -198,6 +251,13 @@ class Repositorio(Protocol):
     ) -> str | None:
         """RPC `trocar_foto_perfil`: registra a nova foto e marca a anterior como removida.
         Devolve o caminho da foto ANTERIOR (None se não havia). `usuario_id` vem do JWT."""
+        ...
+
+    def trocar_foto_perfil_por(
+        self, *, usuario_id: str, ator_id: str, foto_id: str, mime: str, tamanho: int
+    ) -> str | None:
+        """RPC `trocar_foto_perfil_por`: admin ativo troca a foto de outra conta ATIVA (senão
+        AG022 -> SemPermissao, AG017 -> conta_inativa). Devolve o caminho anterior (ou None)."""
         ...
 
     def remover_foto_perfil_por(self, *, usuario_id: str, ator_id: str) -> str | None:

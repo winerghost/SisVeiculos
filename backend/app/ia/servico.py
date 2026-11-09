@@ -23,7 +23,7 @@ from app.modelos import Perfil
 log = logging.getLogger(__name__)
 
 # Função -> coluna de `ia_configuracoes` que a liga. Função nova = nova coluna (nova migration).
-FUNCOES: dict[str, str] = {"saudacao": "saudacao"}
+FUNCOES: dict[str, str] = {"saudacao": "saudacao", "resumo": "resumo"}
 JANELA_HORA = timedelta(hours=1)
 
 

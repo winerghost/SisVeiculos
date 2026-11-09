@@ -18,12 +18,13 @@ from app.repositorios.supabase_repo import TIMEOUT_POSTGREST, _exec
 CAMPOS_CONFIG: tuple[str, ...] = (
     "mestre",
     "saudacao",
+    "resumo",
     "provedor",
     "modelo",
     "provedor_reserva",
     "teto_tokens_mes",
 )
-CHAVES_LIGA_DESLIGA: tuple[str, ...] = ("mestre", "saudacao")
+CHAVES_LIGA_DESLIGA: tuple[str, ...] = ("mestre", "saudacao", "resumo")
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class ConfigIABanco:
 
     mestre: bool = False
     saudacao: bool = False
+    resumo: bool = False
     provedor: str | None = None
     modelo: str | None = None
     provedor_reserva: str | None = None
@@ -45,6 +47,7 @@ class ConfigIABanco:
         return cls(
             mestre=bool(r.get("mestre")),
             saudacao=bool(r.get("saudacao")),
+            resumo=bool(r.get("resumo")),
             provedor=r.get("provedor"),
             modelo=r.get("modelo"),
             provedor_reserva=r.get("provedor_reserva"),

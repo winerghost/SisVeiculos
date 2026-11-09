@@ -245,6 +245,86 @@ def test_envio_assinatura_e_cabecalhos() -> None:
     assert all(p not in texto for p in PROIBIDOS) and TOKEN not in texto
 
 
+HMAC_SEGREDO = "h" * 40  # noqa: S105
+
+
+def _enviar_um(**kw: Any) -> httpx.Request:
+    recebidos: list[httpx.Request] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        recebidos.append(req)
+        return httpx.Response(200)
+
+    n = webhook(h, **kw)
+    n.notificar("requisicao.autorizada", req_exemplo())
+    assert esperar(lambda: recebidos)
+    n.fechar()
+    return recebidos[0]
+
+
+def _assin(chave: str, r: httpx.Request) -> str:
+    ts = r.headers["X-Timestamp"]
+    mac = hmac.new(chave.encode(), ts.encode() + b"." + r.content, hashlib.sha256)
+    return "sha256=" + mac.hexdigest()
+
+
+def test_assinatura_usa_segredo_hmac_e_bearer_segue_token() -> None:
+    r = _enviar_um(hmac_secret=HMAC_SEGREDO)
+    assert r.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert r.headers["X-Assinatura"] == _assin(HMAC_SEGREDO, r)
+    assert r.headers["X-Assinatura"] != _assin(TOKEN, r)
+    assert HMAC_SEGREDO not in r.content.decode()
+
+
+def test_assinatura_cai_no_token_sem_segredo_hmac() -> None:
+    r = _enviar_um()
+    assert r.headers["X-Assinatura"] == _assin(TOKEN, r)
+    assert r.headers["Authorization"] == f"Bearer {TOKEN}"
+
+
+def test_aviso_unico_sem_segredo_hmac_e_sem_valores(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    criar_notificador(URL, TOKEN).fechar()
+    avisos = [x for x in caplog.records if "N8N_HMAC_SECRET" in x.getMessage()]
+    assert len(avisos) == 1
+    assert TOKEN not in caplog.text and URL not in caplog.text
+
+
+def test_sem_aviso_com_segredo_distinto_e_aviso_se_igual(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    criar_notificador(URL, TOKEN, hmac_secret=HMAC_SEGREDO).fechar()
+    assert "N8N_HMAC_SECRET" not in caplog.text
+    n = criar_notificador(URL, TOKEN, hmac_secret=TOKEN)  # só avisa, não falha
+    n.fechar()
+    assert "igual" in caplog.text and TOKEN not in caplog.text
+
+
+def test_segredo_hmac_fora_de_repr() -> None:
+    n = criar_notificador(URL, TOKEN, hmac_secret=HMAC_SEGREDO)
+    assert HMAC_SEGREDO not in repr(n) and HMAC_SEGREDO not in str(vars(n).get("_url", ""))
+    n.fechar()
+    cfg = Config(n8n_webhook_token=TOKEN, n8n_hmac_secret=HMAC_SEGREDO)
+    assert HMAC_SEGREDO not in repr(cfg) and TOKEN not in repr(cfg)
+
+
+def test_config_hmac_le_ambiente_e_valida_tamanho(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("N8N_HMAC_SECRET", f" {HMAC_SEGREDO} ")
+    assert Config.from_env().n8n_hmac_secret == HMAC_SEGREDO
+    base = {
+        "supabase_url": "https://p.supabase.co",
+        "supabase_service_role_key": "k",
+        "jwks_url": "https://p.supabase.co/auth/v1/.well-known/jwks.json",
+        "jwt_issuer": "https://p.supabase.co/auth/v1",
+    }
+    Config(**base, n8n_hmac_secret=HMAC_SEGREDO).validar_producao()
+    Config(**base).validar_producao()  # opcional
+    with pytest.raises(RuntimeError) as exc:
+        Config(**base, n8n_hmac_secret="curto").validar_producao()  # noqa: S106
+    assert "curto" not in str(exc.value)
+
+
 def test_retry_limitado_a_duas_tentativas(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
     tentativas: list[int] = []
@@ -507,7 +587,9 @@ def test_create_app_liga_ao_desistir_ao_alerta_de_sistema(monkeypatch: pytest.Mo
 
     capturado: dict[str, Any] = {}
 
-    def falso(url: str, token: str, ao_desistir: Any = None) -> NotificadorNulo:
+    def falso(
+        url: str, token: str, ao_desistir: Any = None, hmac_secret: str = ""
+    ) -> NotificadorNulo:
         capturado["cb"] = ao_desistir
         return NotificadorNulo()
 

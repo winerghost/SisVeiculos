@@ -7,8 +7,9 @@ Garantias:
 - Payload mínimo, montado por allowlist (sem nome, e-mail, trajeto, placa, km, fotos, ids de
   pessoas). Ver `montar_payload`.
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
-- Assinatura: `X-Assinatura: sha256=HMAC(token, "<timestamp>.<corpo>")` e `X-Timestamp`
-  (segundos Unix) para o n8n rejeitar replay; também `Authorization: Bearer <token>`.
+- Assinatura: `X-Assinatura: sha256=HMAC(chave, "<timestamp>.<corpo>")` e `X-Timestamp`
+  (segundos Unix) para o n8n rejeitar replay. A chave é `N8N_HMAC_SECRET`; se ausente, cai no
+  token (compatibilidade). O token é sempre e só o `Authorization: Bearer <token>`.
 - Idempotência: cada evento tem um `evento_id` (uuid4) gerado uma vez em `montar_payload`, presente
   no corpo assinado e no header `X-Evento-Id`, e idêntico em todas as retentativas. O n8n DEVE
   deduplicar por `X-Evento-Id` (ou `evento_id` do corpo): uma mesma entrega pode chegar mais de
@@ -128,12 +129,14 @@ class N8nWebhook:
         max_fila: int = 100,
         cliente: httpx.Client | None = None,
         ao_desistir: Callable[[str], None] | None = None,
+        hmac_secret: str = "",
     ) -> None:
         # httpx registra a URL completa em INFO; ela contém o segredo do caminho do webhook.
         for nome in ("httpx", "httpcore"):
             logging.getLogger(nome).setLevel(logging.WARNING)
         self._url = url
         self._token = token
+        self._chave_hmac = (hmac_secret or token).encode()  # fallback: o token
         self._tentativas = max(1, tentativas)
         self._backoff = backoff
         self._max_fila = max(1, max_fila)
@@ -226,7 +229,7 @@ class N8nWebhook:
 
     def _cabecalhos(self, corpo: bytes, entrega_id: str, evento_id: str) -> dict[str, str]:
         ts = str(int(time.time()))  # novo a cada tentativa (janela anti-replay)
-        mac = hmac.new(self._token.encode(), ts.encode() + b"." + corpo, hashlib.sha256)
+        mac = hmac.new(self._chave_hmac, ts.encode() + b"." + corpo, hashlib.sha256)
         return {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self._token}",
@@ -238,11 +241,22 @@ class N8nWebhook:
 
 
 def criar_notificador(
-    url: str, token: str, ao_desistir: Callable[[str], None] | None = None
+    url: str,
+    token: str,
+    ao_desistir: Callable[[str], None] | None = None,
+    hmac_secret: str = "",
 ) -> Notificador:
     """No-op sem URL ou sem token; senão valida a URL (anti-SSRF) e cria o webhook.
-    `ao_desistir` (opcional) é chamado, na thread do worker, quando uma entrega é desistida."""
+    `ao_desistir` (opcional) é chamado, na thread do worker, quando uma entrega é desistida.
+    `hmac_secret` (opcional) assina o corpo; ausente, a assinatura usa o token (aviso único)."""
     if not url or not token:
         return NotificadorNulo()
     validar_url_webhook(url)
-    return N8nWebhook(url, token, ao_desistir=ao_desistir)
+    if not hmac_secret:
+        log.warning(
+            "n8n: N8N_HMAC_SECRET não definido; a assinatura usa o N8N_WEBHOOK_TOKEN. "
+            "Defina um segredo HMAC separado."
+        )
+    elif hmac.compare_digest(hmac_secret.encode(), token.encode()):
+        log.warning("n8n: N8N_HMAC_SECRET igual ao N8N_WEBHOOK_TOKEN; use valores distintos.")
+    return N8nWebhook(url, token, ao_desistir=ao_desistir, hmac_secret=hmac_secret)

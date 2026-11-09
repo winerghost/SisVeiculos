@@ -586,7 +586,10 @@ def test_transicoes_permitidas_e_repeticao_recusada(cli, adm_h, saud) -> None:  
     r = cli.post(f"{url}/aprovar", headers=h)  # mesmo estado de novo
     assert r.status_code == 409 and r.get_json()["erro"]["codigo"] == "transicao_invalida"
     r = cli.post(f"{url}/rejeitar", headers=h)  # aprovada -> rejeitada é permitido
-    assert r.status_code == 200 and r.get_json()["acoes_permitidas"] == ["aprovar"]
+    assert r.status_code == 200 and r.get_json()["acoes_permitidas"] == [
+        "aprovar",
+        "excluir",
+    ]
     assert cli.post(f"{url}/rejeitar", headers=h).status_code == 409
     assert cli.post(f"{url}/aprovar", headers=h).status_code == 200  # rejeitada -> aprovada
     assert saud.linhas[0]["status"] == "aprovada"
@@ -886,3 +889,105 @@ def test_manual_com_falha_na_aprovacao_devolve_pendente_com_aviso(  # type: igno
         and j["acoes_permitidas"] == ["aprovar", "rejeitar"]
     )
     assert saud.linhas[0]["status"] == "pendente"
+
+
+# ------------------------------------------------------------------------------ excluir rejeitada
+_URL = "/api/admin/ia/saudacoes"
+_INEXISTENTE = "22222222-2222-4222-8222-222222222222"
+
+
+def _semear(saud, adm_id: str, status: str, texto: str = "Boa tarde") -> str:  # type: ignore[no-untyped-def]
+    linha = saud.semear(
+        status=status, ocasiao="tarde", texto=texto, origem="manual", criado_por=adm_id
+    )
+    return str(linha["id"])
+
+
+def test_admin_exclui_rejeitada(cli, adm_h, saud) -> None:  # type: ignore[no-untyped-def]
+    p, h = adm_h
+    sid = _semear(saud, p.id, "rejeitada")
+    r = cli.delete(f"{_URL}/{sid}", headers=h)
+    assert r.status_code == 200 and r.get_json() == {"id": sid, "excluida": True}
+    assert saud.obter(sid) is None
+    assert cli.delete(f"{_URL}/{sid}", headers=h).status_code == 404  # já excluída
+
+
+@pytest.mark.parametrize("status", ["pendente", "aprovada"])
+def test_exclusao_recusa_pendente_e_aprovada(cli, adm_h, saud, status) -> None:  # type: ignore[no-untyped-def]
+    p, h = adm_h
+    sid = _semear(saud, p.id, status)
+    r = cli.delete(f"{_URL}/{sid}", headers=h)
+    assert r.status_code == 409
+    assert set(r.get_json()["erro"]) == {"codigo", "mensagem"}
+    assert saud.obter(sid) is not None  # nada foi apagado
+
+
+def test_exclusao_inexistente_404_e_id_invalido(cli, adm_h) -> None:  # type: ignore[no-untyped-def]
+    _, h = adm_h
+    r = cli.delete(f"{_URL}/{_INEXISTENTE}", headers=h)
+    assert r.status_code == 404 and set(r.get_json()["erro"]) == {"codigo", "mensagem"}
+    assert cli.delete(f"{_URL}/nao-e-uuid", headers=h).status_code in (400, 404)
+
+
+@pytest.mark.parametrize("role", ["solicitante", "autorizador"])
+def test_exclusao_nao_admin_403(cli, repo, auth, saud, adm_h, role) -> None:  # type: ignore[no-untyped-def]
+    sid = _semear(saud, adm_h[0].id, "rejeitada")
+    u = repo.novo_perfil(role)
+    assert cli.delete(f"{_URL}/{sid}", headers=auth(u.id)).status_code == 403
+    assert saud.obter(sid) is not None
+
+
+def test_exclusao_sem_jwt_401(cli) -> None:  # type: ignore[no-untyped-def]
+    assert cli.delete(f"{_URL}/{_INEXISTENTE}").status_code == 401
+
+
+def test_acoes_permitidas_por_status_com_excluir(cli, adm_h, saud) -> None:  # type: ignore[no-untyped-def]
+    p, h = adm_h
+    for i, status in enumerate(("pendente", "aprovada", "rejeitada")):
+        _semear(saud, p.id, status, f"Frase {i}")
+    itens = {
+        i["status"]: i["acoes_permitidas"] for i in cli.get(_URL, headers=h).get_json()["itens"]
+    }
+    assert itens == {
+        "pendente": ["aprovar", "rejeitar"],
+        "aprovada": ["rejeitar"],
+        "rejeitada": ["aprovar", "excluir"],
+    }
+
+
+def test_exclusao_grava_auditoria_sem_texto(cli, adm_h, saud) -> None:  # type: ignore[no-untyped-def]
+    p, h = adm_h
+    sid = _semear(saud, p.id, "rejeitada", "Frase sigilosa")
+    assert cli.delete(f"{_URL}/{sid}", headers=h).status_code == 200
+    assert saud.auditoria == [{"acao": "saudacao_excluida", "registro_id": sid, "ator_id": p.id}]
+
+
+def test_exclusao_corrida_ag003_vira_409(cli, adm_h, saud, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A frase mudou de status entre a leitura e o RPC: o AG003 traduzido vira 409."""
+    from app.errors import TransicaoInvalida
+
+    p, h = adm_h
+    sid = _semear(saud, p.id, "rejeitada")
+
+    def _recusa(*_a, **_k):  # type: ignore[no-untyped-def]
+        raise TransicaoInvalida("Só frases rejeitadas podem ser excluídas.")
+
+    monkeypatch.setattr(saud, "excluir_rejeitada", _recusa)
+    r = cli.delete(f"{_URL}/{sid}", headers=h)
+    assert r.status_code == 409 and r.get_json()["erro"]["codigo"] == "transicao_invalida"
+
+
+def test_exclusao_ator_invalido_ag002_vira_403(cli, adm_h, saud) -> None:  # type: ignore[no-untyped-def]
+    p, h = adm_h
+    sid = _semear(saud, p.id, "rejeitada")
+    saud.atores_invalidos.add(p.id)  # o banco já não o vê como admin ativo
+    r = cli.delete(f"{_URL}/{sid}", headers=h)
+    assert r.status_code == 403 and set(r.get_json()["erro"]) == {"codigo", "mensagem"}
+    assert saud.obter(sid) is not None
+
+
+def test_exclusao_corrida_id_some_vira_404(cli, adm_h, saud, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    p, h = adm_h
+    sid = _semear(saud, p.id, "rejeitada")
+    monkeypatch.setattr(saud, "excluir_rejeitada", lambda *_a, **_k: False)
+    assert cli.delete(f"{_URL}/{sid}", headers=h).status_code == 404

@@ -1,13 +1,18 @@
+import { api } from '@/lib/api';
 import type { FiltroRelatorio, PreviaRelatorio } from '@/lib/tipos';
+import { ResumoIA } from '@/components/resumo-ia';
 import { descreverFiltros } from '@/lib/relatorios';
 
 /** Prévia em tabela acessível. Os textos já vêm prontos do servidor; só são exibidos. */
 export function Previa({
   previa,
   filtros,
+  consulta,
 }: {
   previa: PreviaRelatorio;
   filtros: FiltroRelatorio[];
+  /** Filtros em vigor no formulário (os mesmos usados na prévia); o resumo usa estes. */
+  consulta: Record<string, string>;
 }) {
   const usados = descreverFiltros(filtros, previa.filtros);
   return (
@@ -18,6 +23,12 @@ export function Previa({
       {usados.length > 0 ? (
         <p className="mt-1 text-sm text-texto-2">Filtros usados: {usados.join(' · ')}</p>
       ) : null}
+      <ResumoIA
+        key={`${previa.tipo}:${JSON.stringify(consulta)}`}
+        habilitado={previa.resumo_ia === true}
+        aviso="Resumo gerado por IA do relatório completo; confira com o arquivo do relatório"
+        gerar={() => api.resumoRelatorio(previa.tipo, consulta)}
+      />
       {previa.truncado ? (
         <p role="note" className="mt-3 rounded-padrao bg-[#fff1d6] px-3 py-2 text-[#7a4a00]">
           Mostrando as primeiras {previa.linhas.length} linhas. Baixe o arquivo para ver tudo.

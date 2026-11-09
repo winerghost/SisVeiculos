@@ -74,3 +74,9 @@ def aprovar(saudacao_id: str) -> Any:
 @limiter.limit(_limite_escrita)
 def rejeitar(saudacao_id: str) -> Any:
     return jsonify(_servico().decidir(g.perfil, saudacao_id, aprovar=False))
+
+
+@saudacao_admin.delete("/<saudacao_id>")
+@limiter.limit(_limite_escrita)
+def excluir(saudacao_id: str) -> Any:
+    return jsonify(_servico().excluir(g.perfil, saudacao_id))

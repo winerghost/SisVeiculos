@@ -229,7 +229,7 @@ function Conteudo() {
       {envioEmail ? (
         <AcompanharEnvio key={envioEmail.id} id={envioEmail.id} inicial={envioEmail} />
       ) : null}
-      {previa ? <Previa previa={previa} filtros={filtros} /> : null}
+      {previa ? <Previa previa={previa} filtros={filtros} consulta={consulta} /> : null}
 
       <DrawerEnvio
         modo={drawer}

@@ -12,7 +12,7 @@ from typing import Any
 
 from app.errors import DependenciaRecurso, ErroApi, RecursoDesligado, RequisicaoInvalida
 from app.ia.config import PROVEDORES, ROTULOS_PROVEDORES
-from app.ia.repositorio import CAMPOS_CONFIG, ConfigIABanco
+from app.ia.repositorio import CAMPOS_CONFIG, CHAVES_LIGA_DESLIGA, ConfigIABanco
 from app.ia.servico import ServicoIA, modelo_efetivo, teto_efetivo_tokens
 from app.modelos import Perfil
 from app.services.admin_usuarios import exigir_admin
@@ -34,6 +34,11 @@ ITENS: dict[str, tuple[str, str]] = {
         "Mensagem de boas-vindas com felicitações por data comemorativa "
         "(o nome do usuário não é enviado ao provedor de IA).",
     ),
+    "resumo": (
+        "Resumo narrativo em dashboards e relatórios",
+        "Texto curto que descreve em palavras os números do painel ou da prévia. Só estatísticas "
+        "agregadas são enviadas ao provedor de IA, sem nomes, e-mails, placas ou trajetos.",
+    ),
 }
 
 
@@ -53,7 +58,7 @@ def _validar_corpo(corpo: Any) -> dict[str, Any]:
         raise RequisicaoInvalida("Campos não reconhecidos: " + ", ".join(desconhecidos) + ".")
     pedido: dict[str, Any] = {}
     for chave, valor in corpo.items():
-        if chave in {"mestre", "saudacao"}:
+        if chave in CHAVES_LIGA_DESLIGA:
             if not isinstance(valor, bool):
                 raise RequisicaoInvalida(f"O campo '{chave}' deve ser verdadeiro ou falso.")
             pedido[chave] = valor
@@ -177,7 +182,7 @@ class ServicoIAAdmin:
         cfg = self._ia.cfg
         # Servidor desligado: só é permitido DESLIGAR (evita ficar "ligado" no banco e reaparecer
         # quando o servidor for religado). Qualquer outra escrita é recusada.
-        so_desliga = all(k in {"mestre", "saudacao"} and v is False for k, v in pedido.items())
+        so_desliga = all(k in CHAVES_LIGA_DESLIGA and v is False for k, v in pedido.items())
         if not cfg.habilitado and not so_desliga:
             raise RecursoDesligado(MSG_DESLIGADO_SERVIDOR)
 
@@ -213,7 +218,7 @@ class ServicoIAAdmin:
         if novo["mestre"] and not (provedor in PROVEDORES and cfg.tem_chave(provedor)):
             raise DependenciaRecurso(MSG_SEM_PROVEDOR)
         # Só ao LIGAR a função: desligar a chave geral preserva os flags já escolhidos.
-        if pedido.get("saudacao") and not novo["mestre"]:
+        if any(pedido.get(k) for k in CHAVES_LIGA_DESLIGA if k != "mestre") and not novo["mestre"]:
             raise DependenciaRecurso("Ligue antes a chave geral de IA.")
 
         mudou = {k: v for k, v in novo.items() if atual.como_dict()[k] != v}

@@ -5,6 +5,7 @@ import type {
   FraseSaudacao,
   ListaSaudacoes,
   RespostaSaudacao,
+  ResumoGerado,
   StatusSaudacao,
   ResultadoTesteIA,
   ConfiguracoesAdmin,
@@ -223,6 +224,10 @@ export const admin = {
     chamar<unknown>('/admin/ia/saudacoes/gerar', JSON_POST(d)),
   decidirSaudacao: (id: string, acao: 'aprovar' | 'rejeitar') =>
     chamar<FraseSaudacao>(`/admin/ia/saudacoes/${enc(id)}/${acao}`, JSON_POST()),
+  excluirSaudacao: (id: string) =>
+    chamar<{ id: string; excluida: boolean }>(`/admin/ia/saudacoes/${enc(id)}`, {
+      method: 'DELETE',
+    }),
 };
 
 export const api = {
@@ -266,6 +271,11 @@ export const api = {
 
   /** Relatórios: o catálogo (filtrado pelo servidor) define telas, filtros e canais. */
   relatorios: () => chamar<RespostaRelatorios>('/relatorios'),
+  /** Resumo narrativo do painel, com os mesmos filtros do GET (query string, sem corpo). */
+  resumoPainel: (painel: PainelId, f: FiltrosDashboard = {}) =>
+    chamar<ResumoGerado>(`/dashboards/${enc(painel)}/resumo${query({ ...f })}`, JSON_POST()),
+  resumoRelatorio: (tipo: string, filtros: Record<string, string>) =>
+    chamar<ResumoGerado>(`/relatorios/${enc(tipo)}/previa/resumo${query(filtros)}`, JSON_POST()),
   previaRelatorio: (tipo: string, filtros: Record<string, string>) =>
     chamar<PreviaRelatorio>(`/relatorios/${enc(tipo)}/previa${query(filtros)}`),
   arquivoRelatorio: (

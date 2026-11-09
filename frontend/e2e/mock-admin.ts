@@ -650,8 +650,13 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       if ((sacao === 'aprovar' || sacao === 'rejeitar') && m === 'POST' && alvo) {
         corpos.saudacoes.push({ id: alvo.id, acao: sacao });
         alvo.status = sacao === 'aprovar' ? 'aprovada' : 'rejeitada';
-        alvo.acoes_permitidas = sacao === 'aprovar' ? ['rejeitar'] : ['aprovar'];
+        alvo.acoes_permitidas = sacao === 'aprovar' ? ['rejeitar'] : ['aprovar', 'excluir'];
         return route.fulfill({ json: alvo });
+      }
+      if (sid && !sacao && m === 'DELETE' && alvo) {
+        corpos.saudacoes.push({ id: alvo.id, acao: 'excluir' });
+        frases.splice(frases.indexOf(alvo), 1);
+        return route.fulfill({ json: { id: alvo.id, excluida: true } });
       }
       return erro(route, 404, 'nao_encontrado', 'Recurso não encontrado.');
     }

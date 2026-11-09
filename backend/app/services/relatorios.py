@@ -93,6 +93,7 @@ class _Reaper:
 REAPER = _Reaper()
 
 PREVIA_MAX = 50
+SEM_RESUMO = frozenset({"auditoria"})  # eventos com responsáveis nominais: nunca vão à IA
 FORMATOS = ("csv", "xlsx")
 VIAS = ("download", "compartilhar")
 MIMETYPES = {
@@ -682,6 +683,23 @@ class ServicoRelatorios:
             "total_linhas": c.total,
             "truncado": c.truncado,
         }
+
+    def conjunto_para_resumo(
+        self, perfil: Perfil, tipo: str, args: Mapping[str, Any]
+    ) -> tuple[Conjunto, dict[str, Any]]:
+        """Mesma permissão, filtros e escopo da prévia, para o resumo narrativo (IA).
+
+        Nunca pede nomes nem trajeto ao banco (`incluir_*` forçados a falso): o resumo só usa
+        contagens, status, unidades e durações. A trilha de auditoria não é resumida.
+        """
+        rel = self._exigir(tipo, perfil)
+        if rel.tipo in SEM_RESUMO:
+            raise RequisicaoInvalida("Este relatório não tem resumo automático.")
+        ef = self._validar(rel, perfil, args)
+        for flag in ("incluir_nomes", "incluir_trajeto"):
+            if flag in ef:
+                ef[flag] = False
+        return self._consultar(rel, perfil, ef), ef
 
     def _gerar(self, c: Conjunto, formato: str) -> Arquivo:
         if c.truncado:

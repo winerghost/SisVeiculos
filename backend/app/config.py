@@ -27,6 +27,7 @@ def _inteiro(valor: str | None, padrao: int, minimo: int, maximo: int) -> int:
 
 
 SEGURANCAS_EMAIL = ("starttls", "ssl", "none")
+N8N_HMAC_MIN_CARACTERES = 32
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,8 @@ class Config:
     # n8n (só notifica). Vazios = integração desligada. A URL vem só do ambiente.
     n8n_webhook_url: str = ""
     n8n_webhook_token: str = field(default="", repr=False)
+    # Chave da assinatura HMAC (opcional). Vazia = a assinatura usa n8n_webhook_token.
+    n8n_hmac_secret: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls) -> Config:
@@ -102,6 +105,7 @@ class Config:
             url_aceite_convite=os.environ.get("URL_ACEITE_CONVITE", "").strip(),
             n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", "").strip(),
             n8n_webhook_token=os.environ.get("N8N_WEBHOOK_TOKEN", "").strip(),
+            n8n_hmac_secret=os.environ.get("N8N_HMAC_SECRET", "").strip(),
             email_enabled=_bool(os.environ.get("EMAIL_ENABLED")),
             email_host=os.environ.get("EMAIL_HOST", "").strip(),
             email_port=_inteiro(os.environ.get("EMAIL_PORT"), 587, 1, 65535),
@@ -158,6 +162,10 @@ class Config:
             from app.notificacoes.n8n import validar_url_webhook
 
             validar_url_webhook(self.n8n_webhook_url)
+        if self.n8n_hmac_secret and len(self.n8n_hmac_secret) < N8N_HMAC_MIN_CARACTERES:
+            raise RuntimeError(
+                f"N8N_HMAC_SECRET deve ter ao menos {N8N_HMAC_MIN_CARACTERES} caracteres."
+            )
         if self.email_enabled:
             if self.email_security not in SEGURANCAS_EMAIL:
                 raise RuntimeError("EMAIL_SECURITY deve ser starttls, ssl ou none.")

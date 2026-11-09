@@ -77,6 +77,12 @@ export interface Opcoes {
   comAdmin?: boolean;
   /** Requisições já existentes (ex.: viagem em uso), mescladas sobre uma base. */
   sementes?: Partial<Req>[];
+  /** GET de painel e prévia trazem `resumo_ia: true` (padrão false). */
+  resumoIA?: boolean;
+  /** Atraso (ms) nas respostas GET dos painéis, para testar a troca de filtro durante a recarga. */
+  atrasoPainelMs?: number;
+  /** POST .../resumo responde com este erro da API. */
+  erroResumo?: { status: number; codigo: string; mensagem: string };
 }
 
 export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
@@ -488,8 +494,9 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
   });
 
   // Dashboards: solicitante recebe 403; autorizador vê os painéis básicos.
+  const resumosPainel: { painel: string; query: Record<string, string> }[] = [];
   const consultasPainel: { painel: string; query: Record<string, string> }[] = [];
-  await page.route(/\/api\/dashboards(\/[a-z]+)?(\?.*)?$/, async (route) => {
+  await page.route(/\/api\/dashboards(\/[a-z]+){0,2}(\?.*)?$/, async (route) => {
     const papel = papelDoToken(route);
     if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
     if (papel !== 'autorizador') {
@@ -515,7 +522,24 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
       });
     }
     const q = Object.fromEntries(url.searchParams.entries());
+    if (url.pathname.split('/')[4] === 'resumo') {
+      resumosPainel.push({ painel, query: q });
+      if (opcoes.erroResumo) {
+        const e = opcoes.erroResumo;
+        return erro(route, e.status, e.codigo, e.mensagem);
+      }
+      return route.fulfill({
+        json: {
+          texto: `Resumo do painel ${painel}: houve 10 requisições no período. <b>não é HTML</b>`,
+          gerado_por_ia: true,
+          gerado_em: new Date().toISOString(),
+        },
+      });
+    }
     consultasPainel.push({ painel, query: q });
+    if (opcoes.atrasoPainelMs && q.unidade) {
+      await new Promise((ok) => setTimeout(ok, opcoes.atrasoPainelMs));
+    }
     // Só o que o painel usa: operação, apenas unidade/veículo; volume, também granularidade.
     const filtros: Record<string, string | null> =
       painel === 'operacao'
@@ -615,6 +639,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
       json: {
         painel,
         filtros,
+        resumo_ia: opcoes.resumoIA === true,
         ...(painel === 'operacao'
           ? { itens_truncados: false, itens: abertas.map((r) => ver(papel, r)) }
           : {}),
@@ -812,6 +837,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
   return {
     reqs,
     consultasPainel,
+    resumosPainel,
     corpos,
     corposAcao,
     registrosChecklist,

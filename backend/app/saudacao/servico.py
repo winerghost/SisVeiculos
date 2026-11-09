@@ -57,6 +57,7 @@ MSG_IA_FALHOU = (
 MSG_MANUAL_PENDENTE = (
     "A frase foi salva, mas não foi possível aprová-la agora. Ela está pendente: aprove-a na lista."
 )
+MSG_EXCLUSAO = "Só frases rejeitadas podem ser excluídas. Rejeite a frase antes de excluí-la."
 MSG_SEM_REPOSITORIO = "Cadastro de saudações indisponível."
 
 DESCRICOES: dict[str, str] = {
@@ -103,15 +104,26 @@ assert set(DESCRICOES) == set(OCASIOES) == set(CATALOGO)  # noqa: S101 - consist
 class CacheTTL:
     """Cache em memória (por processo) com validade curta, para aliviar o banco.
 
-    Guarda só o gate da IA e as frases aprovadas (nada de dado pessoal). Escritas do admin
-    limpam o cache do processo; os demais processos convergem em até `ttl` segundos.
+    Guarda só o gate da IA, as frases aprovadas e textos de resumo (nada de dado pessoal). A cada
+    gravação poda as entradas vencidas e, se passar de `max_entradas`, descarta as mais antigas,
+    para a memória não crescer sem limite. Escritas do admin limpam o cache do processo; os demais
+    processos convergem em até `ttl` segundos.
     """
 
-    def __init__(self, ttl: float = 45.0, relogio: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        ttl: float = 45.0,
+        relogio: Callable[[], float] = time.monotonic,
+        max_entradas: int = 512,
+    ) -> None:
         self.ttl = ttl
+        self.max_entradas = max_entradas
         self._relogio = relogio
-        self._dados: dict[Any, tuple[float, Any]] = {}
+        self._dados: dict[Any, tuple[float, Any]] = {}  # ordem de inserção = ordem de gravação
         self._trava = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self._dados)
 
     def obter(self, chave: Any, carregar: Callable[[], Any]) -> Any:
         agora = self._relogio()
@@ -121,8 +133,16 @@ class CacheTTL:
                 return hit[1]
         valor = carregar()  # fora da trava: o banco pode demorar
         with self._trava:
-            self._dados[chave] = (agora, valor)
+            self._gravar(chave, agora, valor)
         return valor
+
+    def _gravar(self, chave: Any, agora: float, valor: Any) -> None:
+        for k in [k for k, (t, _) in self._dados.items() if agora - t >= self.ttl]:
+            del self._dados[k]
+        self._dados.pop(chave, None)  # regravar move a chave para o fim (mais recente)
+        self._dados[chave] = (agora, valor)
+        while len(self._dados) > self.max_entradas:
+            del self._dados[next(iter(self._dados))]
 
     def limpar(self) -> None:
         with self._trava:
@@ -183,11 +203,13 @@ def escolher_texto(
 
 
 def _acoes(status: Any) -> list[str]:
-    """Pendente: aprovar ou rejeitar. Aprovada/rejeitada: só a outra decisão (nunca pendente)."""
+    """Pendente: aprovar ou rejeitar. Aprovada/rejeitada: só a outra decisão (nunca pendente).
+
+    Só a rejeitada pode ser excluída."""
     return {
         "pendente": ["aprovar", "rejeitar"],
         "aprovada": ["rejeitar"],
-        "rejeitada": ["aprovar"],
+        "rejeitada": ["aprovar", "excluir"],
     }.get(status, [])
 
 
@@ -382,3 +404,19 @@ class ServicoSaudacao:
             )
         CACHE.limpar()
         return _item(linha)
+
+    def excluir(self, admin: Perfil, saudacao_id: str) -> dict[str, Any]:
+        """Exclui (DELETE físico) só frase rejeitada; a auditoria sai do RPC no banco."""
+        exigir_admin(admin)
+        sid = validar_uuid(saudacao_id)
+        repo = self._repositorio()
+        atual = repo.obter(sid)
+        if atual is None:
+            raise NaoEncontrado("Saudação não encontrada.")
+        if atual.get("status") != "rejeitada":
+            raise TransicaoInvalida(MSG_EXCLUSAO)
+        # Corrida: o RPC reconfere (AG003) e devolve False se outra exclusão chegou antes.
+        if not repo.excluir_rejeitada(sid, ator_id=admin.id):
+            raise NaoEncontrado("Saudação não encontrada.")
+        CACHE.limpar()
+        return {"id": sid, "excluida": True}

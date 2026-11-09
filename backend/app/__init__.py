@@ -88,7 +88,10 @@ def create_app(
             registrar_falha_sistema(repo_falha, "n8n_falha")
 
         notificador = criar_notificador(
-            cfg.n8n_webhook_url, cfg.n8n_webhook_token, ao_desistir=_n8n_desistiu
+            cfg.n8n_webhook_url,
+            cfg.n8n_webhook_token,
+            ao_desistir=_n8n_desistiu,
+            hmac_secret=cfg.n8n_hmac_secret,
         )
     atexit.register(notificador.fechar)
 

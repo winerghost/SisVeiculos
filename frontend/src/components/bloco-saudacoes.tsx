@@ -10,6 +10,7 @@ import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ItemArrastavel } from '@/components/item-arrastavel';
 
 const ABAS: { status: StatusSaudacao; rotulo: string }[] = [
   { status: 'pendente', rotulo: 'Pendentes' },
@@ -34,6 +35,12 @@ export function BlocoSaudacoes() {
   async function decidir(id: string, acao: 'aprovar' | 'rejeitar') {
     setAviso(null);
     const r = await envio.executar(() => admin.decidirSaudacao(id, acao));
+    if (r.ok) await lista.recarregar();
+  }
+
+  async function excluir(id: string) {
+    setAviso(null);
+    const r = await envio.executar(() => admin.excluirSaudacao(id));
     if (r.ok) await lista.recarregar();
   }
 
@@ -109,37 +116,65 @@ export function BlocoSaudacoes() {
         <p className="text-texto-2">Nenhuma frase neste status.</p>
       ) : (
         <ul aria-labelledby="saudacoes-titulo" className="flex flex-col gap-3">
-          {lista.dados?.itens.map((f) => (
-            <li key={f.id} className="flex flex-col gap-2 rounded-padrao border border-borda p-3">
-              <p className="text-base">{f.texto}</p>
-              <p className="text-sm text-texto-2">
-                {f.ocasiao} · {f.origem === 'ia' ? 'Gerada por IA' : 'Manual'}
-              </p>
-              {f.acoes_permitidas.includes('aprovar') || f.acoes_permitidas.includes('rejeitar') ? (
-                <div className="flex flex-wrap gap-2">
-                  {f.acoes_permitidas.includes('aprovar') ? (
-                    <Button
-                      type="button"
-                      disabled={envio.ocupado}
-                      onClick={() => void decidir(f.id, 'aprovar')}
-                    >
-                      Aprovar
-                    </Button>
-                  ) : null}
-                  {f.acoes_permitidas.includes('rejeitar') ? (
-                    <Button
-                      type="button"
-                      variante="perigo"
-                      disabled={envio.ocupado}
-                      onClick={() => void decidir(f.id, 'rejeitar')}
-                    >
-                      Rejeitar
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-            </li>
-          ))}
+          {lista.dados?.itens.map((f) => {
+            const conteudo = (
+              <>
+                <p className="text-base">{f.texto}</p>
+                <p className="text-sm text-texto-2">
+                  {f.ocasiao} · {f.origem === 'ia' ? 'Gerada por IA' : 'Manual'}
+                </p>
+                {f.acoes_permitidas.includes('aprovar') ||
+                f.acoes_permitidas.includes('rejeitar') ? (
+                  <div className="flex flex-wrap gap-2">
+                    {f.acoes_permitidas.includes('aprovar') ? (
+                      <Button
+                        type="button"
+                        disabled={envio.ocupado}
+                        onClick={() => void decidir(f.id, 'aprovar')}
+                      >
+                        Aprovar
+                      </Button>
+                    ) : null}
+                    {f.acoes_permitidas.includes('rejeitar') ? (
+                      <Button
+                        type="button"
+                        variante="perigo"
+                        disabled={envio.ocupado}
+                        onClick={() => void decidir(f.id, 'rejeitar')}
+                      >
+                        Rejeitar
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            );
+            const classe = 'flex flex-col gap-2 rounded-padrao border border-borda p-3';
+            if (status !== 'rejeitada') {
+              return (
+                <li key={f.id} className={classe}>
+                  {conteudo}
+                </li>
+              );
+            }
+            return (
+              <ItemArrastavel
+                key={f.id}
+                className="border border-borda"
+                ocupado={envio.ocupado}
+                onAprovar={
+                  f.acoes_permitidas.includes('aprovar')
+                    ? () => void decidir(f.id, 'aprovar')
+                    : undefined
+                }
+                onExcluir={
+                  f.acoes_permitidas.includes('excluir') ? () => void excluir(f.id) : undefined
+                }
+              >
+                {conteudo}
+              </ItemArrastavel>
+            );
+          })}
         </ul>
       )}
 

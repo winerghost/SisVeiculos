@@ -90,13 +90,13 @@ def test_rls_ligado_sem_policy() -> None:
     assert pol == 0
 
 
-def test_service_role_sem_delete_truncate_e_update_so_nas_colunas_de_decisao() -> None:
+def test_service_role_sem_truncate_e_update_so_nas_colunas_de_decisao() -> None:
+    # DELETE (so de rejeitadas) foi liberado pela migration 20261115120400; ver test_saudacoes_exclusao.py.
     with h.conectar() as c:
-        for priv in ("delete", "truncate"):
-            (ok,) = c.execute(
-                "select has_table_privilege('service_role', 'public.saudacoes', %s)", (priv,)
-            ).fetchone() or (True,)
-            assert ok is False, priv
+        (ok,) = c.execute(
+            "select has_table_privilege('service_role', 'public.saudacoes', 'truncate')"
+        ).fetchone() or (True,)
+        assert ok is False
         for col, esperado in (("texto", False), ("ocasiao", False), ("origem", False), ("status", True)):
             (ok,) = c.execute(
                 "select has_column_privilege('service_role', 'public.saudacoes', %s, 'update')", (col,)
@@ -118,7 +118,7 @@ def test_service_role_insere_e_decide_mas_nao_apaga() -> None:
         )
     with pytest.raises(psycopg.Error) as exc:
         with h.como("service_role") as c:
-            c.execute("delete from public.saudacoes")
+            c.execute("truncate public.saudacoes")
     assert h.sqlstate(exc) == "42501"
     with pytest.raises(psycopg.Error) as exc:
         with h.como("service_role") as c:

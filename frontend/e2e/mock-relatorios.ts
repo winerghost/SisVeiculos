@@ -15,6 +15,12 @@ export interface OpcoesRelatorios {
   erroEmail?: { status: number; codigo: string; mensagem: string };
   /** O arquivo responde 422 relatorio_muito_grande. */
   muitoGrande?: boolean;
+  /** A prévia traz `resumo_ia: true` (padrão false). */
+  resumoIA?: boolean;
+  /** O resumo vem sem `escopo`. */
+  semEscopo?: boolean;
+  /** POST previa/resumo responde com este erro da API. */
+  erroResumo?: { status: number; codigo: string; mensagem: string };
 }
 
 const erro = (route: Route, status: number, codigo: string, mensagem: string) =>
@@ -91,6 +97,7 @@ const USO = {
 export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}) {
   const consultas: { rota: string; query: Record<string, string> }[] = [];
   const corposEmail: unknown[] = [];
+  const resumos: Record<string, string>[] = [];
   let consultasEnvio = 0;
 
   const papel = (route: Route): 'solicitante' | 'autorizador' | null => {
@@ -153,6 +160,21 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
 
     const [tipo, acao] = partes;
     consultas.push({ rota: `${tipo}/${acao ?? ''}`, query });
+    if (acao === 'previa' && partes[2] === 'resumo' && route.request().method() === 'POST') {
+      resumos.push(query);
+      if (opcoes.erroResumo) {
+        const e = opcoes.erroResumo;
+        return erro(route, e.status, e.codigo, e.mensagem);
+      }
+      return route.fulfill({
+        json: {
+          texto: 'Foram 2 movimentações no período, uma delas ainda em uso.',
+          gerado_por_ia: true,
+          ...(opcoes.semEscopo ? {} : { escopo: 'Resumo do relatório completo (1200 registros)' }),
+          gerado_em: new Date().toISOString(),
+        },
+      });
+    }
     if (acao === 'previa') {
       return route.fulfill({
         json: {
@@ -170,6 +192,7 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
           ],
           total_linhas: opcoes.truncado ? 50 : 2,
           truncado: opcoes.truncado ?? false,
+          resumo_ia: opcoes.resumoIA === true,
         },
       });
     }
@@ -209,5 +232,5 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
     return erro(route, 404, 'nao_encontrado', 'Recurso não encontrado.');
   });
 
-  return { consultas, corposEmail };
+  return { consultas, corposEmail, resumos };
 }

@@ -17,6 +17,7 @@ from app.repositorios.supabase_repo import TIMEOUT_POSTGREST, _exec
 COLUNAS = "id,ocasiao,texto,origem,status,criado_em"
 LIMITE_LISTA = 500
 MSG_TRANSICAO = "Esta frase não pode voltar a pendente nem ser decidida do mesmo modo duas vezes."
+MSG_EXCLUSAO = "Só frases rejeitadas podem ser excluídas."
 MSG_ATOR_INVALIDO = "Só um administrador ativo pode cadastrar ou decidir saudações."
 
 
@@ -35,6 +36,11 @@ class RepositorioSaudacoes(Protocol):
         ...
 
     def obter(self, saudacao_id: str) -> dict[str, Any] | None: ...
+
+    def excluir_rejeitada(self, saudacao_id: str, *, ator_id: str) -> bool:
+        """Via RPC `excluir_saudacao`: True se apagou, False se o id não existe. Levanta
+        `TransicaoInvalida` (AG003) se não estiver rejeitada e `SemPermissao` (AG002)."""
+        ...
 
     def listar_aprovadas(self, ocasiao: str) -> list[str]: ...
 
@@ -102,6 +108,22 @@ class SupabaseRepositorioSaudacoes:
         except SemPermissao:  # AG002: decidido_por não é admin ativo
             raise SemPermissao(MSG_ATOR_INVALIDO) from None
         return dict(res.data[0]) if res.data else None
+
+    def excluir_rejeitada(self, saudacao_id: str, *, ator_id: str) -> bool:
+        # Único caminho de exclusão: o RPC (service_role) valida o admin ativo, exige status
+        # 'rejeitada' e grava a auditoria na mesma transação.
+        params = {"p_id": saudacao_id, "p_ator": ator_id}
+        try:
+            res = _exec(
+                lambda: self._c.rpc("excluir_saudacao", params).execute(),
+                repetir_lock=True,
+                admin=True,
+            )
+        except TransicaoInvalida:  # AG003: a frase não está rejeitada
+            raise TransicaoInvalida(MSG_EXCLUSAO) from None
+        except SemPermissao:  # AG002: p_ator não é admin ativo
+            raise SemPermissao(MSG_ATOR_INVALIDO) from None
+        return res.data is True
 
     def obter(self, saudacao_id: str) -> dict[str, Any] | None:
         res = _exec(

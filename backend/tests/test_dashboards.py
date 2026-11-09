@@ -290,7 +290,7 @@ def test_operacao_corta_em_200_preservando_a_ordem(client, auth, c, repo, monkey
 def test_contrato_operacao_itens_na_raiz_e_nao_em_dados(client, auth, c):  # type: ignore[no-untyped-def]
     criar(client, auth, c.sol, c.veiculo)
     j = get(client, auth, c.aut, "/api/dashboards/operacao").get_json()
-    assert set(j) == {"painel", "filtros", "itens_truncados", "itens", "dados"}
+    assert set(j) == {"painel", "filtros", "itens_truncados", "itens", "dados", "resumo_ia"}
     assert isinstance(j["itens"], list) and j["itens"]
     assert j["itens_truncados"] is False
     assert "itens" not in j["dados"]
@@ -303,7 +303,7 @@ def test_contrato_operacao_itens_na_raiz_e_nao_em_dados(client, auth, c):  # typ
 def test_contrato_outros_paineis_sem_itens_na_raiz(client, auth, c, painel):  # type: ignore[no-untyped-def]
     j = get(client, auth, c.aut, f"/api/dashboards/{painel}").get_json()
     assert "itens" not in j and "itens_truncados" not in j
-    assert set(j) == {"painel", "filtros", "dados"}
+    assert set(j) == {"painel", "filtros", "dados", "resumo_ia"}
 
 
 def test_operacao_limite_padrao_e_200() -> None:

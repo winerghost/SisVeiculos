@@ -165,7 +165,10 @@ class ServicoDashboards:
         }
 
     # -- leitura --------------------------------------------------------------------
-    def obter(self, perfil: Perfil, chave: str, args: Any) -> dict[str, Any]:
+    def _preparar(
+        self, perfil: Perfil, chave: str, args: Any
+    ) -> tuple[Painel, Filtros, dict[str, Any]]:
+        """Permissão, filtros e consulta do painel (compartilhado por `obter` e `agregados`)."""
         permitidas = self._chaves_permitidas(perfil)  # solicitante: 403 antes de tudo
         painel = PAINEIS.get(chave)
         if painel is None:
@@ -178,7 +181,21 @@ class ServicoDashboards:
             raise SemPermissao("Você não tem permissão para ver este painel.")
         hoje = self._relogio().astimezone(FUSO).date()
         f = validar_filtros(args, hoje)
-        dados = self._consultar(chave, f)
+        return painel, f, self._consultar(chave, f)
+
+    def agregados(self, perfil: Perfil, chave: str, args: Any) -> dict[str, Any]:
+        """Mesmo painel, permissão e filtros de `obter`, sem a lista de requisições abertas
+        (que traz dados pessoais). Base do resumo narrativo (Fase 2 da IA)."""
+        painel, f, dados = self._preparar(perfil, chave, args)
+        return {
+            "painel": chave,
+            "rotulo": painel.rotulo,
+            "filtros": self._efetivos(painel, f),
+            "dados": dados,
+        }
+
+    def obter(self, perfil: Perfil, chave: str, args: Any) -> dict[str, Any]:
+        painel, f, dados = self._preparar(perfil, chave, args)
         resposta: dict[str, Any] = {"painel": chave, "filtros": self._efetivos(painel, f)}
         if chave == "operacao":
             abertas = dados.get("abertas") or []

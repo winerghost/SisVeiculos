@@ -13,6 +13,7 @@ import {
   percentual,
   rotuloPeriodo,
 } from '@/lib/formato';
+import { ResumoIA } from '@/components/resumo-ia';
 import { useAcao } from '@/lib/use-acao';
 import { useCarga } from '@/lib/use-carga';
 import type {
@@ -458,6 +459,14 @@ export function PainelComFiltros({
   const [filtros, setFiltros] = React.useState<FiltrosDashboard>({});
   const r = useCarga(() => api.painel<unknown>(painel, filtros), JSON.stringify(filtros));
   const d = r.dados?.dados;
+  // O resumo vale para os filtros que a API aplicou aos números exibidos, não para o formulário.
+  const efetivos = r.dados?.filtros;
+  const filtrosDoResumo: FiltrosDashboard = {};
+  for (const k of ['inicio', 'fim', 'unidade', 'veiculo', 'granularidade'] as const) {
+    const v = efetivos?.[k];
+    if (typeof v === 'string' && v !== '') filtrosDoResumo[k] = v;
+  }
+  const emDia = Object.entries(filtros).every(([k, v]) => !v || efetivos?.[k] === v);
 
   return (
     <>
@@ -472,6 +481,13 @@ export function PainelComFiltros({
         />
       ) : null}
       <ExportarPainel painel={painel} efetivos={r.dados?.filtros} />
+      <ResumoIA
+        key={`${painel}:${JSON.stringify(filtrosDoResumo)}`}
+        habilitado={r.dados?.resumo_ia === true}
+        bloqueado={r.carregando || !emDia}
+        aviso="Resumo gerado por IA; confira os números do painel"
+        gerar={() => api.resumoPainel(painel, filtrosDoResumo)}
+      />
       {r.erro ? <Alerta className="mb-4">{r.erro}</Alerta> : null}
       {r.carregando ? <Carregando /> : null}
       {d ? (

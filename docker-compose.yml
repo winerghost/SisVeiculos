@@ -20,6 +20,7 @@ services:
       URL_ACEITE_CONVITE: ${URL_ACEITE_CONVITE:-}
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_WEBHOOK_TOKEN: ${N8N_WEBHOOK_TOKEN:-}
+      N8N_HMAC_SECRET: ${N8N_HMAC_SECRET:-}
       # Relatórios por e-mail (SMTP). Desligado sem EMAIL_ENABLED=true. EMAIL_PASSWORD é segredo.
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
       EMAIL_HOST: ${EMAIL_HOST:-}

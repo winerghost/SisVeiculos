@@ -362,6 +362,15 @@ export interface ListaSaudacoes {
   ocasioes: string[];
 }
 
+/** Resposta de POST .../resumo. O texto é exibido como texto puro. */
+export interface ResumoGerado {
+  texto: string;
+  gerado_por_ia: true;
+  gerado_em: string;
+  /** Só no resumo de relatório: texto curto com a abrangência (ex.: relatório completo). */
+  escopo?: string;
+}
+
 export type CorpoIA = Partial<{
   mestre: boolean;
   saudacao: boolean;
@@ -444,6 +453,8 @@ export interface RespostaPainel<T> {
   /** Só no painel `operacao`: lista na raiz da resposta. */
   itens?: Requisicao[];
   itens_truncados?: boolean;
+  /** A API libera o botão "Resumir com IA" (função ligada e permitida). */
+  resumo_ia?: boolean;
 }
 
 export interface MaisAntiga {
@@ -580,6 +591,8 @@ export interface PreviaRelatorio {
   linhas: Record<string, string>[];
   total_linhas: number;
   truncado: boolean;
+  /** A API libera o botão "Resumir com IA" (função ligada e permitida). */
+  resumo_ia?: boolean;
 }
 
 export interface DestinatarioRelatorio {

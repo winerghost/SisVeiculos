@@ -5,13 +5,15 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from app.errors import Conflito
+from app.errors import Conflito, SemPermissao, TransicaoInvalida
 
 
 class RepoSaudacoesMemoria:
     def __init__(self) -> None:
         self.linhas: list[dict[str, Any]] = []
         self.falhar_aprovadas = False
+        self.atores_invalidos: set[str] = set()
+        self.auditoria: list[dict[str, Any]] = []
         self._n = 0
 
     def listar(
@@ -55,6 +57,21 @@ class RepoSaudacoesMemoria:
                 r["decidido_por"] = ator_id
                 return dict(r)
         return None
+
+    def excluir_rejeitada(self, saudacao_id: str, *, ator_id: str) -> bool:
+        """Espelha o RPC: ator precisa ser admin ativo (AG002), só rejeitada (AG003)."""
+        if ator_id in self.atores_invalidos:
+            raise SemPermissao("Só um administrador ativo pode cadastrar ou decidir saudações.")
+        for i, r in enumerate(self.linhas):
+            if r["id"] == saudacao_id:
+                if r["status"] != "rejeitada":
+                    raise TransicaoInvalida("Só frases rejeitadas podem ser excluídas.")
+                del self.linhas[i]
+                self.auditoria.append(
+                    {"acao": "saudacao_excluida", "registro_id": saudacao_id, "ator_id": ator_id}
+                )
+                return True
+        return False
 
     def obter(self, saudacao_id: str) -> dict[str, Any] | None:
         return next((dict(r) for r in self.linhas if r["id"] == saudacao_id), None)

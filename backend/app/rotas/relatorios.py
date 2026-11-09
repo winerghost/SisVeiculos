@@ -14,6 +14,7 @@ from app.extensions import chave_usuario, deps, limiter
 from app.repositorios.auth_admin import AuthAdmin
 from app.services import relatorios as modulo
 from app.services.relatorios import ServicoRelatorios
+from app.services.resumo_ia import ESCOPO_PREVIA_GET, LIMITE_RESUMO, ServicoResumoIA
 
 relatorios = Blueprint("relatorios", __name__, url_prefix="/api/relatorios")
 
@@ -35,6 +36,10 @@ def _servico() -> ServicoRelatorios:
     auth: AuthAdmin | None = d.auth_admin
     # `EXECUTOR_EMAIL` é lido do módulo a cada chamada (os testes o substituem).
     return ServicoRelatorios(d.repo, d.config, auth_admin=auth, executor=modulo.EXECUTOR_EMAIL)
+
+
+def _resumo() -> ServicoResumoIA:
+    return ServicoResumoIA(deps().ia)
 
 
 @relatorios.get("")
@@ -62,7 +67,20 @@ def consultar_envio(envio_id: str) -> Any:
 @requer_auth()
 @limiter.limit(_limite_leitura, key_func=chave_usuario)
 def previa(tipo: str) -> Any:
-    return jsonify(_servico().previa(g.perfil, tipo, request.args))
+    resposta = _servico().previa(g.perfil, tipo, request.args)
+    resposta["resumo_ia"] = _resumo().disponivel_relatorio(tipo)
+    # O resumo cobre o relatório inteiro, não só as linhas da prévia: a UI deve dizer isso.
+    resposta["escopo"] = ESCOPO_PREVIA_GET if resposta["resumo_ia"] else None
+    return jsonify(resposta)
+
+
+@relatorios.post("/<tipo>/previa/resumo")
+@requer_auth()
+@limiter.limit(LIMITE_RESUMO, key_func=chave_usuario)
+def resumir_previa(tipo: str) -> Any:
+    """Resumo narrativo (IA) da prévia: mesma permissão, filtros e escopo, sem nomes nem trajeto."""
+    conjunto, filtros = _servico().conjunto_para_resumo(g.perfil, tipo, request.args)
+    return jsonify(_resumo().resumir_relatorio(g.perfil, conjunto, filtros))
 
 
 @relatorios.get("/<tipo>/arquivo")

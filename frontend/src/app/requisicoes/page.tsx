@@ -55,7 +55,7 @@ function Conteudo() {
       ) : reqs.dados && reqs.dados.length === 0 ? (
         <p className="text-texto-2">Nenhuma requisição ainda.</p>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="lista-animada flex flex-col gap-3">
           {reqs.dados?.map((r) => (
             <CartaoRequisicao
               key={r.id}

@@ -74,7 +74,7 @@ function Painel() {
         ) : itens.length === 0 ? (
           <p className="text-texto-2">Nada por aqui.</p>
         ) : (
-          <ul className="flex flex-col gap-3">
+          <ul className="lista-animada flex flex-col gap-3">
             {itens.map((r) => (
               <CartaoRequisicao
                 key={r.id}

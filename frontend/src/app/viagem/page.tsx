@@ -25,7 +25,7 @@ function Viagens() {
       ) : lista.dados && lista.dados.length === 0 ? (
         <p className="text-texto-2">Nenhuma viagem em uso.</p>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="lista-animada flex flex-col gap-3">
           {lista.dados?.map((r) => (
             <CartaoRequisicao
               key={r.id}

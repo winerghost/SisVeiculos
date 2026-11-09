@@ -18,6 +18,10 @@
 --   4. service_role recebe DELETE em public.saudacoes (nada a anon/authenticated; RLS ligado e sem policy).
 --      TRUNCATE continua revogado.
 --
+-- Confianca: p_ator e DECLARADO pelo chamador (o RPC valida que e admin ativo, nao que e quem chamou). A
+-- seguranca real e que EXECUTE/DELETE existem so para service_role, usado apenas no backend, que obtem o
+-- ator do JWT. p_id nulo nao casa nenhuma linha (id = null) e devolve false, sem erro.
+--
 -- Auditoria: auditoria NAO tem FK para saudacoes (registro_id uuid solto), entao apagar a frase nao quebra
 -- nem apaga auditoria; ela continua append-only. Linha gravada: tabela='configuracoes', acao='saudacao_excluida',
 -- registro_id = id da frase apagada, ator_id = p_ator, de='rejeitada', para=null, detalhes

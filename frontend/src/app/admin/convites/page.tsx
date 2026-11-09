@@ -74,7 +74,7 @@ function Conteudo() {
       ) : lista.dados?.itens.length === 0 ? (
         <p className="text-texto-2">Nenhum convite encontrado.</p>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="lista-animada flex flex-col gap-3">
           {lista.dados?.itens.map((c) => {
             const e = ESTADOS[c.estado];
             return (

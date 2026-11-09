@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { TelaMfa } from '@/components/tela-mfa';
+import { Splash } from '@/components/splash';
 
 export default function Login() {
   const { estado, aviso, entrar } = useAuth();
@@ -21,11 +22,23 @@ export default function Login() {
   const [info, setInfo] = React.useState<string | null>(null);
   const [enviando, setEnviando] = React.useState(false);
 
+  // Começa true (HTML estático já nasce com a abertura); o efeito pula se já foi vista.
+  const [splash, setSplash] = React.useState(true);
+  const [veioDaSplash, setVeioDaSplash] = React.useState(true);
+  const fimSplash = React.useCallback((exibiu: boolean) => {
+    setSplash(false);
+    setVeioDaSplash(exibiu);
+  }, []);
+
   React.useEffect(() => {
     if (estado === 'ativo') router.replace('/requisicoes');
   }, [estado, router]);
 
   if (estado === 'mfa') return <TelaMfa />;
+
+  // Durante a splash o conteúdo fica oculto e só anima ao ser revelado.
+  const anima = splash ? 'opacity-0' : 'abertura-item';
+  const atraso = (s: number) => ({ '--atraso': `${s}s` }) as React.CSSProperties;
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -54,14 +67,14 @@ export default function Login() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col px-6 py-10">
+      {splash ? <Splash aoTerminar={fimSplash} /> : null}
       <div className="flex flex-1 flex-col justify-center gap-6">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/logo-agu.webp"
-          alt="AGU - Advocacia-Geral da União"
-          className="mx-auto h-24 w-auto"
-        />
-        <div className="text-center">
+        {/* Após a splash a logo já foi animada: aqui ela só aparece. Sem splash, anima aqui. */}
+        <div className={veioDaSplash ? 'mx-auto' : 'abertura-logo mx-auto'}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-24 w-auto" />
+        </div>
+        <div className={`${anima} text-center`} style={atraso(veioDaSplash ? 0.1 : 0.7)}>
           <h1 className="text-3xl font-semibold">Controle de veículos</h1>
           <p className="mt-2 text-texto-2">
             Acesse com o e-mail do seu cadastro para solicitar ou autorizar saídas.
@@ -75,7 +88,11 @@ export default function Login() {
           </p>
         ) : null}
 
-        <form onSubmit={(e) => void enviar(e)} className="flex flex-col gap-4">
+        <form
+          onSubmit={(e) => void enviar(e)}
+          className={`${anima} flex flex-col gap-4`}
+          style={atraso(veioDaSplash ? 0.3 : 0.9)}
+        >
           <div>
             <Label htmlFor="email">E-mail</Label>
             <Input

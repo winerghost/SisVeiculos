@@ -61,7 +61,7 @@ function Viagens() {
             {doGrupo.length === 0 ? (
               <p className="text-texto-2">{g.vazio}</p>
             ) : (
-              <ul className="flex flex-col gap-3">
+              <ul className="lista-animada flex flex-col gap-3">
                 {doGrupo.map((v) => (
                   <CartaoViagem
                     key={v.id}

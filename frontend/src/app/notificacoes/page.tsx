@@ -212,7 +212,7 @@ function Conteudo() {
         </div>
       ) : (
         <>
-          <ul aria-label="Notificações" className="mt-4 flex flex-col gap-3">
+          <ul aria-label="Notificações" className="lista-animada mt-4 flex flex-col gap-3">
             {itens.map((n) => (
               <Cartao key={n.id} n={n} agora={agora} onToque={(x) => void tocar(x)} />
             ))}

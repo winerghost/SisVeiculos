@@ -255,6 +255,8 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return ChecklistForaDaJanela(MSG_CHECKLIST_JANELA)
     if codigo == "AG003" and "checklist" in texto.lower():
         return Conflito("Um checklist registrado não pode ser alterado.", "checklist_imutavel")
+    if codigo == "AG003" and "excluir sauda" in texto.lower():  # exclusão de saudação não rejeitada
+        return TransicaoInvalida("Só é possível excluir uma frase de saudação rejeitada.")
     if codigo == "23514" and "ck_checklist_fotos_posicao" in texto:
         return RequisicaoInvalida(MSG_CHECKLIST_MAX_FOTOS, "checklist_invalido")
     if codigo == "23514" and "ck_checklist" in texto:

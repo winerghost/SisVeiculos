@@ -36,7 +36,7 @@ function Conteudo() {
           Carregando...
         </p>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="lista-animada flex flex-col gap-3">
           {cfg.dados?.itens.map((i) => {
             const permitido =
               i.acoes_permitidas.includes('ligar') || i.acoes_permitidas.includes('desligar');

@@ -59,6 +59,7 @@ Só abre requisição se o veículo estiver livre. Decisão: uma requisição ab
 
 ## PWA e visual
 - Visual: shadcn/ui com tokens da AGU (primária `#0F3D75`, foco `#1A5FB4`, erro `#B3261E`, fonte Inter). Raio 8px, alvos de toque ≥ 44px e borda de campo `#8493AB` (contraste ≥ 3:1, mais escura que o padrão do shadcn). Data e hora: `Drawer` com `Calendar` em pt-BR e seletores de hora e minuto; o servidor valida.
+- Movimento (padrão do sistema): CSS puro, sem biblioteca de animação; sutil (< 0,6 s por elemento, splash ~1,8 s uma vez por sessão), um gesto por elemento. Toda tela nova usa as classes de `globals.css`: `pagina-entra` (entrada de página, já no `AppShell`), `lista-animada` (cascata em listas), `abertura-item`/`abertura-logo` (abertura) e `saudacao-*`. Tudo respeita `prefers-reduced-motion` (regra global zera duração e atraso) e nunca esconde conteúdo essencial nem atrasa ação. Animação é só visual: nenhuma regra de negócio depende dela.
 - Manifest (`display: standalone`, ícones 192/512 maskable) e service worker: cache-first para assets, network-first para API.
 - Sem escrita offline na v1; não cachear dados autenticados de forma persistente. HTTPS obrigatório. Mobile-first, toque ≥ 44px, WCAG/eMAG.
 

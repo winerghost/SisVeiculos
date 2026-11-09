@@ -119,7 +119,7 @@ function Conteudo() {
       ) : lista.dados?.itens.length === 0 ? (
         <p className="text-texto-2">Nenhum veículo cadastrado.</p>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="lista-animada flex flex-col gap-3">
           {lista.dados?.itens.map((v) => {
             const podeAlternar =
               v.acoes_permitidas.includes('ativar') || v.acoes_permitidas.includes('desativar');

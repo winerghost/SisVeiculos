@@ -37,9 +37,220 @@ body {
   outline-offset: 2px;
 }
 
+/* Abertura da tela de login: logo entra, brilho cruza o desenho, conteúdo sobe em cascata. */
+@keyframes logo-entrada {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translateY(8px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes brilho-passa {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@keyframes subir-suave {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.abertura-logo {
+  position: relative;
+  animation: logo-entrada 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* O brilho é recortado pelo formato da logo (máscara), sem vazar para o fundo. */
+.abertura-logo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 35%,
+    rgb(255 255 255 / 0.85) 50%,
+    transparent 65%
+  );
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  -webkit-mask: url('/logo-agu.webp') center / contain no-repeat;
+  mask: url('/logo-agu.webp') center / contain no-repeat;
+  pointer-events: none;
+  animation: brilho-passa 1.2s ease-in-out 0.8s both;
+}
+
+.abertura-item {
+  animation: subir-suave 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--atraso, 0s);
+}
+
+/* Splash: fundo da marca com halo suave; logo sai do desfoque, um brilho cruza, e tudo se dissolve em zoom. */
+@keyframes splash-saida {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.06);
+    visibility: hidden;
+  }
+}
+
+@keyframes revela-logo {
+  from {
+    opacity: 0;
+    filter: blur(14px);
+    transform: scale(0.88);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
+.splash {
+  background:
+    radial-gradient(60% 45% at 50% 46%, rgb(26 95 180 / 0.1), transparent 70%), var(--color-fundo);
+  animation: splash-saida 0.45s cubic-bezier(0.4, 0, 0.2, 1) 1.35s forwards;
+}
+
+.splash-logo {
+  position: relative;
+  animation: revela-logo 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+}
+
+.splash-logo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 35%, rgb(255 255 255 / 0.9) 50%, transparent 65%);
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  -webkit-mask: url('/logo-agu.webp') center / contain no-repeat;
+  mask: url('/logo-agu.webp') center / contain no-repeat;
+  pointer-events: none;
+  animation: brilho-passa 0.9s ease-in-out 0.65s both;
+}
+
+/* Saudação pós-login: o cartão desce do topo saindo do desfoque, um brilho o cruza, o ícone "acende" e as palavras surgem em cascata. */
+@keyframes saudacao-entra {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.98);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes saudacao-brilho {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes saudacao-icone {
+  0% {
+    transform: scale(0.4) rotate(-30deg);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.15) rotate(8deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(0);
+    opacity: 1;
+  }
+}
+
+.saudacao {
+  animation: saudacao-entra 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+}
+
+.saudacao::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 40%, rgb(26 95 180 / 0.12) 50%, transparent 60%);
+  pointer-events: none;
+  animation: saudacao-brilho 1.1s ease-in-out 0.7s both;
+}
+
+.saudacao-icone {
+  animation: saudacao-icone 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.35s both;
+}
+
+.saudacao-palavra {
+  display: inline-block;
+  animation: subir-suave 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(0.5s + var(--i, 0) * 0.05s);
+}
+
+/* Padrão de movimento do sistema: entrada de página e listas em cascata (sempre sutil, < 0,6 s). */
+.pagina-entra {
+  animation: subir-suave 0.4s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.lista-animada > * {
+  animation: subir-suave 0.45s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: 0.48s;
+}
+.lista-animada > :nth-child(1) {
+  animation-delay: 0s;
+}
+.lista-animada > :nth-child(2) {
+  animation-delay: 0.06s;
+}
+.lista-animada > :nth-child(3) {
+  animation-delay: 0.12s;
+}
+.lista-animada > :nth-child(4) {
+  animation-delay: 0.18s;
+}
+.lista-animada > :nth-child(5) {
+  animation-delay: 0.24s;
+}
+.lista-animada > :nth-child(6) {
+  animation-delay: 0.3s;
+}
+.lista-animada > :nth-child(7) {
+  animation-delay: 0.36s;
+}
+.lista-animada > :nth-child(8) {
+  animation-delay: 0.42s;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
     transition-duration: 0.01ms !important;
   }
 }

@@ -115,6 +115,10 @@ def test_rpc_id_inexistente_devolve_false() -> None:
     assert _excluir(uuid.uuid4(), _admin()) is False
 
 
+def test_rpc_id_nulo_devolve_false() -> None:
+    assert _excluir(None, _admin()) is False  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("status", ["pendente", "aprovada"])
 def test_pendente_e_aprovada_nao_podem_ser_excluidas(status: str) -> None:
     sid = _criar(status)

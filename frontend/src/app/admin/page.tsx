@@ -26,7 +26,7 @@ const ITENS = [
 export default function Admin() {
   return (
     <AdminShell titulo="Administração">
-      <ul className="flex flex-col gap-3">
+      <ul className="lista-animada flex flex-col gap-3">
         {ITENS.map(({ href, rotulo, ajuda, Icone }) => (
           <li key={href}>
             <Link

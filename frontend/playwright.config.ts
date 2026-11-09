@@ -13,6 +13,8 @@ export default defineConfig({
     timezoneId: 'America/Sao_Paulo',
     // O service worker enxergaria /api antes do page.route; nos testes ele é bloqueado.
     serviceWorkers: 'block',
+    // Sem animação nos testes: a splash do login é pulada e nada atrasa os cliques.
+    reducedMotion: 'reduce',
   },
   projects: [{ name: 'mobile', use: { ...devices['Pixel 7'] } }],
   webServer: {

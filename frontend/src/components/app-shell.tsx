@@ -160,7 +160,9 @@ export function AppShell({
 
       <main className="flex-1 px-5 pt-5 pb-28">
         <Saudacao />
-        {children}
+        <div key={caminho} className="pagina-entra">
+          {children}
+        </div>
       </main>
 
       <nav

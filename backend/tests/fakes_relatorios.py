@@ -28,6 +28,9 @@ class RelatoriosMemoria:
         self.marcas: list[tuple[str, str, str | None]] = []  # (id, status, erro_codigo)
         self.rel_extra_colunas: dict[str, Any] = {}  # injeta colunas "vazadas" pelo banco
         self._lock_envios = threading.Lock()
+        self.dedupe_envios = True  # False isola testes de cota de envios idênticos
+        self.chamadas_reaper = 0
+        self.falha_reaper: Exception | None = None
 
     def chamadas_de(self, nome: str) -> list[dict[str, Any]]:
         return [p for n, p in self.chamadas_rel if n == nome]
@@ -223,7 +226,7 @@ class RelatoriosMemoria:
         filtros: dict[str, Any],
         max_por_hora: int,
         max_por_usuario_hora: int | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         with self._lock_envios:  # o advisory lock do banco
             if "@" in str(filtros):
                 raise erro_db("AG027")
@@ -232,6 +235,19 @@ class RelatoriosMemoria:
             d = self.perfis.get(destinatario)
             if d is None or not d.ativo:
                 raise erro_db("AG024")
+            recente = datetime.now(UTC) - timedelta(seconds=30)
+            for e in self.envios.values():  # dedupe de 30 s, antes das cotas
+                if (
+                    self.dedupe_envios
+                    and e["solicitado_por"] == solicitante
+                    and e["destinatario_id"] == destinatario
+                    and e["tipo_relatorio"] == tipo
+                    and e["formato"] == formato
+                    and e["filtros"] == filtros
+                    and e["status"] in ("pendente", "enviando")
+                    and e["criado_em"] > recente
+                ):
+                    return {"id": e["id"], "duplicado": True}
             limite = datetime.now(UTC) - timedelta(hours=1)
             recentes = sum(1 for e in self.envios.values() if e["criado_em"] > limite)
             if recentes >= max_por_hora:
@@ -256,7 +272,22 @@ class RelatoriosMemoria:
                 "erro_codigo": None,
                 "criado_em": datetime.now(UTC),
             }
-            return eid
+            return {"id": eid, "duplicado": False}
+
+    def reaper_envios_email(self, minutos: int = 15) -> int:
+        self.chamadas_reaper += 1
+        if self.falha_reaper is not None:
+            raise self.falha_reaper
+        if not 5 <= minutos <= 1440:
+            raise erro_db("AG027")
+        with self._lock_envios:
+            corte = datetime.now(UTC) - timedelta(minutes=minutos)
+            n = 0
+            for e in self.envios.values():
+                if e["status"] in ("pendente", "enviando") and e["criado_em"] < corte:
+                    e["status"], e["erro_codigo"] = "falhou", "timeout"
+                    n += 1
+            return n
 
     def marcar_envio_email(
         self, envio_id: str, status: str, erro_codigo: str | None = None

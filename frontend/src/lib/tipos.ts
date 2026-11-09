@@ -338,6 +338,30 @@ export interface ResultadoTesteIA {
   mensagem: string;
 }
 
+/** Resposta de GET /saudacao. `texto` já vem pronto; null = não exibir nada. */
+export interface RespostaSaudacao {
+  texto: string | null;
+}
+
+export type StatusSaudacao = 'pendente' | 'aprovada' | 'rejeitada';
+
+export interface FraseSaudacao {
+  id: string;
+  ocasiao: string;
+  texto: string;
+  origem: 'manual' | 'ia';
+  status: StatusSaudacao;
+  criado_em: string;
+  /** Ações liberadas pela API para esta frase (`aprovar`, `rejeitar`). */
+  acoes_permitidas: string[];
+}
+
+/** GET /admin/ia/saudacoes: `ocasioes` alimenta os selects; o cliente não as calcula. */
+export interface ListaSaudacoes {
+  itens: FraseSaudacao[];
+  ocasioes: string[];
+}
+
 export type CorpoIA = Partial<{
   mestre: boolean;
   saudacao: boolean;

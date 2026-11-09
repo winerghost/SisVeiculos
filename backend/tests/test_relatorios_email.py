@@ -8,6 +8,7 @@ import socket
 import threading
 import uuid
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -221,6 +222,7 @@ def test_cota_por_hora_429(mk, auth, c, ligado, repo):  # type: ignore[no-untype
 
 
 def test_cota_sob_concorrencia_so_uma_reserva(mk, auth, c, ligado, repo):  # type: ignore[no-untyped-def]
+    repo.dedupe_envios = False  # envios idênticos simultâneos seriam deduplicados; aqui é a cota
     cli = mk(email_max_per_hour=1).test_client()
     resultados: list[int] = []
     barreira = threading.Barrier(5)
@@ -627,3 +629,85 @@ def test_bool_invalido_400_query_e_corpo(client, auth, c, ligado):  # type: igno
         filtros={"incluir_nomes": "talvez"},
     )
     assert r.status_code == 400
+
+
+# ------------------------------------------------- dedupe (RPC B) e reaper (RPC C)
+class Parado(Executor):
+    """Não executa: o envio fica `pendente`, como numa fila ocupada."""
+
+    def __init__(self) -> None:
+        self.enviados = 0
+
+    def submit(self, fn, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.enviados += 1
+        return Future()
+
+
+def test_envio_duplicado_nao_reenvia_nem_consome_cota(mk, auth, c, ligado, repo, monkeypatch):  # type: ignore[no-untyped-def]
+    parado = Parado()
+    monkeypatch.setattr(modulo, "EXECUTOR_EMAIL", parado)
+    cli = mk(email_max_per_hour=1).test_client()  # a cota só comporta UM envio
+    r1 = enviar(cli, auth, c.aut, destinatario_id=c.adm.id, filtros={"unidade": "PU"})
+    r2 = enviar(cli, auth, c.aut, destinatario_id=c.adm.id, filtros={"unidade": "PU"})
+    assert r1.status_code == 202 and r2.status_code == 202  # sem erro, idempotente
+    assert r1.get_json() == r2.get_json()
+    assert len(repo.envios) == 1 and parado.enviados == 1
+    assert len(repo.eventos_de("relatorio_enviado")) == 1
+    # outro envio (filtros diferentes) não é duplicado e estoura a cota
+    r3 = enviar(cli, auth, c.aut, destinatario_id=c.adm.id, filtros={"unidade": "PF"})
+    assert r3.status_code == 429
+
+
+def test_envio_ja_concluido_nao_e_duplicado(client, auth, c, ligado, repo):  # type: ignore[no-untyped-def]
+    r1 = enviar(client, auth, c.aut, destinatario_id=c.adm.id)  # Sincrono: já 'enviado'
+    r2 = enviar(client, auth, c.aut, destinatario_id=c.adm.id)
+    assert r1.get_json()["id"] != r2.get_json()["id"] and len(repo.envios) == 2
+
+
+def test_reaper_roda_no_maximo_uma_vez_no_intervalo(client, auth, c, ligado, repo):  # type: ignore[no-untyped-def]
+    modulo.REAPER.reiniciar()
+    for _ in range(3):
+        assert enviar(client, auth, c.aut, destinatario_id=c.adm.id).status_code == 202
+    assert repo.chamadas_reaper == 1
+
+
+def test_reaper_move_envio_preso_para_falhou_timeout(client, auth, c, ligado, repo):  # type: ignore[no-untyped-def]
+    modulo.REAPER.reiniciar()
+    r = enviar(client, auth, c.aut, destinatario_id=c.adm.id)
+    eid = r.get_json()["id"]
+    repo.envios[eid].update(status="enviando", criado_em=repo.envios[eid]["criado_em"] - _HORA)
+    modulo.REAPER.reiniciar()
+    enviar(client, auth, c.aut, destinatario_id=c.adm.id)
+    assert repo.envios[eid]["status"] == "falhou" and repo.envios[eid]["erro_codigo"] == "timeout"
+
+
+def test_reaper_com_falha_nao_derruba_a_requisicao_nem_loga_pii(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo, caplog
+):
+    modulo.REAPER.reiniciar()
+    repo.falha_reaper = RuntimeError("dado.pessoal@agu.gov.br")
+    caplog.set_level(logging.DEBUG)
+    r = enviar(client, auth, c.aut, destinatario_id=c.adm.id)
+    assert r.status_code == 202 and repo.chamadas_reaper == 1
+    assert "reaper_envios_email_falhou tipo=RuntimeError" in caplog.text
+    assert "dado.pessoal" not in caplog.text
+
+
+def test_marcar_enviado_apos_reaper_e_benigno(client, auth, c, ligado, repo, caplog):  # type: ignore[no-untyped-def]
+    """falhou -> enviado devolve AG001 (TransicaoInvalida): não vira erro nem alerta."""
+    original = repo.marcar_envio_email
+
+    def reaper_antes(envio_id, status, erro_codigo=None):  # type: ignore[no-untyped-def]
+        if status == "enviado":
+            repo.envios[envio_id]["status"] = "falhou"  # o reaper agiu durante o SMTP
+        return original(envio_id, status, erro_codigo)
+
+    repo.marcar_envio_email = reaper_antes  # type: ignore[method-assign]
+    caplog.set_level(logging.DEBUG)
+    r = enviar(client, auth, c.aut, destinatario_id=c.adm.id)
+    assert r.status_code == 202
+    assert "envio_marcar_enviado_falhou" not in caplog.text
+    assert repo.chamadas_sistema == []
+
+
+_HORA = timedelta(hours=1)

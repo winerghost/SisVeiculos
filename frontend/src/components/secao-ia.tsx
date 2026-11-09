@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { BlocoSaudacoes } from '@/components/bloco-saudacoes';
 
 /**
  * Configurações de IA. Só exibe e envia a intenção do admin: o que pode ligar, quais modelos
@@ -179,6 +180,8 @@ export function SecaoIA() {
               </Button>
             </form>
           </div>
+
+          {d.itens.find((i) => i.chave === 'saudacao')?.habilitado ? <BlocoSaudacoes /> : null}
 
           {d.testes_disponiveis.length > 0 ? (
             <div className="mt-4 flex flex-col gap-3 rounded-xl border border-borda bg-white p-4">

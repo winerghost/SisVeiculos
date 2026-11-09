@@ -21,6 +21,7 @@ import { Alerta } from '@/components/ui/alert';
 import { Avatar } from '@/components/avatar';
 import { TelaMfa } from '@/components/tela-mfa';
 import { SinoNotificacoes } from '@/components/sino-notificacoes';
+import { Saudacao } from '@/components/saudacao';
 
 function Carregando() {
   return (
@@ -157,7 +158,10 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="flex-1 px-5 pt-5 pb-28">{children}</main>
+      <main className="flex-1 px-5 pt-5 pb-28">
+        <Saudacao />
+        {children}
+      </main>
 
       <nav
         aria-label="Navegação principal"

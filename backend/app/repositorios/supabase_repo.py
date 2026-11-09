@@ -205,6 +205,9 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
                 "Já existe um convite em aberto para este e-mail. "
                 "Reenvie ou revogue o convite atual antes de criar outro."
             )
+        if "ux_convites_token_hash" in texto:  # colisão de token: praticamente impossível
+            log.error("erro_banco codigo=23505 token_hash_repetido")
+            return ErroInterno("Não foi possível reenviar o convite. Tente novamente.")
         if "perfis_pkey" in texto:
             return Conflito("Esta conta já possui perfil de acesso.", "perfil_existente")
         return Conflito("Já existe um registro com estes dados.")
@@ -270,6 +273,11 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return ConviteExpirado("Este convite expirou. Peça ao administrador um novo convite.")
     if codigo == "AG007":
         return ConviteInvalido("Convite inválido.")
+    if codigo == "AG038":  # reenvio: convite já usado/revogado ou perdeu a corrida
+        return ConviteEncerrado("Este convite já foi utilizado ou revogado.")
+    if codigo == "AG039":  # parâmetros gerados pelo próprio backend: bug nosso, sem detalhe
+        log.error("erro_banco codigo=AG039")
+        return ErroInterno("Não foi possível reenviar o convite. Tente novamente.")
     if codigo == "AG008":
         return AutoAlteracaoProibida(
             "O administrador não pode alterar o próprio papel nem desativar a si mesmo."
@@ -729,7 +737,7 @@ class SupabaseRepositorio:
         filtros: dict[str, Any],
         max_por_hora: int,
         max_por_usuario_hora: int | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         res = _exec(
             lambda: self._c.rpc(
                 "reservar_envio_email",
@@ -747,7 +755,15 @@ class SupabaseRepositorio:
         if not isinstance(res.data, dict) or not res.data.get("id"):
             log.error("erro_banco resposta_invalida rpc=reservar_envio_email")
             raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
-        return str(res.data["id"])
+        # Chamadores/versões antigas sem "duplicado": tratado como envio novo.
+        return {"id": str(res.data["id"]), "duplicado": res.data.get("duplicado") is True}
+
+    def reaper_envios_email(self, minutos: int = 15) -> int:
+        res = _exec(lambda: self._c.rpc("reaper_envios_email", {"p_minutos": minutos}).execute())
+        if not isinstance(res.data, int) or isinstance(res.data, bool):
+            log.error("erro_banco resposta_invalida rpc=reaper_envios_email")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return res.data
 
     def marcar_envio_email(
         self, envio_id: str, status: str, erro_codigo: str | None = None
@@ -1156,6 +1172,27 @@ class SupabaseRepositorio:
             admin=True,
         )
         return _so(res.data[0], _SET_CONVITE) if res.data else None
+
+    def reenviar_convite(
+        self, convite_id: str, *, ator_id: str, token_hash: str, expira_em: str
+    ) -> dict[str, Any]:
+        res = _exec(
+            lambda: self._c.rpc(
+                "reenviar_convite",
+                {
+                    "p_convite_id": convite_id,
+                    "p_ator": ator_id,
+                    "p_token_hash": token_hash,
+                    "p_expira_em": expira_em,
+                },
+            ).execute(),
+            repetir_lock=True,
+            admin=True,
+        )
+        if not isinstance(res.data, dict) or not res.data.get("id"):
+            log.error("erro_banco resposta_invalida rpc=reenviar_convite")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return _so(res.data, _SET_CONVITE)  # nunca devolve token_hash
 
     def consumir_convite(self, token_hash: str, usuario_id: str, nome: str) -> Perfil:
         res = _exec(

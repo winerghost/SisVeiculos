@@ -8,6 +8,8 @@ vem da query/corpo, o limite de linhas e a auditoria. As rotas só traduzem HTTP
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -24,6 +26,7 @@ from app.errors import (
     RelatorioGrande,
     RequisicaoInvalida,
     SemPermissao,
+    TransicaoInvalida,
 )
 from app.modelos import UNIDADES_ORDEM, Configuracoes, Perfil
 from app.notificacoes.email import (
@@ -56,6 +59,38 @@ from app.services.requisicoes import STAFF
 from app.services.validacao import validar_uuid
 
 log = logging.getLogger(__name__)
+
+REAPER_INTERVALO_S = 300  # no máximo 1 chamada do reaper a cada 5 min por processo
+REAPER_MINUTOS = 15  # envio pendente/enviando parado além disso vira falhou/timeout
+
+
+class _Reaper:
+    """Chama `reaper_envios_email` de forma barata e segura: com limite de frequência por
+    processo, exceções engolidas e só o tipo do erro no log (sem PII)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ultimo: float | None = None
+
+    def reiniciar(self) -> None:
+        with self._lock:
+            self._ultimo = None
+
+    def talvez_rodar(self, repo: Repositorio) -> None:
+        agora = time.monotonic()
+        with self._lock:
+            if self._ultimo is not None and agora - self._ultimo < REAPER_INTERVALO_S:
+                return
+            self._ultimo = agora  # marca antes: um banco instável não é martelado a cada request
+        try:
+            n = repo.reaper_envios_email(REAPER_MINUTOS)
+            if n:
+                log.info("reaper_envios_email movidos=%d", n)
+        except Exception as e:  # noqa: BLE001 - best-effort: nunca derruba a requisição
+            log.warning("reaper_envios_email_falhou tipo=%s", type(e).__name__)
+
+
+REAPER = _Reaper()
 
 PREVIA_MAX = 50
 FORMATOS = ("csv", "xlsx")
@@ -767,7 +802,8 @@ class ServicoRelatorios:
         c = self._consultar(rel, perfil, ef)
         arq = self._gerar(c, formato)  # 422 se passar do limite, antes de gastar cota
 
-        envio_id = self._repo.reservar_envio_email(
+        REAPER.talvez_rodar(self._repo)  # best-effort: libera envios presos antes de contar cota
+        reserva = self._repo.reservar_envio_email(
             solicitante=perfil.id,
             destinatario=destinatario_id,
             tipo=rel.tipo,
@@ -776,6 +812,11 @@ class ServicoRelatorios:
             max_por_hora=self._cfg.email_max_per_hour,
             max_por_usuario_hora=self._cfg.email_max_per_user_hour,
         )
+        envio_id = str(reserva["id"])
+        if reserva.get("duplicado") is True:
+            # Duplo clique/retentativa: o envio idêntico já está em andamento. Não consome cota,
+            # não audita nem envia de novo; devolve o mesmo envio (idempotente, sem erro).
+            return {"id": envio_id, "status": "pendente"}
         try:
             self._repo.registrar_auditoria_relatorio(
                 acao="relatorio_enviado",
@@ -837,6 +878,9 @@ class ServicoRelatorios:
             return
         try:
             self._repo.marcar_envio_email(envio_id, "enviado")
+        except TransicaoInvalida:
+            # AG001: o reaper já marcou falhou/timeout antes do fim do envio. Benigno.
+            log.info("envio_marcar_enviado_apos_reaper")
         except Exception as e:
             log.error("envio_marcar_enviado_falhou tipo=%s", type(e).__name__)
 

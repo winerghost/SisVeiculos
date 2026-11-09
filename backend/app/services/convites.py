@@ -8,10 +8,10 @@ dos triggers do banco. E-mail nunca é logado nem devolvido a quem não é admin
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import threading
 import time
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -41,6 +41,8 @@ from app.services.validacao_admin import (
 )
 
 ESTADOS = ("aberto", "expirado", "usado", "revogado")
+
+_log = logging.getLogger(__name__)
 
 
 COOLDOWN_REENVIO_S = 60  # um convite recém-emitido não é reenviado antes disso
@@ -194,11 +196,10 @@ class ServicoConvites:
         Sem `substitui` (criação): grava e entrega; se a entrega falhar, revoga o recém-criado
         para não bloquear novo convite ao mesmo e-mail (índice de convite aberto).
 
-        Com `substitui` (reenvio): o índice único impede dois convites abertos para o e-mail,
-        então a ordem é entregar primeiro, depois revogar o antigo e gravar o novo. Se a
-        entrega falhar nada mudou e o convite antigo continua válido. Janela residual: se a
-        gravação falhar depois da revogação, o link entregue não vale e o admin cria um
-        convite novo (o e-mail está livre). Um atomic revoga+insere exigiria RPC (migration).
+        Com `substitui` (reenvio): a RPC `reenviar_convite` revoga o antigo e grava o novo numa
+        única transação (FOR UPDATE; um reenvio concorrente recebe AG038). Só DEPOIS o e-mail
+        é entregue; se a entrega falhar, o novo é revogado (o antigo já foi revogado pela RPC,
+        então o e-mail fica livre e o admin pode reenviar/criar de novo).
         """
         token = secrets.token_urlsafe(32)
         dados = {
@@ -210,16 +211,25 @@ class ServicoConvites:
             "expira_em": (datetime.now(UTC) + timedelta(days=dias)).isoformat(),
         }
         if substitui is not None:
-            self._entregar(email, nome, token)
-            if self._repo.revogar_convite(substitui["id"], ator_id=admin.id) is None:
-                raise ConviteEncerrado("Este convite já foi utilizado ou revogado.")
-            return self._repo.inserir_convite(dados)
-        convite = self._repo.inserir_convite(dados)
+            try:
+                convite = self._repo.reenviar_convite(
+                    substitui["id"],
+                    ator_id=admin.id,
+                    token_hash=dados["token_hash"],
+                    expira_em=dados["expira_em"],
+                )
+            except ConviteInvalido:  # AG007: o convite não existe mais
+                raise NaoEncontrado("Convite não encontrado.") from None
+        else:
+            convite = self._repo.inserir_convite(dados)
         try:
             self._entregar(email, nome, token)
         except Exception:
-            with suppress(ErroApi):  # a falha original é a que importa ao admin
+            try:
                 self._repo.revogar_convite(convite["id"], ator_id=admin.id)
+            except ErroApi as e:  # a falha original é a que importa ao admin
+                # Convite novo pode ficar aberto sem e-mail (bloqueia o e-mail até revogar).
+                _log.error("rollback do reenvio falhou: %s", type(e).__name__)
             raise
         return convite
 
@@ -243,9 +253,9 @@ class ServicoConvites:
         return self._apresentar(convite)
 
     def reenviar(self, admin: Perfil, convite_id: str) -> dict[str, Any]:
-        """Emite um novo convite (mesmo e-mail, papel e unidade) e só então revoga o atual
-        (token antigo deixa de valer). Se a entrega falhar, o antigo continua válido.
-        Transações curtas e separadas, como pede a migration 15."""
+        """Valida papel e cooldown, gera o token e chama a RPC atômica (revoga o atual e grava
+        o novo: mesmo e-mail, papel e unidade). O e-mail só sai depois; se falhar, o novo é
+        revogado. O CONTROLE em memória é só otimização: a garantia é do banco (AG038)."""
         exigir_admin(admin)
         self._exigir_configurado()
         antigo = self._exigir_reenviavel(self._carregar(convite_id))

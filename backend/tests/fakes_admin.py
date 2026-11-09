@@ -12,7 +12,7 @@ import re
 import threading
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -54,6 +54,7 @@ class AdminMemoria:
 
     def _init_admin(self) -> None:
         self.convites: dict[str, dict[str, Any]] = {}  # guarda token_hash (não sai nas leituras)
+        self.chamadas_reenviar_convite = 0  # reenvios que a "RPC" efetivou
         self.eventos: list[dict[str, Any]] = []  # auditoria administrativa, como o banco grava
         self.contas_auth: dict[str, dict[str, Any]] = {}
         self._adm = threading.RLock()  # o advisory lock exclusivo do banco
@@ -264,6 +265,41 @@ class AdminMemoria:
             c["revogado_em"], c["revogado_por"] = agora_iso(), ator_id
             self._audit("convites", convite_id, "convite_revogado", ator_id)
             return self._publico(c)
+
+    def reenviar_convite(
+        self, convite_id: str, *, ator_id: str, token_hash: str, expira_em: str
+    ) -> dict[str, Any]:
+        """Emula a RPC `reenviar_convite`: tudo sob o lock (FOR UPDATE), ou nada."""
+        agora = datetime.now(UTC)
+        validade = datetime.fromisoformat(expira_em) if expira_em else None
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", token_hash or "")
+            or validade is None
+            or validade <= agora
+            or validade > agora + timedelta(days=30) - timedelta(minutes=1)
+        ):
+            raise erro_db("AG039")
+        with self._adm:
+            self._exigir_admin_ativo(ator_id)
+            antigo = self.convites.get(convite_id)
+            if antigo is None:
+                raise erro_db("AG007")
+            if not self._aberto(antigo):
+                raise erro_db("AG038")
+            if any(c["token_hash"] == token_hash for c in self.convites.values()):
+                raise erro_db("23505", 'duplicate key value violates "ux_convites_token_hash"')
+            self.chamadas_reenviar_convite += 1
+            self.revogar_convite(convite_id, ator_id=ator_id)
+            return self.inserir_convite(
+                {
+                    "email": antigo["email"],
+                    "role": antigo["role"],
+                    "unidade": antigo["unidade"],
+                    "token_hash": token_hash,
+                    "criado_por": ator_id,
+                    "expira_em": expira_em,
+                }
+            )
 
     def consumir_convite(self, token_hash: str, usuario_id: str, nome: str) -> Perfil:
         with self._adm:

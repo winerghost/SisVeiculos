@@ -30,8 +30,9 @@ ITENS: dict[str, tuple[str, str]] = {
         "textos padrão.",
     ),
     "saudacao": (
-        "Saudação sazonal no login",
-        "Mensagem de boas-vindas com felicitações por data comemorativa (sem dados pessoais).",
+        "Saudação sazonal exibida após o login",
+        "Mensagem de boas-vindas com felicitações por data comemorativa "
+        "(o nome do usuário não é enviado ao provedor de IA).",
     ),
 }
 

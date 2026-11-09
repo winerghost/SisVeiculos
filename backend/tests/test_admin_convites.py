@@ -386,17 +386,21 @@ def test_listar_convites_sem_hash_e_com_filtro(client, auth, adm, repo):  # type
     assert client.get("/api/admin/convites?estado=zzz", headers=h).status_code == 400
 
 
-def test_reenviar_falha_mantem_antigo_valido(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
+def test_reenviar_falha_de_entrega_revoga_o_novo(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
     c = convidar(client, auth, adm).get_json()["convite"]
     antigo = auth_admin.ultimo_token()
     auth_admin.falhar_convite = True
     envelhecer(repo, c["id"])
     r = client.post(f"/api/admin/convites/{c['id']}/reenviar", headers=auth(adm.id))
     assert r.status_code == 503
-    assert len(repo.convites) == 1 and repo.convites[c["id"]]["revogado_em"] is None
+    # a RPC revogou o antigo e gravou o novo; a entrega falhou e o novo foi revogado
+    assert len(repo.convites) == 2 and repo.chamadas_reenviar_convite == 1
+    assert all(x["revogado_em"] is not None for x in repo.convites.values())
+    assert len(repo.eventos_de("convite_revogado")) == 2
     auth_admin.falhar_convite = False
+    assert convidar(client, auth, adm).status_code == 201  # e-mail livre para novo convite
     uid = confirmar_conta(auth_admin)
-    assert aceitar(client, auth, uid, antigo).status_code == 200  # token antigo ainda vale
+    assert aceitar(client, auth, uid, antigo).status_code == 409  # o antigo não vale mais
 
 
 def test_reenviar_conta_sem_perfil_usa_acesso(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
@@ -411,17 +415,17 @@ def test_reenviar_conta_sem_perfil_usa_acesso(client, auth, auth_admin, adm, rep
 
 def test_reenviar_perde_corrida_com_revogacao_nao_cria_convite(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
     c = convidar(client, auth, adm).get_json()["convite"]
-    original = repo.revogar_convite
+    original = repo.reenviar_convite
     envelhecer(repo, c["id"])
 
-    def revoga_antes(convite_id, *, ator_id):  # type: ignore[no-untyped-def]
-        original(convite_id, ator_id=ator_id)  # outra aba revogou entre a leitura e o reenvio
-        return original(convite_id, ator_id=ator_id)
+    def revoga_antes(convite_id, **kw):  # type: ignore[no-untyped-def]
+        repo.revogar_convite(convite_id, ator_id=adm.id)  # outra aba revogou antes da RPC
+        return original(convite_id, **kw)  # AG038
 
-    repo.revogar_convite = revoga_antes
+    repo.reenviar_convite = revoga_antes
     r = client.post(f"/api/admin/convites/{c['id']}/reenviar", headers=auth(adm.id))
     assert r.status_code == 409 and _cod(r) == "convite_encerrado"
-    assert len(repo.convites) == 1
+    assert len(repo.convites) == 1 and len(auth_admin.envios) == 1
 
 
 # ----------------------------------------------------------------------- M2: cooldown e limites
@@ -508,35 +512,95 @@ def test_reenvio_que_perdeu_corrida_antes_da_reserva_nao_envia(client, auth, aut
 
 
 # ----------------------------------------------------------------------- B2: janelas do reenvio
-def test_reenviar_insercao_falha_apos_revogar_libera_email(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
-    """Janela residual documentada: o e-mail saiu, o antigo foi revogado e o novo não gravou.
-    O admin cria um convite novo (o índice de convite aberto está livre)."""
+def test_reenviar_rpc_falha_nao_envia_email_e_mantem_o_antigo(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
+    """A RPC é atômica: se ela falha, nada mudou (antigo aberto) e nenhum e-mail sai."""
     from app.errors import ErroInterno
 
     c = convidar(client, auth, adm).get_json()["convite"]
     envelhecer(repo, c["id"])
 
-    def falha(_dados):  # type: ignore[no-untyped-def]
+    def falha(*_a, **_k):  # type: ignore[no-untyped-def]
         raise ErroInterno("Falha ao gravar.")
 
-    original = repo.inserir_convite
-    repo.inserir_convite = falha  # type: ignore[method-assign]
+    repo.reenviar_convite = falha  # type: ignore[method-assign]
     r = reenviar(client, auth, adm, c["id"])
     assert r.status_code == 503
-    assert len(auth_admin.envios) == 2 and repo.convites[c["id"]]["revogado_em"] is not None
-    assert not [x for x in repo.convites.values() if x["revogado_em"] is None]
-    repo.inserir_convite = original  # type: ignore[method-assign]
-    assert convidar(client, auth, adm).status_code == 201
+    assert len(auth_admin.envios) == 1 and repo.convites[c["id"]]["revogado_em"] is None
 
 
-def test_reenviar_revogar_devolve_none_com_email_ja_entregue(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
+def test_reenviar_dois_threads_no_repositorio_so_um_vence_ag038(adm, repo):  # type: ignore[no-untyped-def]
+    """Sem o CONTROLE em memória: a garantia é da RPC (FOR UPDATE). Um vence, o outro AG038."""
+    from app.errors import ConviteEncerrado
+
+    c = repo.inserir_convite(
+        {
+            "email": EMAIL,
+            "role": "solicitante",
+            "unidade": "PF",
+            "token_hash": "a" * 64,
+            "criado_por": adm.id,
+            "expira_em": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
+        }
+    )
+    resultados: list[object] = []
+    largada = threading.Barrier(2)
+
+    def agir(n: int) -> None:
+        largada.wait(5)
+        try:
+            resultados.append(
+                repo.reenviar_convite(
+                    c["id"],
+                    ator_id=adm.id,
+                    token_hash=f"{n}" * 64,
+                    expira_em=(datetime.now(UTC) + timedelta(days=7)).isoformat(),
+                )
+            )
+        except ConviteEncerrado as e:
+            resultados.append(e)
+
+    ts = [threading.Thread(target=agir, args=(n,)) for n in (1, 2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(5)
+    assert sum(isinstance(x, dict) for x in resultados) == 1
+    assert sum(isinstance(x, ConviteEncerrado) for x in resultados) == 1
+    abertos = [x for x in repo.convites.values() if x["revogado_em"] is None]
+    assert len(abertos) == 1
+    assert all("token_hash" not in x for x in resultados if isinstance(x, dict))
+
+
+def test_reenviar_mapeia_erros_da_rpc(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
     c = convidar(client, auth, adm).get_json()["convite"]
     envelhecer(repo, c["id"])
-    repo.revogar_convite = lambda *a, **k: None  # type: ignore[method-assign,assignment]
+    adm_id = adm.id
+    # AG002: o ator deixou de ser admin ativo entre a checagem do serviço e a RPC
+    original = repo.reenviar_convite
+
+    def sem_poder(convite_id, **kw):  # type: ignore[no-untyped-def]
+        repo.perfis[adm_id] = type(repo.perfis[adm_id])(adm_id, "Adm", "UEA", "solicitante", True)
+        return original(convite_id, **kw)
+
+    repo.reenviar_convite = sem_poder
     r = reenviar(client, auth, adm, c["id"])
-    assert r.status_code == 409 and _cod(r) == "convite_encerrado"
-    assert len(auth_admin.envios) == 2  # entregue antes da revogação (ordem documentada)
-    assert len(repo.convites) == 1  # e nenhum convite novo foi gravado
+    assert r.status_code == 403 and len(auth_admin.envios) == 1
+
+
+def test_reenviar_ag007_vira_404_e_ag039_nao_vaza_detalhe(client, auth, adm, repo):  # type: ignore[no-untyped-def]
+    from tests.fakes_admin import erro_db
+
+    c = convidar(client, auth, adm).get_json()["convite"]
+    envelhecer(repo, c["id"])
+    for codigo, status in (("AG007", 404), ("AG039", 503)):
+
+        def levanta(*_a, _c=codigo, **_k):  # type: ignore[no-untyped-def]
+            raise erro_db(_c, "detalhe interno secreto")
+
+        repo.reenviar_convite = levanta  # type: ignore[method-assign]
+        r = reenviar(client, auth, adm, c["id"])
+        assert r.status_code == status
+        assert "secreto" not in json.dumps(r.get_json())
 
 
 def test_entregar_conta_existente_sem_id_nao_reenvia_acesso(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
@@ -549,9 +613,8 @@ def test_entregar_conta_existente_sem_id_nao_reenvia_acesso(client, auth, auth_a
     assert c["revogado_em"] is not None
 
 
-def test_reenviar_conta_com_perfil_mantem_o_antigo_valido(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
+def test_reenviar_conta_com_perfil_revoga_o_novo(client, auth, auth_admin, adm, repo):  # type: ignore[no-untyped-def]
     c = convidar(client, auth, adm).get_json()["convite"]
-    antigo = auth_admin.ultimo_token()
     envelhecer(repo, c["id"])
     uid = confirmar_conta(auth_admin)
     from app.modelos import Perfil
@@ -559,8 +622,6 @@ def test_reenviar_conta_com_perfil_mantem_o_antigo_valido(client, auth, auth_adm
     repo.perfis[uid] = Perfil(uid, "Novo Servidor", "PF", "solicitante", True)
     r = reenviar(client, auth, adm, c["id"])
     assert r.status_code == 409 and _cod(r) == "conta_existente"
-    assert len(auth_admin.envios) == 1
-    assert repo.convites[c["id"]]["revogado_em"] is None
-    assert len(repo.convites) == 1
-    del repo.perfis[uid]  # sem perfil o token antigo ainda é aceito
-    assert aceitar(client, auth, uid, antigo).status_code == 200
+    assert len(auth_admin.envios) == 1  # nenhum e-mail novo saiu
+    assert len(repo.convites) == 2
+    assert all(x["revogado_em"] is not None for x in repo.convites.values())

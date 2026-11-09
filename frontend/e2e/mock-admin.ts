@@ -48,6 +48,12 @@ export interface OpcoesAdmin {
   testesIA?: string[];
   /** Resultado de POST /admin/ia/testar (padrão 'ok'); 'conflito' responde 409. */
   resultadoTesteIA?: 'ok' | 'falha' | 'conflito';
+  /** Texto de GET /api/saudacao (padrão null = sem banner). */
+  saudacao?: string | null;
+  /** Inicia com a função saudação ligada (e a chave geral de IA). */
+  saudacaoLigada?: boolean;
+  /** POST /admin/ia/saudacoes/gerar responde 502 com esta mensagem. */
+  erroGerarSaudacao?: string;
 }
 
 const ACESSO_BASE = Date.parse('2026-11-05T15:00:00Z');
@@ -100,11 +106,42 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     motorista_localizacao: false,
   };
   const ia: { mestre: boolean; saudacao: boolean; provedor: unknown; modelo: unknown } = {
-    mestre: false,
-    saudacao: false,
+    mestre: !!opcoes.saudacaoLigada,
+    saudacao: !!opcoes.saudacaoLigada,
     provedor: null,
     modelo: null,
   };
+  const frases: {
+    id: string;
+    ocasiao: string;
+    texto: string;
+    origem: 'manual' | 'ia';
+    status: string;
+    criado_em: string;
+    acoes_permitidas: string[];
+  }[] = [
+    {
+      id: 'f1',
+      ocasiao: 'Madrugada',
+      texto: 'Acordado, coruja noturna, {nome}?',
+      origem: 'ia',
+      status: 'pendente',
+      criado_em: '2026-11-05T15:00:00Z',
+      acoes_permitidas: ['aprovar', 'rejeitar'],
+    },
+    {
+      id: 'f2',
+      ocasiao: 'Natal',
+      texto: 'Boas festas, {nome}!',
+      origem: 'manual',
+      status: 'aprovada',
+      criado_em: '2026-11-05T15:00:00Z',
+      acoes_permitidas: ['rejeitar'],
+    },
+  ];
+  await page.route('**/api/saudacao', (route) =>
+    route.fulfill({ json: { texto: opcoes.saudacao ?? null } }),
+  );
   const acoesColecao = opcoes.semCriar ? [] : ['criar'];
   const corpos: {
     convidar: unknown[];
@@ -113,6 +150,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     config: unknown[];
     ia: Record<string, unknown>[];
     iaTestar: unknown[];
+    saudacoes: unknown[];
     /** Corpos de POST /admin/usuarios/:id/foto/upload-url e /foto, e objetos enviados ao Storage. */
     uploadUrlFoto: unknown[];
     confirmarFoto: unknown[];
@@ -134,6 +172,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     config: [],
     ia: [],
     iaTestar: [],
+    saudacoes: [],
     uploadUrlFoto: [],
     confirmarFoto: [],
     uploadsStorage: [],
@@ -568,6 +607,53 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         },
       ];
       return route.fulfill({ json: { recursos: config, itens, acoes_permitidas: ['editar'] } });
+    }
+    if (recurso === 'ia' && id === 'saudacoes') {
+      const ocasioes = ['Madrugada', 'Natal', 'Ano Novo'];
+      const [sid, sacao] = [partes[2], partes[3]];
+      if (!sid && m === 'GET') {
+        const st = url.searchParams.get('status');
+        return route.fulfill({
+          json: { itens: frases.filter((f) => !st || f.status === st), ocasioes },
+        });
+      }
+      if (!sid && m === 'POST') {
+        const corpo = req.postDataJSON() as { ocasiao: string; texto: string };
+        corpos.saudacoes.push(corpo);
+        frases.push({
+          id: `f${frases.length + 1}`,
+          ...corpo,
+          origem: 'manual',
+          status: 'aprovada',
+          criado_em: new Date().toISOString(),
+          acoes_permitidas: ['rejeitar'],
+        });
+        return route.fulfill({ status: 201, json: frases[frases.length - 1] });
+      }
+      if (sid === 'gerar' && m === 'POST') {
+        corpos.saudacoes.push(req.postDataJSON());
+        if (opcoes.erroGerarSaudacao) {
+          return erro(route, 502, 'ia_indisponivel', opcoes.erroGerarSaudacao);
+        }
+        frases.push({
+          id: `f${frases.length + 1}`,
+          ocasiao: 'Natal',
+          texto: 'Feliz Natal, {nome}!',
+          origem: 'ia',
+          status: 'pendente',
+          criado_em: new Date().toISOString(),
+          acoes_permitidas: ['aprovar', 'rejeitar'],
+        });
+        return route.fulfill({ status: 201, json: { itens: [] } });
+      }
+      const alvo = frases.find((f) => f.id === sid);
+      if ((sacao === 'aprovar' || sacao === 'rejeitar') && m === 'POST' && alvo) {
+        corpos.saudacoes.push({ id: alvo.id, acao: sacao });
+        alvo.status = sacao === 'aprovar' ? 'aprovada' : 'rejeitada';
+        alvo.acoes_permitidas = sacao === 'aprovar' ? ['rejeitar'] : ['aprovar'];
+        return route.fulfill({ json: alvo });
+      }
+      return erro(route, 404, 'nao_encontrado', 'Recurso não encontrado.');
     }
     if (recurso === 'ia' && id === 'testar' && m === 'POST') {
       corpos.iaTestar.push(req.postDataJSON());

@@ -21,6 +21,8 @@ from app.repositorios.armazenamento import Armazenamento
 from app.repositorios.armazenamento_avatares import ArmazenamentoAvatares
 from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
+from app.saudacao.repositorio import RepositorioSaudacoes, SupabaseRepositorioSaudacoes
+from app.services.notificacoes import registrar_falha_sistema
 from app.services.registro_acessos import RegistradorAcessos
 
 
@@ -35,6 +37,7 @@ def create_app(
     notificador: Notificador | None = None,
     registrador_acessos: RegistradorAcessos | None = None,
     servico_ia: ServicoIA | None = None,
+    repo_saudacoes: RepositorioSaudacoes | None = None,
 ) -> Flask:
     """Dependências (`repo`, `verificador`, `auth_admin`, `armazenamento`) podem ser injetadas
     nos testes; senão vêm da config."""
@@ -79,7 +82,14 @@ def create_app(
         )
 
     if notificador is None:  # desligado (no-op) sem N8N_WEBHOOK_URL/N8N_WEBHOOK_TOKEN
-        notificador = criar_notificador(cfg.n8n_webhook_url, cfg.n8n_webhook_token)
+        repo_falha = repo  # o repositório é thread-safe e já é usado fora da requisição
+
+        def _n8n_desistiu(_evento: str) -> None:  # só o nome do evento; nunca propaga
+            registrar_falha_sistema(repo_falha, "n8n_falha")
+
+        notificador = criar_notificador(
+            cfg.n8n_webhook_url, cfg.n8n_webhook_token, ao_desistir=_n8n_desistiu
+        )
     atexit.register(notificador.fechar)
 
     if registrador_acessos is None:  # nos testes (testing=True) grava de forma síncrona
@@ -95,8 +105,13 @@ def create_app(
             else None
         )
         servico_ia = ServicoIA(ConfigIA.from_env(), repo_ia)
+    if repo_saudacoes is None and producao:
+        repo_saudacoes = SupabaseRepositorioSaudacoes.criar(
+            cfg.supabase_url, cfg.supabase_service_role_key
+        )
 
     app = Flask(__name__)
+    app.extensions["saudacoes_repo"] = repo_saudacoes
     app.config["MAX_CONTENT_LENGTH"] = cfg.max_content_length
     app.config["TESTING"] = cfg.testing
     app.json.ensure_ascii = False  # type: ignore[attr-defined]
@@ -136,6 +151,7 @@ def create_app(
     from app.rotas.dashboards import dashboards
     from app.rotas.notificacoes import notificacoes
     from app.rotas.relatorios import relatorios
+    from app.rotas.saudacao import saudacao, saudacao_admin
 
     app.register_blueprint(api)
     app.register_blueprint(admin)
@@ -143,6 +159,8 @@ def create_app(
     app.register_blueprint(dashboards)
     app.register_blueprint(relatorios)
     app.register_blueprint(notificacoes)
+    app.register_blueprint(saudacao)
+    app.register_blueprint(saudacao_admin)
 
     if not cfg.testing:
         # Thread de manutenção (expurgo diário) e, com EMAIL_ENABLED, despachante de e-mail dos

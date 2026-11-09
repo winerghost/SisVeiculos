@@ -2,6 +2,10 @@ import { supabase } from './supabase';
 import type {
   Acao,
   ConfiguracaoIA,
+  FraseSaudacao,
+  ListaSaudacoes,
+  RespostaSaudacao,
+  StatusSaudacao,
   ResultadoTesteIA,
   ConfiguracoesAdmin,
   CorpoAcao,
@@ -211,9 +215,19 @@ export const admin = {
       method: 'POST',
       body: JSON.stringify({ provedor }),
     }),
+  saudacoes: (p: { status?: StatusSaudacao; ocasiao?: string }) =>
+    chamar<ListaSaudacoes>(`/admin/ia/saudacoes${query(p)}`),
+  criarSaudacao: (d: { ocasiao: string; texto: string }) =>
+    chamar<FraseSaudacao>('/admin/ia/saudacoes', JSON_POST(d)),
+  gerarSaudacoes: (d: { ocasiao: string; quantidade: number }) =>
+    chamar<unknown>('/admin/ia/saudacoes/gerar', JSON_POST(d)),
+  decidirSaudacao: (id: string, acao: 'aprovar' | 'rejeitar') =>
+    chamar<FraseSaudacao>(`/admin/ia/saudacoes/${enc(id)}/${acao}`, JSON_POST()),
 };
 
 export const api = {
+  /** Saudação do dia, já pronta pela API (texto puro ou null). */
+  saudacao: () => chamar<RespostaSaudacao>('/saudacao'),
   eu: () => chamar<Eu>('/eu'),
   /** Foto de perfil em 3 passos: pedir URL, enviar ao Storage (SDK) e confirmar. */
   solicitarUploadFotoPerfil: (d: { mime: string; tamanho: number }) =>

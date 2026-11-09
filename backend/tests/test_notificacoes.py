@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -200,6 +201,7 @@ def test_payload_minimo_por_allowlist() -> None:
     p = montar_payload("requisicao.autorizada", req_exemplo())
     assert set(p) == {
         "evento",
+        "evento_id",
         "requisicao_id",
         "status",
         "veiculo_id",
@@ -448,3 +450,79 @@ def test_checklist_registrado_dispara_evento(client_n, auth, cen, grav, repo):  
     assert grav.eventos[-1] == "checklist.registrado"
     texto = json.dumps(montar_payload(*grav.chamadas[-1]))
     assert "cheio" not in texto and 'avarias"' not in texto
+
+
+# ------------------------------------------------------------------ evento_id
+def test_evento_id_no_corpo_header_assinado_e_estavel_nas_retentativas() -> None:
+    recebidos: list[httpx.Request] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        recebidos.append(req)
+        return httpx.Response(503 if len(recebidos) == 1 else 200)
+
+    n = webhook(h)
+    n.notificar("requisicao.criada", req_exemplo())
+    assert esperar(lambda: len(recebidos) == 2)
+    n.fechar()
+    a, b = recebidos
+    eid = json.loads(a.content)["evento_id"]
+    assert uuid.UUID(eid).version == 4
+    assert a.headers["X-Evento-Id"] == b.headers["X-Evento-Id"] == eid
+    assert json.loads(b.content)["evento_id"] == eid
+    assert a.headers["X-Entrega-Id"] == b.headers["X-Entrega-Id"]
+    for r in (a, b):  # o evento_id está no corpo coberto pela assinatura
+        ts = r.headers["X-Timestamp"]
+        mac = hmac.new(TOKEN.encode(), ts.encode() + b"." + r.content, hashlib.sha256)
+        assert r.headers["X-Assinatura"] == "sha256=" + mac.hexdigest()
+
+
+def test_evento_id_difere_entre_eventos() -> None:
+    recebidos: list[httpx.Request] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        recebidos.append(req)
+        return httpx.Response(200)
+
+    n = webhook(h)
+    n.notificar("requisicao.criada", req_exemplo())
+    n.notificar("requisicao.criada", req_exemplo())
+    assert esperar(lambda: len(recebidos) == 2)
+    n.fechar()
+    ids = {r.headers["X-Evento-Id"] for r in recebidos}
+    assert len(ids) == 2
+
+
+def test_desistencia_chama_callback_sem_pii() -> None:
+    vistos: list[str] = []
+    n = webhook(lambda req: httpx.Response(500), ao_desistir=vistos.append)
+    n.notificar("requisicao.criada", req_exemplo())
+    assert esperar(lambda: vistos)
+    n.fechar()
+    assert vistos == ["requisicao.criada"]
+
+
+def test_create_app_liga_ao_desistir_ao_alerta_de_sistema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem notificador injetado, o callback de desistência registra `n8n_falha` para os admins."""
+    import app as pacote
+
+    capturado: dict[str, Any] = {}
+
+    def falso(url: str, token: str, ao_desistir: Any = None) -> NotificadorNulo:
+        capturado["cb"] = ao_desistir
+        return NotificadorNulo()
+
+    monkeypatch.setattr(pacote, "criar_notificador", falso)
+    repo = RepoMemoria()
+    adm = repo.novo_perfil("admin")
+    cfg = Config(jwt_issuer=ISSUER, jwt_audience=AUDIENCE, testing=True)
+    ver = VerificadorJWT(
+        issuer=ISSUER, audience=AUDIENCE, resolvedor_chave=lambda _t: _CHAVE.public_key()
+    )
+    create_app(cfg, repo=repo, verificador=ver)
+    assert callable(capturado["cb"])
+    capturado["cb"]("requisicao.criada")
+    assert ("sistema_falha_envio", "n8n_falha") in repo.chamadas_sistema
+    assert [n["usuario_id"] for n in repo.notificacoes] == [adm.id]
+    # um repositório que falha não derruba o worker (registrar_falha_sistema nunca propaga)
+    repo.falha_sistema = RuntimeError("banco fora")
+    capturado["cb"]("requisicao.criada")

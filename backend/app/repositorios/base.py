@@ -158,6 +158,14 @@ class Repositorio(Protocol):
         """Revoga se ainda aberto (condicional). None se ninguém casou."""
         ...
 
+    def reenviar_convite(
+        self, convite_id: str, *, ator_id: str, token_hash: str, expira_em: str
+    ) -> dict[str, Any]:
+        """RPC atômica: revoga o convite (FOR UPDATE) e insere o novo com o mesmo e-mail, papel
+        e unidade. Devolve o novo convite sem `token_hash`. AG002 -> SemPermissao, AG007 ->
+        ConviteInvalido, AG038 -> ConviteEncerrado, AG039 -> ErroInterno."""
+        ...
+
     def consumir_convite(self, token_hash: str, usuario_id: str, nome: str) -> Perfil:
         """RPC atômica: valida, cria o perfil e marca o convite como usado."""
         ...
@@ -400,10 +408,17 @@ class Repositorio(Protocol):
         filtros: dict[str, Any],
         max_por_hora: int,
         max_por_usuario_hora: int | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """RPC atômica: valida recurso, solicitante, destinatário ativo e cotas por hora (global
         e por usuário; AG025, e a mensagem do banco da cota por usuário cita "usuário").
-        Devolve o id do envio (`pendente`). AG024/25/26/27 viram erros de API."""
+        Devolve `{"id": str, "duplicado": bool}`. `duplicado=True`: já havia envio idêntico
+        pendente/enviando nos últimos 30 s; nada foi inserido nem a cota consumida e o chamador
+        NÃO deve enviar outro e-mail. AG024/25/26/27 viram erros de API."""
+        ...
+
+    def reaper_envios_email(self, minutos: int = 15) -> int:
+        """RPC: move envios pendente/enviando parados há mais de `minutos` para falhou/timeout.
+        Devolve quantos moveu. AG027 (fora de 5..1440) vira RequisicaoInvalida."""
         ...
 
     def marcar_envio_email(

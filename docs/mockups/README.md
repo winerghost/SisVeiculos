@@ -40,3 +40,5 @@ Servem como referência de **layout e visual**. Regras de negócio, validações
 ## Telas sem mockup de referência
 
 As telas do Motorista (`/motorista` e `/motorista/detalhe`), o registro de localização e a troca de foto de usuário pelo admin foram implementadas sem mockup de referência, seguindo apenas os tokens e padrões visuais do projeto. Pendente de validação visual.
+
+Também sem mockup, pendentes de validação visual: o banner de saudação sazonal (texto curto e discreto no topo das telas iniciais pós-login, exibido só se a API devolver texto) e o bloco "Saudações" em Configurações, seção de IA (filtro Pendentes/Aprovadas/Rejeitadas com Aprovar/Rejeitar, formulário de frase manual com a dica `{nome}` e "Gerar com IA").

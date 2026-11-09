@@ -56,9 +56,47 @@ documentação do provedor antes de ligar**; o padrão do código é só um pont
 ## Fases
 
 0. Fundação (esta): migration, provedores, cota, circuito, tela de Configurações.
-1. Saudação sazonal no login (calendário no backend, textos pré-gerados e aprovados pelo admin).
+1. Saudação sazonal (implementada; ver a seção abaixo).
 2. Resumo narrativo em Dashboards/Relatórios (só dados agregados).
 3. Ajuda de redação (opt-in por usuário; só com consentimento e aval da AGU).
+
+## Fase 1: saudação sazonal
+
+Frase curta de boas-vindas no estilo "Acordado, coruja noturna?" ou "Bom dia, {nome}! Café na
+mão e bora.", escolhida e montada **no servidor**. O frontend só exibe o texto recebido.
+
+- **Exige JWT** (`GET /api/saudacao`, qualquer perfil ativo), portanto **não aparece na tela de
+  login**: só depois de autenticar. O nome vem do perfil (`perfis`), nunca do cliente; usa-se só o
+  primeiro nome. Sem nome no perfil, só entram frases sem `{nome}`.
+- **Gate:** chave geral (`mestre`) E `saudacao` ligadas em Configurações. Não depende de chave de
+  provedor nem de `AI_ENABLED`: o catálogo embutido funciona sem IA. Desligado, responde
+  `{"texto": null}` e a UI não mostra nada. Falha de banco também vira `null`.
+- **Fuso:** `America/Sao_Paulo` (-03:00 fixo, `FUSO` de `services/dashboards.py`). Instantes com
+  outro fuso são convertidos antes de decidir data e hora.
+- **Ocasião (maior prioridade vence):** data comemorativa (fixas e móveis Carnaval seg/ter, Sexta
+  Santa, Páscoa, Corpus Christi; `dia_servidor` = 28/10) > dia especial (segunda, sexta, fim de
+  semana) > período (madrugada 00:00-04:59, manhã 05:00-11:59, tarde 12:00-17:59, noite 18:00-23:59).
+- **Escolha estável:** pool = catálogo embutido (`app/saudacao/catalogo.py`) + frases aprovadas no
+  banco da ocasião; índice por hash de (usuário, data, ocasião). A mesma pessoa vê a mesma frase
+  o dia todo.
+- **Curadoria (admin):** tabela `saudacoes` (migration `20261115120100_saudacoes.sql`). Texto de 3
+  a 80 caracteres, só o marcador `{nome}`, sem `<`, `>`, links nem quebra de linha. INSERT nasce
+  `pendente`; manual é inserida e aprovada em seguida. Transições: pendente para aprovada ou
+  rejeitada, e aprovada para rejeitada (e vice-versa); nunca volta a pendente. A auditoria sai de
+  trigger do banco (o backend não grava por conta própria).
+
+| Endpoint (admin) | O que faz |
+|---|---|
+| `GET /api/admin/ia/saudacoes?status=&ocasiao=` | `{"itens": [...], "ocasioes": [...]}`; cada item traz `acoes_permitidas` |
+| `POST /api/admin/ia/saudacoes` `{ocasiao, texto}` | frase manual (fica aprovada) |
+| `POST /api/admin/ia/saudacoes/gerar` `{ocasiao, quantidade 1..10}` | gera pendentes pela IA (limite 5 por hora por usuário) |
+| `POST /api/admin/ia/saudacoes/<id>/aprovar` e `/rejeitar` | decide a frase |
+
+A geração exige `ServicoIA.disponivel('saudacao')` (AI_ENABLED, chaves geral e da função, chave de
+provedor). O prompt leva **só a ocasião**: nunca nome, unidade, e-mail, placa ou trajeto. Cada
+linha devolvida é validada (3-80 caracteres, sem HTML/link/quebra, só `{nome}`) e deduplicada
+contra catálogo e banco; as inválidas são descartadas e contadas em `descartadas`. O uso entra em
+`ia_uso` com `funcao='saudacao'`. Falha do provedor ou cota: 502 `ia_falhou` com mensagem em pt-BR.
 
 ## Limites conhecidos (aceitos na Fase 0)
 
@@ -70,8 +108,7 @@ documentação do provedor antes de ligar**; o padrão do código é só um pont
   antes de todos os circuitos abrirem. A cota (no banco) não tem essa limitação.
 - **Servidor com `AI_ENABLED=false`:** a tela só permite DESLIGAR (chave geral e funções); ligar
   ou alterar provedor/modelo/teto é recusado.
-- **Fase 1:** a saudação deve exigir JWT (sem perfil só vale o teto mensal global) e montar o
-  prompt apenas com a data comemorativa, sem nome, unidade, e-mail, placa ou trajeto.
+- **Fase 1:** a saudação exige JWT e o prompt de geração leva só a ocasião (ver a seção acima).
 
 ## Ordem de deploy do teste de conexão (revisão de segurança)
 

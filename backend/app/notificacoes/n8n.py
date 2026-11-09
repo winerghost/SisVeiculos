@@ -9,6 +9,10 @@ Garantias:
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
 - Assinatura: `X-Assinatura: sha256=HMAC(token, "<timestamp>.<corpo>")` e `X-Timestamp`
   (segundos Unix) para o n8n rejeitar replay; também `Authorization: Bearer <token>`.
+- Idempotência: cada evento tem um `evento_id` (uuid4) gerado uma vez em `montar_payload`, presente
+  no corpo assinado e no header `X-Evento-Id`, e idêntico em todas as retentativas. O n8n DEVE
+  deduplicar por `X-Evento-Id` (ou `evento_id` do corpo): uma mesma entrega pode chegar mais de
+  uma vez (timeout com resposta perdida). `X-Entrega-Id` identifica só a sequência de tentativas.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -95,10 +100,15 @@ def validar_url_webhook(url: str) -> None:
         raise RuntimeError(_MSG_PUBLICO)
 
 
-def montar_payload(evento: str, requisicao: dict[str, Any]) -> dict[str, Any]:
-    """Payload mínimo por allowlist: nada além destes campos sai do backend."""
+def montar_payload(
+    evento: str, requisicao: dict[str, Any], evento_id: str | None = None
+) -> dict[str, Any]:
+    """Payload mínimo por allowlist: nada além destes campos sai do backend.
+
+    `evento_id` (uuid4) é estável por evento; o n8n deduplica por ele."""
     return {
         "evento": evento,
+        "evento_id": evento_id or str(uuid.uuid4()),
         "requisicao_id": requisicao.get("id"),
         **{c: requisicao.get(c) for c in _CAMPOS_REQ},
         "ocorrido_em": datetime.now(UTC).isoformat(),
@@ -117,6 +127,7 @@ class N8nWebhook:
         backoff: float = 0.5,
         max_fila: int = 100,
         cliente: httpx.Client | None = None,
+        ao_desistir: Callable[[str], None] | None = None,
     ) -> None:
         # httpx registra a URL completa em INFO; ela contém o segredo do caminho do webhook.
         for nome in ("httpx", "httpcore"):
@@ -127,7 +138,8 @@ class N8nWebhook:
         self._backoff = backoff
         self._max_fila = max(1, max_fila)
         self._cliente = cliente or httpx.Client(timeout=timeout, follow_redirects=False)
-        self._fila: deque[tuple[str, bytes]] = deque()
+        self._ao_desistir = ao_desistir  # recebe só o nome do evento (sem PII)
+        self._fila: deque[tuple[str, bytes, str]] = deque()
         self._cond = threading.Condition()
         self._parar = threading.Event()
         self._thread: threading.Thread | None = None
@@ -142,15 +154,18 @@ class N8nWebhook:
         try:
             if evento not in EVENTOS or self._parar.is_set():
                 return
+            evento_id = str(uuid.uuid4())  # gerado uma vez; reutilizado nas retentativas
             corpo = json.dumps(
-                montar_payload(evento, requisicao), separators=(",", ":"), ensure_ascii=False
+                montar_payload(evento, requisicao, evento_id),
+                separators=(",", ":"),
+                ensure_ascii=False,
             ).encode()
             with self._cond:
                 if len(self._fila) >= self._max_fila:
                     self._fila.popleft()  # descarta o mais antigo
                     self.descartados += 1
                     log.warning("n8n: fila cheia, evento antigo descartado")
-                self._fila.append((evento, corpo))
+                self._fila.append((evento, corpo, evento_id))
                 self._iniciar_thread()
                 self._cond.notify()
         except Exception as exc:  # noqa: BLE001 - best-effort: nunca propaga
@@ -182,15 +197,15 @@ class N8nWebhook:
                     self._cond.wait()
                 if self._parar.is_set():
                     return
-                evento, corpo = self._fila.popleft()
-            self._entregar(evento, corpo)
+                evento, corpo, evento_id = self._fila.popleft()
+            self._entregar(evento, corpo, evento_id)
 
-    def _entregar(self, evento: str, corpo: bytes) -> None:
+    def _entregar(self, evento: str, corpo: bytes, evento_id: str) -> None:
         entrega_id = str(uuid.uuid4())
         for tentativa in range(1, self._tentativas + 1):
             try:
                 resp = self._cliente.post(
-                    self._url, content=corpo, headers=self._cabecalhos(corpo, entrega_id)
+                    self._url, content=corpo, headers=self._cabecalhos(corpo, entrega_id, evento_id)
                 )
                 if resp.status_code < 400:  # a resposta não é lida
                     return
@@ -203,8 +218,13 @@ class N8nWebhook:
             else:
                 self.falhas += 1
                 log.warning("n8n: entrega desistida evento=%s motivo=%s", evento, motivo)
+                if self._ao_desistir is not None:
+                    try:
+                        self._ao_desistir(evento)
+                    except Exception as exc:  # noqa: BLE001 - nunca derruba o worker
+                        log.warning("n8n: callback de falha erro (%s)", type(exc).__name__)
 
-    def _cabecalhos(self, corpo: bytes, entrega_id: str) -> dict[str, str]:
+    def _cabecalhos(self, corpo: bytes, entrega_id: str, evento_id: str) -> dict[str, str]:
         ts = str(int(time.time()))  # novo a cada tentativa (janela anti-replay)
         mac = hmac.new(self._token.encode(), ts.encode() + b"." + corpo, hashlib.sha256)
         return {
@@ -213,12 +233,16 @@ class N8nWebhook:
             "X-Timestamp": ts,
             "X-Assinatura": "sha256=" + mac.hexdigest(),
             "X-Entrega-Id": entrega_id,
+            "X-Evento-Id": evento_id,
         }
 
 
-def criar_notificador(url: str, token: str) -> Notificador:
-    """No-op sem URL ou sem token; senão valida a URL (anti-SSRF) e cria o webhook."""
+def criar_notificador(
+    url: str, token: str, ao_desistir: Callable[[str], None] | None = None
+) -> Notificador:
+    """No-op sem URL ou sem token; senão valida a URL (anti-SSRF) e cria o webhook.
+    `ao_desistir` (opcional) é chamado, na thread do worker, quando uma entrega é desistida."""
     if not url or not token:
         return NotificadorNulo()
     validar_url_webhook(url)
-    return N8nWebhook(url, token)
+    return N8nWebhook(url, token, ao_desistir=ao_desistir)

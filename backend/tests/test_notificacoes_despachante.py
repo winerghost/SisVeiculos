@@ -354,7 +354,7 @@ def _envio(repo: RepoMemoria, c: Any) -> str:
         formato="csv",
         filtros={},
         max_por_hora=10,
-    )
+    )["id"]
 
 
 def test_falha_de_relatorio_avisa_admins(repo, c):  # type: ignore[no-untyped-def]

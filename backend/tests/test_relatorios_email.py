@@ -8,6 +8,7 @@ import socket
 import threading
 import uuid
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -103,6 +104,13 @@ def smtp(monkeypatch):  # type: ignore[no-untyped-def]
 def ligado(repo):  # type: ignore[no-untyped-def]
     repo.config = Configuracoes(relatorio_email=True)
     return repo
+
+
+def _dominios(client, monkeypatch, valor: str) -> None:  # type: ignore[no-untyped-def]
+    """Define os domínios institucionais no Config da app (fonte única; sem ler o ambiente)."""
+    d = client.application.extensions["sisveiculos"]
+    lista = [x.strip().lstrip("@").lower() for x in valor.split(",") if x.strip()]
+    monkeypatch.setattr(d, "config", replace(d.config, email_dominios_relatorio=lista))
 
 
 def enviar(client, auth, quem, tipo="pendencias", **corpo):  # type: ignore[no-untyped-def]
@@ -499,7 +507,8 @@ def test_staff_nao_envia_a_solicitante_alheio(client, auth, c, ligado, repo, que
     assert repo.envios == {} and SmtpFalso.instancias == []
 
 
-def test_staff_envia_a_staff_e_a_si_mesmo_com_pii(client, auth, c, ligado):  # type: ignore[no-untyped-def]
+def test_staff_envia_a_staff_e_a_si_mesmo_com_pii(client, auth, c, ligado, monkeypatch):  # type: ignore[no-untyped-def]
+    _dominios(client, monkeypatch, "agu.gov.br")
     filtros = {"incluir_nomes": True, "incluir_trajeto": True}
     for destino in (c.adm, c.aut):
         r = enviar(client, auth, c.aut, "movimentacao", destinatario_id=destino.id, filtros=filtros)
@@ -586,8 +595,8 @@ def test_producao_recusa_none_com_credencial():  # type: ignore[no-untyped-def]
         "email_from": "a@b.gov.br",
         "email_security": "none",
     }
-    Config(**base).validar_producao()  # sem credencial: ok (relay interno)
-    for extra in ({"email_user": "u"}, {"email_password": "p"}):
+    # S-08: none é recusado em produção, com ou sem credencial.
+    for extra in ({}, {"email_user": "u"}, {"email_password": "p"}):
         with pytest.raises(RuntimeError, match="EMAIL_SECURITY=none"):
             Config(**base, **extra).validar_producao()
 
@@ -601,7 +610,8 @@ def test_bool_na_query(client, auth, c, repo, bruto, esperado):  # type: ignore[
 
 
 @pytest.mark.parametrize("valor", [True, False])
-def test_bool_no_corpo_json(client, auth, c, ligado, repo, valor):  # type: ignore[no-untyped-def]
+def test_bool_no_corpo_json(client, auth, c, ligado, repo, valor, monkeypatch):  # type: ignore[no-untyped-def]
+    _dominios(client, monkeypatch, "agu.gov.br")
     r = enviar(
         client,
         auth,
@@ -711,3 +721,112 @@ def test_marcar_enviado_apos_reaper_e_benigno(client, auth, c, ligado, repo, cap
 
 
 _HORA = timedelta(hours=1)
+
+
+# ------------------------------------------- S-01/S-02: destino institucional e papel
+def _erro(r: Any) -> dict[str, str]:
+    return r.get_json()["erro"]
+
+
+@pytest.mark.parametrize("filtro", ["incluir_nomes", "incluir_trajeto"])
+def test_pii_sem_dominio_configurado_e_bloqueado(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo, monkeypatch, filtro
+):
+    _dominios(client, monkeypatch, "")
+    r = enviar(
+        client, auth, c.aut, "movimentacao", destinatario_id=c.adm.id, filtros={filtro: True}
+    )
+    assert r.status_code == 422 and _erro(r)["codigo"] == "destinatario_externo_pii"
+    assert "Baixe o arquivo" in _erro(r)["mensagem"]
+    assert repo.envios == {} and SmtpFalso.instancias == []
+
+
+def test_pii_para_dominio_fora_da_lista_e_bloqueado(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo, monkeypatch
+):
+    _dominios(client, monkeypatch, "agu.gov.br")
+    repo.contas_auth[c.adm.id]["email"] = "fulano@gmail.com"
+    for email in ("fulano@gmail.com", "fulano@agu.gov.br.evil.com", "fulano@sub.agu.gov.br"):
+        repo.contas_auth[c.adm.id]["email"] = email
+        r = enviar(
+            client,
+            auth,
+            c.aut,
+            "movimentacao",
+            destinatario_id=c.adm.id,
+            filtros={"incluir_nomes": True},
+        )
+        assert r.status_code == 422 and _erro(r)["codigo"] == "destinatario_externo_pii", email
+    assert repo.envios == {} and SmtpFalso.instancias == []
+
+
+def test_pii_para_dominio_institucional_passa_sem_diferenciar_caixa(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo, monkeypatch
+):
+    _dominios(client, monkeypatch, " @AGU.gov.br , outro.gov.br")
+    repo.contas_auth[c.adm.id]["email"] = "Fulano@Agu.GOV.br"
+    r = enviar(
+        client, auth, c.aut, "movimentacao", destinatario_id=c.adm.id, filtros={"incluir_nomes": 1}
+    )
+    assert r.status_code == 400  # 1 não é bool/str: filtros só aceitam texto ou verdadeiro/falso
+    r = enviar(
+        client,
+        auth,
+        c.aut,
+        "movimentacao",
+        destinatario_id=c.adm.id,
+        filtros={"incluir_nomes": True},
+    )
+    assert r.status_code == 202
+
+
+def test_sem_pii_gmail_continua_permitido_sem_dominio_configurado(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo, monkeypatch
+):
+    _dominios(client, monkeypatch, "")
+    repo.contas_auth[c.adm.id]["email"] = "fulano@gmail.com"
+    r = enviar(client, auth, c.aut, "movimentacao", destinatario_id=c.adm.id)
+    assert r.status_code == 202
+
+
+def test_auditoria_so_vai_a_admin(client, auth, c, ligado, repo, monkeypatch):  # type: ignore[no-untyped-def]
+    _dominios(client, monkeypatch, "agu.gov.br")
+    r = enviar(client, auth, c.adm, "auditoria", destinatario_id=c.aut.id)
+    assert r.status_code == 422 and _erro(r)["codigo"] == "destinatario_sem_permissao"
+    assert repo.envios == {} and SmtpFalso.instancias == []
+    outro_admin = repo.novo_perfil("admin")
+    assert enviar(client, auth, c.adm, "auditoria", destinatario_id=c.adm.id).status_code == 202
+    assert (
+        enviar(client, auth, c.adm, "auditoria", destinatario_id=outro_admin.id).status_code == 202
+    )
+
+
+def test_auditoria_exige_dominio_institucional(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo, monkeypatch
+):
+    _dominios(client, monkeypatch, "")
+    r = enviar(client, auth, c.adm, "auditoria", destinatario_id=c.adm.id)
+    assert r.status_code == 422 and _erro(r)["codigo"] == "destinatario_externo_pii"
+    _dominios(client, monkeypatch, "agu.gov.br")
+    assert enviar(client, auth, c.adm, "auditoria", destinatario_id=c.adm.id).status_code == 202
+
+
+def test_dominios_institucionais_le_so_o_config_e_normaliza():  # type: ignore[no-untyped-def]
+    class Cfg:
+        email_dominios_relatorio = ("A.gov.br", "@b.gov.br", " ")
+
+    assert modulo.dominios_institucionais(Cfg()) == {"a.gov.br", "b.gov.br"}
+    assert modulo.dominios_institucionais(object()) == frozenset()  # falha fechada
+
+
+def test_variavel_de_ambiente_crua_nao_vale_fora_do_config(client, auth, c, ligado, monkeypatch):  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("EMAIL_DOMINIOS_RELATORIO", "agu.gov.br")  # o Config é a fonte
+    r = enviar(
+        client,
+        auth,
+        c.aut,
+        "movimentacao",
+        destinatario_id=c.adm.id,
+        filtros={"incluir_nomes": True},
+    )
+    assert r.status_code == 422 and _erro(r)["codigo"] == "destinatario_externo_pii"

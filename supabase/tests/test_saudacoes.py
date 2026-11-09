@@ -80,14 +80,15 @@ def test_rls_nega_anon_e_authenticated(papel: str) -> None:
         assert h.sqlstate(exc) == "42501", sql
 
 
-def test_rls_ligado_sem_policy() -> None:
+def test_rls_ligado_e_so_a_policy_de_negacao() -> None:
+    # Desde 20261116120000 existe UMA policy explicita (using false) para anon/authenticated (DB-03).
     with h.conectar() as c:
         (rls,) = c.execute("select relrowsecurity from pg_class where oid = 'public.saudacoes'::regclass").fetchone() or (
             False,
         )
-        (pol,) = c.execute("select count(*) from pg_policies where tablename = 'saudacoes'").fetchone() or (-1,)
+        pols = c.execute("select policyname from pg_policies where tablename = 'saudacoes'").fetchall()
     assert rls is True
-    assert pol == 0
+    assert pols == [("saudacoes_sem_acesso_api",)]
 
 
 def test_service_role_sem_truncate_e_update_so_nas_colunas_de_decisao() -> None:

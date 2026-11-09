@@ -8,6 +8,7 @@ vem da query/corpo, o limite de linhas e a auditoria. As rotas só traduzem HTTP
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -102,6 +103,13 @@ MIMETYPES = {
 }
 MAX_DESTINATARIOS = 500
 MSG_SEM_PERMISSAO = "Você não tem permissão para este relatório."
+MSG_DESTINO_SEM_PAPEL = (
+    "Este relatório só pode ser enviado a destinatários com permissão para consultá-lo."
+)
+MSG_DESTINO_EXTERNO = (
+    "Relatórios com nomes, trajetos ou trilha de auditoria só podem ser enviados por e-mail a "
+    "endereços de domínio institucional. Baixe o arquivo pela tela ou desmarque essas opções."
+)
 
 # Execução dos envios em segundo plano (a requisição devolve 202 sem esperar o SMTP). Um processo
 # gunicorn com 8 threads: 2 trabalhadores de e-mail bastam. Os testes substituem este objeto.
@@ -414,6 +422,27 @@ def _janela(args: Mapping[str, Any], hoje: date) -> tuple[date, date]:
     if (fim - inicio).days + 1 > DIAS_MAXIMOS:
         raise RequisicaoInvalida(f"O período máximo do relatório é de {DIAS_MAXIMOS} dias.")
     return inicio, fim
+
+
+def dominios_institucionais(config: object) -> frozenset[str]:
+    """Domínios de e-mail que podem receber relatório com dado pessoal (falha fechada).
+
+    Lê só `config.email_dominios_relatorio` (validado em `Config.validar_producao`). Sem o
+    campo ou vazio: conjunto vazio, ou seja, nenhum destinatário é considerado institucional.
+    """
+    itens = getattr(config, "email_dominios_relatorio", None) or ()
+    return frozenset(d.strip().lstrip("@").lower() for d in itens if str(d).strip())
+
+
+# Endereço estrito (ASCII, sem espaços/aspas/comentários): parte local conservadora e domínio
+# com ao menos um ponto. Qualquer coisa fora disso é tratada como externa (falha fechada).
+RE_EMAIL = re.compile(r"^[a-z0-9._%+\-]{1,64}@([a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def _dominio_do_email(email: str) -> str:
+    """Domínio do e-mail, ou '' se o endereço não for estritamente válido."""
+    texto = email.strip().lower()
+    return texto.rpartition("@")[2] if RE_EMAIL.fullmatch(texto) else ""
 
 
 def _agora_utc() -> datetime:
@@ -790,7 +819,7 @@ class ServicoRelatorios:
             validar_uuid(corpo.get("destinatario_id"), "destinatario_id"),
         )
 
-    def _email_do_destinatario(self, perfil: Perfil, destinatario_id: str) -> str:
+    def _email_do_destinatario(self, perfil: Perfil, destinatario_id: str, rel: Relatorio) -> str:
         if not self._staff(perfil) and destinatario_id != perfil.id:
             raise SemPermissao("Você só pode enviar relatórios para você mesmo.")
         alvo = self._repo.obter_perfil(destinatario_id)
@@ -804,6 +833,9 @@ class ServicoRelatorios:
                 "destinatario_sem_permissao_pii",
                 422,
             )
+        if alvo.role not in rel.papeis:
+            # Ex.: a trilha de auditoria é só de admin: nunca vai a um autorizador.
+            raise ErroApi(MSG_DESTINO_SEM_PAPEL, "destinatario_sem_permissao", 422)
         if self._auth is None:
             raise ErroInterno("Serviço de autenticação indisponível. Tente novamente.")
         conta = self._auth.obter_conta(destinatario_id)
@@ -811,12 +843,22 @@ class ServicoRelatorios:
             raise DestinatarioInvalido("O destinatário não possui e-mail cadastrado.")
         return conta.email
 
+    def _exigir_destino_institucional(self, rel: Relatorio, ef: dict[str, Any], email: str) -> None:
+        """LGPD: nomes, trajetos e a trilha de auditoria (responsáveis nominais) só por e-mail a
+        domínio institucional. Sem domínio configurado, nada disso sai por e-mail."""
+        com_pii = bool(ef.get("incluir_nomes") or ef.get("incluir_trajeto")) or (
+            rel.tipo == "auditoria"
+        )
+        if com_pii and _dominio_do_email(email) not in dominios_institucionais(self._cfg):
+            raise ErroApi(MSG_DESTINO_EXTERNO, "destinatario_externo_pii", 422)
+
     def enviar_email(self, perfil: Perfil, tipo: str, corpo: Any) -> dict[str, Any]:
         rel = self._exigir(tipo, perfil)
         self._exigir_email()
         formato, filtros, destinatario_id = self._corpo_envio(corpo)
-        email = self._email_do_destinatario(perfil, destinatario_id)
+        email = self._email_do_destinatario(perfil, destinatario_id, rel)
         ef = self._validar(rel, perfil, filtros)
+        self._exigir_destino_institucional(rel, ef, email)
         c = self._consultar(rel, perfil, ef)
         arq = self._gerar(c, formato)  # 422 se passar do limite, antes de gastar cota
 

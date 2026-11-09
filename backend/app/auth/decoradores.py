@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from functools import wraps
 from typing import Any, TypeVar
 
@@ -75,7 +75,9 @@ def _registrar_acesso(usuario_id: str, claims: dict[str, Any]) -> None:
         log.info("registro_acesso_falhou codigo=%s", type(e).__name__)
 
 
-def autenticar() -> Perfil:
+def autenticar(roles: Collection[str] = ()) -> Perfil:
+    """Autentica e, se `roles` for informado, checa o role ANTES de qualquer efeito colateral
+    (consulta de configurações, registro de acesso): quem não tem permissão não deixa rastro."""
     d = deps()
     usuario_id, claims = autenticar_token()
 
@@ -83,6 +85,8 @@ def autenticar() -> Perfil:
     # Mesma resposta para "sem perfil" e "inativo": não revela a existência da conta.
     if perfil is None or not perfil.ativo:
         raise SemPermissao("Conta sem acesso ao sistema.", codigo="conta_inativa")
+    if roles and perfil.role not in roles:
+        raise SemPermissao("Você não tem permissão para esta ação.")
     # MFA: com o recurso ligado, admin e autorizador precisam de sessão aal2 (TOTP).
     # Solicitante segue só com senha. A verificação é do servidor, sobre claims já validadas.
     exige_mfa = perfil.role in {"admin", "autorizador"} and d.repo.ler_configuracoes().mfa
@@ -103,9 +107,7 @@ def requer_auth(*roles: str) -> Callable[[F], F]:
     def deco(fn: F) -> F:
         @wraps(fn)
         def interno(*args: Any, **kwargs: Any) -> Any:
-            perfil = autenticar()
-            if roles and perfil.role not in roles:
-                raise SemPermissao("Você não tem permissão para esta ação.")
+            autenticar(roles)
             return fn(*args, **kwargs)
 
         return interno  # type: ignore[return-value]

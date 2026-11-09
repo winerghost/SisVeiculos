@@ -279,10 +279,11 @@ def test_auditoria_append_only(atores: Atores, sql: str) -> None:
         "delete from public.requisicoes",
         "delete from public.veiculos",
         "delete from public.perfis",
-        # `requisicoes` e referenciada por FK (checklists -> requisicoes; checklist_fotos -> checklists).
+        # `requisicoes` e referenciada por FK (checklists, notificacoes e localizacoes_viagem -> requisicoes;
+        # checklist_fotos -> checklists). Toda tabela referenciadora nova precisa entrar na lista abaixo.
         # TRUNCATE simples nela daria 0A000 do Postgres ANTES do gatilho; para provar o gatilho AG003
         # truncam-se as tabelas referenciadoras na mesma instrucao (o Postgres aceita) ou usa-se CASCADE.
-        "truncate public.requisicoes, public.checklists, public.checklist_fotos, public.notificacoes",
+        "truncate public.requisicoes, public.checklists, public.checklist_fotos, public.notificacoes, public.localizacoes_viagem",
         "truncate public.requisicoes cascade",
     ],
 )

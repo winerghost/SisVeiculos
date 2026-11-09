@@ -19,6 +19,8 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from app.errors import (
@@ -38,6 +40,9 @@ from app.repositorios.armazenamento import (
     caminho_foto,
 )
 from app.repositorios.base import Repositorio
+from app.services.imagem_checklist import MAX_SAIDA as MAX_BYTES_FOTO
+from app.services.imagem_checklist import sanitizar
+from app.services.imagem_perfil import ImagemInvalida
 from app.services.requisicoes import STAFF, ServicoRequisicoes
 from app.services.validacao_checklist import validar_momento, validar_registro, validar_upload
 
@@ -98,6 +103,93 @@ class LimiteEmissao:
 
 
 EMISSOES = LimiteEmissao()
+
+
+class FotosEmRegistro:
+    """Caminhos de fotos cujo registro está em andamento, em memória do processo.
+
+    Um pedido concorrente que reprove o MESMO caminho (ex.: tamanho divergente) não pode apagar
+    o objeto que este pedido já validou e está prestes a registrar. `trava` serializa a
+    reivindicação e a checagem+remoção. Vale por processo (a produção usa 1 worker gunicorn);
+    entre processos continua valendo a releitura do banco em `_foto_em_uso`.
+    """
+
+    def __init__(self) -> None:
+        self.trava = threading.RLock()
+        self._contagem: dict[str, int] = {}
+
+    @contextmanager
+    def reivindicar(self, caminhos: list[str]) -> Iterator[None]:
+        unicos = set(caminhos)
+        with self.trava:
+            for c in unicos:
+                self._contagem[c] = self._contagem.get(c, 0) + 1
+        try:
+            yield
+        finally:
+            with self.trava:
+                for c in unicos:
+                    restante = self._contagem.get(c, 1) - 1
+                    if restante > 0:
+                        self._contagem[c] = restante
+                    else:
+                        self._contagem.pop(c, None)
+
+    def outros(self, caminho: str) -> bool:
+        """Há outro pedido (além do que chama, que já reivindicou) com este caminho?"""
+        with self.trava:
+            return self._contagem.get(caminho, 0) > 1
+
+    def reiniciar(self) -> None:
+        with self.trava:
+            self._contagem.clear()
+
+
+EM_REGISTRO = FotosEmRegistro()
+
+
+class FotosSaneadas:
+    """Objetos já regravados (sanitizados) pelo servidor e ainda sem checklist registrado.
+
+    Guarda (tamanho original, tamanho sanitizado) por caminho. Permite a retentativa
+    idempotente depois de uma falha do banco: o objeto no Storage já tem o tamanho sanitizado,
+    mas o cliente ainda declara o original. Em memória, com prazo e teto; sem PII. Se o
+    processo reiniciar, a retentativa cai em `foto_divergente` e o cliente reenvia a foto.
+    """
+
+    def __init__(self, ttl: int = TTL_EMISSAO_S, maximo: int = 1024) -> None:
+        self._ttl = ttl
+        self._max = maximo
+        self._lock = threading.Lock()
+        self._itens: dict[str, tuple[int, int, float]] = {}
+
+    def marcar(self, caminho: str, original: int, sanitizado: int) -> None:
+        agora = time.monotonic()
+        with self._lock:
+            for k in [k for k, v in self._itens.items() if v[2] <= agora - self._ttl]:
+                del self._itens[k]
+            while len(self._itens) >= self._max:
+                del self._itens[next(iter(self._itens))]  # descarta o mais antigo
+            self._itens[caminho] = (original, sanitizado, agora)
+
+    def consultar(self, caminho: str) -> tuple[int, int] | None:
+        with self._lock:
+            item = self._itens.get(caminho)
+            if item is None or item[2] <= time.monotonic() - self._ttl:
+                return None
+            return item[0], item[1]
+
+    def esquecer(self, caminhos: list[str]) -> None:
+        with self._lock:
+            for c in caminhos:
+                self._itens.pop(c, None)
+
+    def reiniciar(self) -> None:
+        with self._lock:
+            self._itens.clear()
+
+
+SANEADAS = FotosSaneadas()
 
 
 class ServicoChecklist:
@@ -196,19 +288,23 @@ class ServicoChecklist:
     ) -> dict[str, Any]:
         req, momento = self._preparar_escrita(perfil, requisicao_id, momento)
         dados = validar_registro(corpo)
-        self._conferir_fotos(req["id"], momento, dados["fotos"])
-        checklist_id = self._repo.registrar_checklist(
-            requisicao_id=req["id"],
-            momento=momento,
-            combustivel=dados["combustivel"],
-            avarias=dados["avarias"],
-            descricao_avarias=dados["descricao_avarias"],
-            registrado_por=perfil.id,
-            fotos=[
-                {"id": f["id"], "mime_type": f["mime"], "tamanho_bytes": f["tamanho"]}
-                for f in dados["fotos"]
-            ],
-        )
+        caminhos = [caminho_foto(req["id"], momento, f["id"], f["mime"]) for f in dados["fotos"]]
+        with EM_REGISTRO.reivindicar(caminhos):  # protege as fotos contra remoção concorrente
+            prontas = self._conferir_fotos(req["id"], momento, dados["fotos"])  # fase 1
+            fotos = self._regravar(self._storage(), prontas) if prontas else []  # fase 2
+            checklist_id = self._repo.registrar_checklist(
+                requisicao_id=req["id"],
+                momento=momento,
+                combustivel=dados["combustivel"],
+                avarias=dados["avarias"],
+                descricao_avarias=dados["descricao_avarias"],
+                registrado_por=perfil.id,
+                fotos=[
+                    {"id": f["id"], "mime_type": f["mime"], "tamanho_bytes": f["tamanho"]}
+                    for f in fotos
+                ],
+            )
+        SANEADAS.esquecer(caminhos)
         atual = self._requisicoes.obter(perfil, req["id"])
         self._notificador.notificar("checklist.registrado", atual)  # só após o banco confirmar
         return {
@@ -224,11 +320,20 @@ class ServicoChecklist:
 
     def _conferir_fotos(
         self, requisicao_id: str, momento: str, fotos: list[dict[str, Any]]
-    ) -> None:
-        """Cada foto declarada precisa existir no Storage com o MIME e o tamanho declarados."""
+    ) -> list[dict[str, Any]]:
+        """Valida TODAS as fotos declaradas SEM regravar nada no Storage (fase 1).
+
+        Cada foto precisa existir com o MIME e o tamanho declarados, ter a assinatura (magic
+        bytes) certa e decodificar no Pillow. Só a foto reprovada é removida; as demais ficam
+        intactas, então o cliente reenvia o registro sem a foto ruim. Devolve, por foto, o
+        `tamanho` final (o da versão sanitizada, que vai para o banco) e `limpa`: os bytes
+        sanitizados a regravar na fase 2 (`_regravar`), ou None se o objeto já está sanitizado
+        (retentativa depois de uma falha do banco). Mantém em memória até 6 x 5 MB por pedido.
+        """
         if not fotos:
-            return
+            return []
         arm = self._storage()
+        prontas: list[dict[str, Any]] = []
         for pos, f in enumerate(fotos, start=1):
             caminho = caminho_foto(requisicao_id, momento, f["id"], f["mime"])
             meta = arm.metadados(caminho)
@@ -237,25 +342,86 @@ class ServicoChecklist:
                     f"A foto {pos} não foi enviada. Envie o arquivo antes de registrar.",
                     "foto_nao_enviada",
                 )
-            inicio = None
-            if meta["mime"] == f["mime"] and meta["tamanho"] == f["tamanho"]:
-                inicio = arm.ler_inicio(caminho, 16)
-                if inicio is not None and assinatura_confere(f["mime"], inicio):
-                    continue
-            # Reprovada (tipo, tamanho ou assinatura): remove o objeto para não deixar lixo,
-            # exceto se outro registro concorrente já o tornou parte de um checklist.
-            if not self._foto_em_uso(requisicao_id, momento, f["id"]):
-                arm.remover(caminho)
-            if inicio is not None:
-                raise RequisicaoInvalida(
-                    f"A foto {pos} não é uma imagem válida do tipo declarado.",
-                    "foto_invalida",
-                )
-            if meta["mime"] != f["mime"] or meta["tamanho"] != f["tamanho"]:
+            ja = SANEADAS.consultar(caminho)  # (tamanho original, tamanho sanitizado) | None
+            ja_sanitizada = ja is not None and meta["tamanho"] == ja[1]
+            # Tamanho declarado válido: o do objeto como está OU, se o servidor já o sanitizou
+            # numa tentativa anterior, o original ou o sanitizado (retentativa idempotente).
+            tamanho_ok = meta["tamanho"] == f["tamanho"] or (
+                ja_sanitizada and ja is not None and f["tamanho"] in ja
+            )
+            if meta["mime"] != f["mime"] or not tamanho_ok:
+                self._reprovar(arm, caminho, requisicao_id, momento, f["id"])
                 raise RequisicaoInvalida(
                     f"A foto {pos} não confere com o arquivo enviado (tipo ou tamanho).",
                     "foto_divergente",
                 )
+            inicio = arm.ler_inicio(caminho, 16)
+            if inicio is None:
+                raise RequisicaoInvalida(
+                    f"A foto {pos} não foi enviada. Envie o arquivo antes de registrar.",
+                    "foto_nao_enviada",
+                )
+            if not assinatura_confere(f["mime"], inicio):
+                self._reprovar(arm, caminho, requisicao_id, momento, f["id"])
+                raise RequisicaoInvalida(
+                    f"A foto {pos} não é uma imagem válida do tipo declarado.",
+                    "foto_invalida",
+                )
+            if ja_sanitizada:
+                prontas.append({**f, "tamanho": meta["tamanho"], "caminho": caminho, "limpa": None})
+                continue
+            limpa = self._sanitizar(arm, caminho, requisicao_id, momento, f, pos)
+            prontas.append(
+                {**f, "tamanho": len(limpa), "caminho": caminho, "limpa": limpa, "original": f}
+            )
+        return prontas
+
+    def _sanitizar(
+        self,
+        arm: Armazenamento,
+        caminho: str,
+        requisicao_id: str,
+        momento: str,
+        f: dict[str, Any],
+        pos: int,
+    ) -> bytes:
+        """Baixa, decodifica e recodifica a foto em memória (não grava nada)."""
+        original = arm.ler_tudo(caminho, MAX_BYTES_FOTO)
+        try:
+            if original is None or len(original) > MAX_BYTES_FOTO:
+                raise ImagemInvalida
+            return sanitizar(original, f["mime"])
+        except ImagemInvalida:
+            self._reprovar(arm, caminho, requisicao_id, momento, f["id"])
+            raise RequisicaoInvalida(
+                f"A foto {pos} não é uma imagem válida (use JPEG, PNG ou WebP, sem animação).",
+                "foto_invalida",
+            ) from None
+
+    @staticmethod
+    def _regravar(arm: Armazenamento, prontas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Fase 2: regrava as versões sanitizadas, imediatamente antes do insert no banco.
+
+        Anota (original, sanitizado) em SANEADAS para que uma retentativa, após falha do banco,
+        reconheça o objeto como já sanitizado em vez de reprová-lo como divergente.
+        """
+        for p in prontas:
+            if p["limpa"] is None:
+                continue
+            arm.sobrescrever(p["caminho"], p["limpa"], p["mime"])
+            SANEADAS.marcar(p["caminho"], p["original"]["tamanho"], len(p["limpa"]))
+        return [{"id": p["id"], "mime": p["mime"], "tamanho": p["tamanho"]} for p in prontas]
+
+    def _reprovar(
+        self, arm: Armazenamento, caminho: str, requisicao_id: str, momento: str, foto_id: str
+    ) -> None:
+        """Remove o objeto reprovado, salvo se estiver em uso: registrado em checklist ou com
+        outro registro em andamento neste processo (EM_REGISTRO). A checagem e a remoção ficam
+        sob a mesma trava em que o outro pedido reivindica o caminho."""
+        with EM_REGISTRO.trava:
+            if EM_REGISTRO.outros(caminho) or self._foto_em_uso(requisicao_id, momento, foto_id):
+                return
+            arm.remover(caminho)
 
     def _foto_em_uso(self, requisicao_id: str, momento: str, foto_id: str) -> bool:
         """Relê o banco: o momento já tem checklist ou a foto já consta em checklist_fotos.

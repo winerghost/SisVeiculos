@@ -219,6 +219,7 @@ def test_payload_minimo_por_allowlist() -> None:
 def webhook(handler: Any, **kw: Any) -> N8nWebhook:
     cliente = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
     kw.setdefault("backoff", 0.01)
+    kw.setdefault("resolvedor", lambda _h, _p: ["93.184.216.34"])  # DNS público, sem rede
     return N8nWebhook(URL, TOKEN, cliente=cliente, **kw)
 
 
@@ -588,7 +589,11 @@ def test_create_app_liga_ao_desistir_ao_alerta_de_sistema(monkeypatch: pytest.Mo
     capturado: dict[str, Any] = {}
 
     def falso(
-        url: str, token: str, ao_desistir: Any = None, hmac_secret: str = ""
+        url: str,
+        token: str,
+        ao_desistir: Any = None,
+        hmac_secret: str = "",
+        hosts_permitidos: Any = (),
     ) -> NotificadorNulo:
         capturado["cb"] = ao_desistir
         return NotificadorNulo()

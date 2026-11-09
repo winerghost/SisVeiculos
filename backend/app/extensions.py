@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass, field
+from functools import lru_cache
+from ipaddress import IPv4Network, IPv6Network
 from typing import TYPE_CHECKING
 
 from flask import Flask, current_app, g, request
@@ -21,17 +24,43 @@ if TYPE_CHECKING:
     from app.ia.servico import ServicoIA
 
 
-def ip_cliente() -> str:
-    """IP real: CF-Connecting-IP (Cloudflare) com fallback ao remote_addr.
+@lru_cache(maxsize=8)
+def _redes(cidrs: tuple[str, ...]) -> tuple[IPv4Network | IPv6Network, ...]:
+    redes: list[IPv4Network | IPv6Network] = []
+    for c in cidrs:
+        try:
+            redes.append(ipaddress.ip_network(c, strict=False))
+        except ValueError:
+            continue  # CIDR inválido é barrado em validar_producao; aqui apenas não confia
+    return tuple(redes)
 
-    O backend só é alcançável via nginx do frontend em 127.0.0.1, atrás do Cloudflare;
-    sem esse proxy o cabeçalho seria forjável. O nginx do frontend passará a sobrescrever
-    CF-Connecting-IP (valor confiável vindo do Cloudflare, nunca o enviado pelo cliente),
-    de modo que o Flask só enxergue o cabeçalho montado pelo proxy confiável. Este código
-    não valida a origem do cabeçalho: a garantia é da borda (nginx), e a porta do backend
-    nunca deve ser publicada.
+
+def _proxy_confiavel(remote_addr: str | None) -> bool:
+    if not remote_addr:
+        return False
+    try:
+        ip = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    cidrs = tuple(deps().config.trusted_proxy_cidrs)
+    return any(ip.version == r.version and ip in r for r in _redes(cidrs))
+
+
+def ip_cliente() -> str:
+    """IP do cliente. Só confia em CF-Connecting-IP se o par imediato (remote_addr) for um dos
+    proxies configurados (`TRUSTED_PROXY_CIDRS`; padrão: sub-rede do docker-compose onde roda o
+    nginx do frontend, mais loopback). O nginx valida a origem (set_real_ip_from) e sobrescreve
+    o cabeçalho com o IP real; qualquer outro par (ex.: acesso direto à porta do backend) tem o
+    cabeçalho ignorado e vale o remote_addr, evitando forjar IP no rate limit e no histórico.
     """
-    return request.headers.get("CF-Connecting-IP") or request.remote_addr or "desconhecido"
+    remoto = request.remote_addr
+    if _proxy_confiavel(remoto):
+        cabecalho = (request.headers.get("CF-Connecting-IP") or "").strip()
+        try:
+            return str(ipaddress.ip_address(cabecalho))  # forma canônica; lixo/vazio cai no remoto
+        except ValueError:
+            pass
+    return remoto or "desconhecido"
 
 
 def chave_usuario() -> str:

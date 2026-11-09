@@ -383,7 +383,10 @@ class SupabaseRepositorio:
             lambda: self._c.table("configuracoes").select(COLUNAS_CONFIG).limit(1).execute()
         )
         if not res.data:
-            return Configuracoes()  # sem linha: tudo desligado
+            # Fail-closed: a linha única nunca some em operação normal (check + triggers no
+            # banco). Sem ela, tratar "tudo desligado" dispensaria o MFA; melhor recusar.
+            log.error("configuracoes_sem_linha")
+            raise ErroInterno("Configurações indisponíveis. Tente novamente.")
         return _configuracoes(res.data[0])
 
     def listar_veiculos(self) -> list[dict[str, Any]]:

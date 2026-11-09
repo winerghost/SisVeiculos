@@ -34,8 +34,10 @@ jobs:
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Obrigatório apenas se o repositório for de uma organização GitHub
-          # (licença gratuita em gitleaks.io); em conta pessoal pode ficar vazio.
+          # Repositório em conta PESSOAL (winerghost, type=User): a licença não é exigida e o
+          # secret pode ficar vazio. Se o repo migrar para uma ORGANIZAÇÃO, criar o secret
+          # GITLEAKS_LICENSE (licença gratuita em gitleaks.io) ou o job passa a falhar.
+          # A action está fixada por SHA de commit.
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   # Decide se os jobs de Supabase local (banco, contrato) precisam rodar.
@@ -63,7 +65,7 @@ jobs:
             echo "Base indisponivel; rodando por seguranca."
             echo "rodar=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git diff --name-only "$base" HEAD | grep -qE '^(supabase/|backend/app/(repositorios|services|errors)|scripts/seed-admin\.sh$|backend/tests/(.*contrato.*|guarda_banco|test_guarda_banco|test_integracao_|conftest\.py$)|backend/requirements.*\.txt$|\.github/workflows/ci\.yml$)'; then
+          if git diff --name-only "$base" HEAD | grep -qE '^(supabase/|backend/app/(repositorios/|services|errors)|scripts/seed-admin\.sh$|backend/tests/(.*contrato.*|guarda_banco|test_guarda_banco|test_integracao_|conftest\.py$)|backend/requirements.*\.txt$|\.github/workflows/ci\.yml$)'; then
             echo "rodar=true" >> "$GITHUB_OUTPUT"
           else
             echo "Sem mudancas relevantes ao banco/contrato; pulando."
@@ -103,6 +105,19 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: psql "$TEST_DATABASE_URL" -c "comment on database postgres is 'sisveiculos:descartavel'"
+      # N-04: o expurgo de localizacoes depende do agendamento pg_cron; sem a linha em
+      # cron.job a retencao (LGPD) deixaria de rodar em silencio.
+      - name: Verificar agendamento do expurgo de localizacoes (pg_cron)
+        env:
+          # Credenciais padrao FIXAS e publicas do Supabase local (nao e segredo).
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: |
+          n="$(psql "$TEST_DATABASE_URL" -tA -c "select count(*) from cron.job where jobname = 'expurgar-localizacoes'")"
+          if [ "$n" != "1" ]; then
+            echo "::error::Falta o job pg_cron 'expurgar-localizacoes' em cron.job (encontrado: ${n:-0}). Confira a migration 20261116120100_agenda_expurgo_localizacoes.sql e a extensao pg_cron."
+            exit 1
+          fi
+          echo "Job expurgar-localizacoes presente em cron.job."
       - name: Testes de banco
         env:
           # Credenciais padrao FIXAS e publicas do Supabase local (nao e segredo).
@@ -204,6 +219,11 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
+      # O lock com hashes é o que vai para a imagem: garantir que instala e que não tem CVE.
+      - name: Lock com hashes instala (--require-hashes) em venv limpo
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-lock"
+          "$RUNNER_TEMP/venv-lock/bin/pip" install --require-hashes -r requirements.lock.txt
       - run: ruff check .
       # Regras S (bandit); asserts e senhas fictícias em testes são aceitos.
       - run: >
@@ -214,7 +234,7 @@ jobs:
           .
       - run: black --check .
       - run: pytest
-      - run: pip-audit -r requirements.txt
+      - run: pip-audit --require-hashes --disable-pip -r requirements.lock.txt
 
   frontend:
     needs: detectar
@@ -231,18 +251,22 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # Só dependências de produção (as de dev não vão para o export estático).
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run build
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
-      - run: npm audit --audit-level=high
-      - run: npx playwright install --with-deps chromium
+      # Versão do Playwright (e do Chromium que ela baixa) vem do package-lock.json via npm ci;
+      # usa o binário local, nunca `npx` (que poderia baixar outra versão).
+      - run: ./node_modules/.bin/playwright install --with-deps chromium
       - run: npm run test:e2e
 
   trivy:
     needs: detectar
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Trivy fs (dependências, IaC, segredos)

@@ -286,7 +286,7 @@ def test_rpc_nao_escreve_em_perfis(usuario: uuid.UUID, admin: uuid.UUID) -> None
 
 def test_migration_e_idempotente() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
-    with h.conectar() as c:  # autocommit: reaplicar o SQL inteiro duas vezes nao pode falhar
+    with h.reaplicando_migration() as c:  # reaplicar o SQL inteiro duas vezes nao pode falhar
         c.execute(sql)
         c.execute(sql)
         (n,) = c.execute(

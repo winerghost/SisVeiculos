@@ -19,11 +19,11 @@ Guia para quem **não é técnico**. Serve para apagar, **uma única vez**, os d
 | Uso de IA (contagem de tokens, sem texto) | Convites |
 | Fotos de perfil (registros) | Contas do Supabase Auth |
 | Acessos de login | |
-| Auditoria (se `v_apagar_auditoria := true`, o padrão) | |
+| Auditoria (só se `v_apagar_auditoria := true`; **não é o padrão**) | |
 
 São 10 tabelas apagadas (`checklist_fotos`, `checklists`, `notificacoes`, `localizacoes_viagem`, `requisicoes`, `perfil_fotos`, `acessos_login`, `envios_email`, `ia_uso`, `auditoria`) e 5 mantidas (`perfis`, `veiculos`, `configuracoes`, `ia_configuracoes`, `convites`). Critério: dado **operacional** gerado pelos testes some; **cadastro e configuração** ficam. As notificações e as localizações de teste são recentes (menos de 30 dias / 12 meses), então o expurgo normal do sistema não as apagaria; por isso o script desliga, só durante a transação, o gatilho de proteção de cada tabela e o religa igual. O prazo de retenção de 12 meses das localizações volta a valer depois.
 
-**Auditoria:** depois da limpeza real, a auditoria mostra **1 linha** (ou **N+1** se você preservou a auditoria, com N as linhas de antes): o registro da própria limpeza (sem dados pessoais, com as contagens apagadas). Com `v_apagar_auditoria := true`, somem junto os eventos `admin_semeado` e `perfil_criado` dos perfis **reais** (o histórico de como as contas verdadeiras nasceram). Se quiser guardar esse histórico, use `v_apagar_auditoria := false`: a auditoria inteira é preservada (e ganha a linha da limpeza). Os registros de teste ficam misturados, mas nada se perde.
+**Auditoria:** depois da limpeza real, a auditoria mostra **1 linha** (ou **N+1** no padrão, que preserva a auditoria, com N as linhas de antes): o registro da própria limpeza (sem dados pessoais, com as contagens apagadas). Com `v_apagar_auditoria := true`, somem junto os eventos `admin_semeado` e `perfil_criado` dos perfis **reais** (o histórico de como as contas verdadeiras nasceram). Esse histórico é guardado no padrão `v_apagar_auditoria := false`: a auditoria inteira é preservada (e ganha a linha da limpeza). Os registros de teste ficam misturados, mas nada se perde.
 
 **Fora do escopo (continuam existindo):**
 - Os **arquivos** das fotos (buckets `avatares` e `checklists`) **não** são apagados pelo SQL. Enquanto não forem esvaziados (passo 5), os arquivos órfãos continuam guardando **dado pessoal**. Conferido nas migrations: são os **únicos** buckets criados (não há bucket de staging de fotos, nem para o motorista: o checklist dele usa o bucket `checklists`). Confira mesmo assim no painel se existe algum outro; se existir, esvazie-o também.
@@ -71,12 +71,12 @@ Clique em **Run**. O Studio **provavelmente** mostrará um aviso sobre `DELETE` 
 
 A dupla confirmação (frase + número **total**) existe para que um texto salvo no Studio, rodado por engano depois, **não apague nada**: o número só vale para o momento do ensaio (qualquer linha nova em qualquer das 10 tabelas o invalida; notificações novas surgem a cada ação no sistema, por isso o backend deve estar parado). Mesmo assim, depois de rodar, **APAGUE o snippet salvo no Studio** (menu do snippet > Delete). Se o campo ficar vazio (`NULL`), o script recusa.
 
-Deu certo quando: não aparece erro e o resultado final é uma tabela em que `checklist_fotos`, `checklists`, `notificacoes`, `localizacoes_viagem`, `requisicoes`, `perfil_fotos`, `acessos_login`, `envios_email` e `ia_uso` mostram **0**; `auditoria` mostra **1** (o registro da limpeza; **N+1** se você preservou a auditoria); `perfis`, `veiculos`, `configuracoes`, `ia_configuracoes` e `convites` mostram as mesmas quantidades do ensaio; e a coluna `apagadas_agora` mostra quantas linhas foram apagadas em cada tabela. **Copie/fotografe esse resultado.**
+Deu certo quando: não aparece erro e o resultado final é uma tabela em que `checklist_fotos`, `checklists`, `notificacoes`, `localizacoes_viagem`, `requisicoes`, `perfil_fotos`, `acessos_login`, `envios_email` e `ia_uso` mostram **0**; `auditoria` mostra **N+1** (as N linhas de antes mais o registro da limpeza; **1** só se você apagou a auditoria de propósito); `perfis`, `veiculos`, `configuracoes`, `ia_configuracoes` e `convites` mostram as mesmas quantidades do ensaio; e a coluna `apagadas_agora` mostra quantas linhas foram apagadas em cada tabela. **Copie/fotografe esse resultado.**
 
 **Agora religue o backend** (`docker compose start backend`): os passos 6 e 7 precisam dele no ar. Só depois de conferir o resultado acima.
 
 Outras opções (no topo do arquivo):
-- `v_apagar_auditoria := false` mantém a auditoria.
+- `v_apagar_auditoria` vem `false` (a auditoria é mantida). Para apagá-la também, mude para `true` **e** escreva a frase de confirmação com ` E AUDITORIA` no fim (`APAGAR DADOS DE TESTE <ref> E AUDITORIA`); sem isso o script recusa.
 - `v_lacrar := true` já grava o lacre (passo 8). **Grave o lacre assim que houver uso real**, e apague sempre o snippet salvo. **Sugerido quando esta for a limpeza final e o lançamento for imediato.** O ensaio, com `v_lacrar := true`, também prova que o seu usuário consegue gravar o lacre (e desfaz).
 
 ### 5. Esvazie os buckets de arquivos

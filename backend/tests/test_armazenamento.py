@@ -160,3 +160,39 @@ def test_storage_indisponivel_e_503_indisponivel_sem_vazar(caplog):  # type: ign
             chamada()
         assert (e.value.status, e.value.codigo) == (503, "indisponivel")
     assert "token=abc" not in caplog.text and "foto.png" not in caplog.text
+
+
+# ------------------------------------------------------------------ ler_tudo / sobrescrever
+def test_ler_tudo_200_devolve_corpo_e_corta_acima_do_maximo():
+    arm, _ = adaptador(BucketFalso(), lambda _r: httpx.Response(200, content=bytes(100)))
+    assert arm.ler_tudo("r/s/a.png", 1000) == bytes(100)
+    assert len(arm.ler_tudo("r/s/a.png", 10) or b"") == 11  # maximo + 1: o chamador recusa
+
+
+@pytest.mark.parametrize("status", [404, 403, 500])
+def test_ler_tudo_status_de_erro_devolve_none(status):  # type: ignore[no-untyped-def]
+    arm, _ = adaptador(BucketFalso(), lambda _r: httpx.Response(status, content=b"x"))
+    assert arm.ler_tudo("r/s/a.png", 10) is None
+
+
+def test_sobrescrever_usa_upsert_true_e_mime():
+    chamadas: list[tuple[Any, ...]] = []
+
+    class BucketComUpload(BucketFalso):
+        def upload(self, *args: Any) -> None:
+            chamadas.append(args)
+
+    arm, _ = adaptador(BucketComUpload())
+    arm.sobrescrever("r/s/a.png", b"dados", "image/png")
+    assert chamadas == [("r/s/a.png", b"dados", {"content-type": "image/png", "upsert": "true"})]
+
+
+def test_sobrescrever_falha_vira_indisponivel_sem_vazar(caplog):  # type: ignore[no-untyped-def]
+    class BucketQuebrado(BucketFalso):
+        def upload(self, *args: Any) -> None:
+            raise RuntimeError("falha em r/s/segredo.png")
+
+    arm, _ = adaptador(BucketQuebrado())
+    with pytest.raises(ErroInterno) as e:
+        arm.sobrescrever("r/s/segredo.png", b"x", "image/png")
+    assert e.value.status == 503 and "segredo" not in caplog.text

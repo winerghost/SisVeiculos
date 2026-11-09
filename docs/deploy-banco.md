@@ -150,6 +150,20 @@ supabase stop --no-backup
 - TRUNCATE com FK: `requisicoes` (e `perfis`, `veiculos`) sao referenciadas por FK (ex.: `checklists`). O TRUNCATE simples e recusado pelo proprio Postgres (SQLSTATE `0A000`) ANTES do gatilho; o gatilho `AG003` (ENABLE ALWAYS) so dispara quando o TRUNCATE chega a executar, p.ex. `truncate ... cascade` ou truncando as tabelas referenciadoras na mesma instrucao. Em todos os casos o TRUNCATE continua bloqueado; os testes provam `AG003` nesses dois caminhos e aceitam `AG003` ou `0A000` no TRUNCATE simples.
 - Estabilidade (Windows/WSL): a VM do Docker Desktop pode congelar ~50 s sob carga e o relogio do container fica defasado/e corrigido depois. Isso ja causou falha espuria em testes de concorrencia (timeouts curtos de barreira/join) e uma vez uma violacao de `chegada_real_em > saida_real_em` por o relogio recuar entre duas transacoes. Os timeouts dos testes de concorrencia foram ampliados (barreira 60 s, join 90 s); se uma falha isolada desse tipo reaparecer localmente, rode de novo antes de investigar o banco.
 - Como reconhecer o relogio defasado do Docker: falha isolada com violacao de `ck_requisicoes_chegada_apos_saida` / `chegada_real_em > saida_real_em` (o DETAIL mostra horarios que recuam) ou timeout de barreira/join nos testes de concorrencia, em testes que passam ao repetir. Correcao: `wsl --shutdown` e reiniciar o Docker Desktop (ou so reiniciar o Docker Desktop), subir o Supabase de novo, RECRIAR o marcador do banco e rodar `pytest --lf` para repetir so as falhas. O `ci.yml` roda em Linux (runner GitHub) e nao e afetado por isso.
+- Testes de "migration idempotente" nunca podem deixar a reaplicacao no banco: reaplicar uma migration antiga sobrescreve definicoes mais novas (ex.: o gatilho `trg_auditoria_notificar` perdia os avisos de motorista e quebrava `test_notificacoes_motorista.py`). Use `h.reaplicando_migration()` (`dbhelpers.py`), que termina sempre em ROLLBACK.
+- Dedupe de `reservar_envio_email` (migration 20261115120000): envio pendente/enviando IDENTICO nos ultimos 30 s e devolvido sem consumir cota. Testes de cota precisam variar `filtros` a cada chamada; a dedupe tem teste proprio em `test_rpcs_atomicas.py`.
+
+### Conferir o job de expurgo de localizacoes (N-04)
+
+A migration `20261116120100_agenda_expurgo_localizacoes.sql` agenda o expurgo mensal via `pg_cron`; se a extensao faltar, so emite NOTICE e nao agenda nada. Depois de todo `supabase db push` (e no stack local), confira:
+
+```
+select jobid, jobname, schedule, command, active from cron.job where jobname = 'expurgar-localizacoes';
+-- esperado: 1 linha, schedule '23 3 1 * *', command 'select public.expurgar_localizacoes_vencidas()', active = t
+-- local sem psql: docker exec supabase_db_<project_id> psql -U postgres -c "<consulta acima>"
+```
+
+Zero linhas: habilite `pg_cron` no painel do Supabase (Database > Extensions) e reaplique o agendamento por NOVA migration (nunca editando a existente). Ultimas execucoes: `select status, start_time, return_message from cron.job_run_details order by start_time desc limit 5;`.
 
 ## Abastecimento e manutencao (migrations 25 a 28) — PENDENTE (versao 1.1)
 

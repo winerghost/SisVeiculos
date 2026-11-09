@@ -151,10 +151,16 @@ def test_colunas_tipos_e_caminho_gerado() -> None:
 def test_fk_para_perfis_com_restrict() -> None:
     with h.conectar() as c:
         row = c.execute(
-            "select confrelid::regclass::text, confdeltype from pg_constraint "
-            "where conrelid='public.perfil_fotos'::regclass and contype='f'"
+            "select conname, confrelid::regclass::text, confdeltype from pg_constraint "
+            "where conrelid='public.perfil_fotos'::regclass and contype='f' order by conname"
         ).fetchall()
-    assert row == [("perfis", "r"), ("perfis", "r")]  # usuario_id e removida_por (25c)
+    # usuario_id, removida_por (25c) e criada_por (migration 20261113120100, troca de foto por admin):
+    # todas para perfis com ON DELETE RESTRICT.
+    assert row == [
+        ("perfil_fotos_criada_por_fkey", "perfis", "r"),
+        ("perfil_fotos_removida_por_fkey", "perfis", "r"),
+        ("perfil_fotos_usuario_id_fkey", "perfis", "r"),
+    ]
 
 
 def test_indice_unico_parcial_por_usuario_ativo() -> None:
@@ -612,8 +618,13 @@ def test_ck_auditoria_preserva_valores_antigos_e_inclui_os_novos() -> None:
             ).fetchall()
         )
     assert len(ACOES_ANTIGAS) == 15 and len(TABELAS_ANTIGAS_AUD) == 6
-    # Contagem exata: 17 acoes / 7 tabelas + relatorios (19 acoes / 9 tabelas) + motorista_designado (20 acoes).
-    assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))) == 20
+    # Contagem exata: 20 acoes ate motorista_designado; depois localizacao_registrada/_lida/_expurgada
+    # (migrations 20261112/20261113/20261114) e saudacao_excluida (20261115120400) = 24 acoes.
+    acoes = set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))
+    assert len(acoes) == 24
+    for v in ("motorista_designado", "localizacao_registrada", "localizacao_lida",
+              "localizacao_expurgada", "saudacao_excluida"):
+        assert v in acoes, v
     assert len(set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_tabela"]))) == 9
     for v in (*ACOES_ANTIGAS, "foto_perfil_alterada", "foto_perfil_removida",
               "relatorio_gerado", "relatorio_enviado"):

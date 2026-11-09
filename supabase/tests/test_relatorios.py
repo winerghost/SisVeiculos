@@ -16,6 +16,7 @@ ATENCAO: o DISABLE TRIGGER pega lock forte durante o teste: nao rode em paralelo
 
 from __future__ import annotations
 
+import itertools
 import json
 import threading
 import uuid
@@ -224,6 +225,12 @@ def test_indices_criados() -> None:
 
 
 def test_migration_e_idempotente(real: "psycopg.Connection") -> None:
+    # A migration recria ck_auditoria_acao com a lista de acoes da EPOCA (19 acoes); linhas de acoes
+    # posteriores (localizacao_*, saudacao_excluida, geradas por outros testes no mesmo banco) a
+    # violariam. Dentro desta transacao, que termina em ROLLBACK (fixture `real`), limpa-se a
+    # auditoria so para a reaplicacao poder validar a constraint antiga; nada persiste.
+    real.execute("alter table public.auditoria disable trigger user")
+    real.execute("delete from public.auditoria")
     real.execute(MIGRATION)
     real.execute(MIGRATION)
 
@@ -829,10 +836,23 @@ def envio(real: "psycopg.Connection") -> Iterator[dict]:
     yield {"c": real, "sol": sol, "dest": dest, "adm": adm, "dest_inativo": dest_inativo, "sol_inativo": sol_inativo}
 
 
+_SEQ_FILTROS = itertools.count(1)
+
+
 def reservar(e: dict, max_h: int = 1000, dest: uuid.UUID | None = None, sol: uuid.UUID | None = None,
-             tipo: str = "movimentacao", formato: str = "csv", filtros: dict | None = None) -> dict:
+             tipo: str = "movimentacao", formato: str = "csv", filtros: dict | None = None,
+             distinto: bool = False) -> dict:
+    """Reserva um envio. `distinto=True` varia os filtros a cada chamada.
+
+    Desde a migration 20261115120000 um envio pendente/enviando IDENTICO (mesmo solicitante,
+    destinatario, tipo, formato e filtros) nos ultimos 30 s e deduplicado: devolve o existente e NAO
+    consome cota. Testes de cota precisam de envios diferentes; a dedupe tem teste proprio em
+    test_rpcs_atomicas.py.
+    """
+    if filtros is None:
+        filtros = {"unidade": "PU", "n": next(_SEQ_FILTROS)} if distinto else {"unidade": "PU"}
     return chamar(e["c"], "select public.reservar_envio_email(%s, %s, %s, %s, %s::jsonb, %s)",
-                  sol or e["sol"], dest or e["dest"], tipo, formato, json.dumps(filtros or {"unidade": "PU"}), max_h)
+                  sol or e["sol"], dest or e["dest"], tipo, formato, json.dumps(filtros), max_h)
 
 
 def na_hora(c: "psycopg.Connection") -> int:
@@ -841,7 +861,7 @@ def na_hora(c: "psycopg.Connection") -> int:
 
 def test_reservar_cria_pendente(envio: dict) -> None:
     r = reservar(envio)
-    assert set(r) == {"id"}
+    assert set(r) == {"id", "duplicado"} and r["duplicado"] is False
     row = envio["c"].execute("select status, tentativas, erro_codigo, enviado_em, solicitado_por, destinatario_id, "
                              "tipo_relatorio, formato, filtros from public.envios_email where id = %s", (r["id"],)).fetchone()
     assert row == ("pendente", 0, None, None, envio["sol"], envio["dest"], "movimentacao", "csv", {"unidade": "PU"})
@@ -872,11 +892,11 @@ def test_reservar_recurso_desligado(envio: dict) -> None:
 
 def test_reservar_cota_por_hora(envio: dict) -> None:
     base = na_hora(envio["c"])
-    reservar(envio, max_h=base + 2)
-    reservar(envio, max_h=base + 2)
+    reservar(envio, max_h=base + 2, distinto=True)
+    reservar(envio, max_h=base + 2, distinto=True)
     with pytest.raises(psycopg.Error) as e:
         with envio["c"].transaction():  # savepoint: a transacao de teste segue utilizavel
-            reservar(envio, max_h=base + 2)
+            reservar(envio, max_h=base + 2, distinto=True)
     assert h.sqlstate(e) == "AG025"
     assert na_hora(envio["c"]) == base + 2  # a recusada nao grava
 
@@ -884,17 +904,17 @@ def test_reservar_cota_por_hora(envio: dict) -> None:
 def test_reservar_cota_so_conta_ultima_hora(envio: dict) -> None:
     c = envio["c"]
     base = na_hora(c)
-    r = reservar(envio, max_h=base + 1)
+    r = reservar(envio, max_h=base + 1, distinto=True)
     with pytest.raises(psycopg.Error):
-        reservar(envio, max_h=base + 1)
+        reservar(envio, max_h=base + 1, distinto=True)
     c.rollback()
     c.execute("update public.configuracoes set relatorio_email = true, alterado_por = %s", (envio["adm"],))
-    r = reservar(envio, max_h=base + 1)
+    r = reservar(envio, max_h=base + 1, distinto=True)
     # empurra o registro para fora da janela: criado_em e imutavel por trigger, entao desliga so o gatilho de validacao
     c.execute("alter table public.envios_email disable trigger trg_envios_email_validar")
     c.execute("update public.envios_email set criado_em = clock_timestamp() - interval '61 minutes' where id = %s", (r["id"],))
     assert na_hora(c) == base
-    reservar(envio, max_h=base + 1)  # volta a caber
+    reservar(envio, max_h=base + 1, distinto=True)  # volta a caber
 
 
 @pytest.mark.parametrize("kw", [
@@ -919,7 +939,9 @@ def test_reservar_filtros_nao_objeto_e_nulos(envio: dict) -> None:
     assert h.sqlstate(e) == "AG027"
     c.rollback()
     c.execute("update public.configuracoes set relatorio_email = true, alterado_por = %s", (envio["adm"],))
-    r = chamar(c, "select public.reservar_envio_email(%s, %s, 'resumo', 'xlsx', null, 10)", envio["sol"], envio["dest"])
+    # cota global folgada em relacao ao que outros testes ja reservaram na ultima hora (banco compartilhado)
+    r = chamar(c, "select public.reservar_envio_email(%s, %s, 'resumo', 'xlsx', null, %s)",
+               envio["sol"], envio["dest"], min(1000, na_hora(c) + 10))
     assert c.execute("select filtros, formato from public.envios_email where id = %s", (r["id"],)).fetchone() == ({}, "xlsx")
 
 
@@ -1064,17 +1086,21 @@ def test_cota_concorrente_so_uma_passa() -> None:
     resultados: list[str] = []
     barreira = threading.Barrier(2, timeout=60)
 
-    def tentar() -> None:
+    def tentar(i: int) -> None:
+        # filtros distintos por thread: envios identicos seriam deduplicados (migration 20261115120000)
         with psycopg.connect(h.DSN, autocommit=True) as c2:  # type: ignore[arg-type]
             barreira.wait()
             try:
-                c2.execute("select public.reservar_envio_email(%s, %s, 'resumo', 'csv', '{}'::jsonb, %s)", (sol, dest, base + 1))
+                c2.execute(
+                    "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', %s::jsonb, %s)",
+                    (sol, dest, json.dumps({"thread": i}), base + 1),
+                )
                 resultados.append("ok")
             except psycopg.Error as ex:
                 resultados.append(getattr(ex, "sqlstate", "?") or "?")
 
     try:
-        ts = [threading.Thread(target=tentar) for _ in range(2)]
+        ts = [threading.Thread(target=tentar, args=(i,)) for i in range(2)]
         for t in ts:
             t.start()
         for t in ts:

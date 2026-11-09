@@ -39,6 +39,7 @@ SCRIPT = (_OPS / "limpar_dados_de_teste.sql").read_text(encoding="utf-8")
 LACRAR = (_OPS / "lacrar_producao.sql").read_text(encoding="utf-8")
 
 FRASE = "APAGAR DADOS DE TESTE ofwvoztarroglekfwohs"
+FRASE_AUD = FRASE + " E AUDITORIA"
 FRASE_LACRE = "LACRAR PRODUCAO ofwvoztarroglekfwohs"
 ESCOPO = (
     "checklist_fotos",
@@ -132,9 +133,13 @@ def rodar(
     antes_de_religar: str | None = None,
     confere: int | str | None = "auto",
     papel: str | None = None,
+    frase_exata: bool = False,
 ) -> Resultado:
-    """confere: 'auto' = total atual das 10 tabelas do escopo; None = deixa o padrao (-1); int = esse valor."""
+    """frase_exata=False: com apagar_auditoria e a frase basica, completa com ' E AUDITORIA' (DB-04).
+    confere: 'auto' = total atual das 10 tabelas do escopo; None = deixa o padrao (-1); int = esse valor."""
     t = SCRIPT
+    if apagar_auditoria and confirmacao == FRASE and not frase_exata:
+        confirmacao = FRASE_AUD
     t = _param(t, "v_executar", "boolean", "true" if executar else "false")
     t = _param(t, "v_confirmacao", "text", _lit(confirmacao))
     if confere == "auto":
@@ -878,3 +883,16 @@ def test_lacrar_producao_parametro_nulo_recusa(marcador: None, parametro: str) -
     t2 = _param(_param(LACRAR, "v_confirmacao", "text", "NULL"), "v_ref_esperado", "text", "NULL")
     r2 = _rodar_texto(t2)
     assert r2.sqlstate == "LD003" and _comentario() in (None, "")
+
+
+def test_db04_padrao_do_script_e_nao_apagar_auditoria() -> None:
+    assert "v_apagar_auditoria boolean := false;" in SCRIPT
+
+
+def test_db04_apagar_auditoria_exige_frase_com_e_auditoria(marcador: None) -> None:
+    r = rodar(executar=True, confirmacao=FRASE, apagar_auditoria=True, frase_exata=True)
+    assert not r.ok and r.sqlstate == "LD003", r.mensagem
+    assert "E AUDITORIA" in r.mensagem
+    # a frase de auditoria nao vale quando a auditoria e preservada
+    r2 = rodar(executar=True, confirmacao=FRASE_AUD, apagar_auditoria=False, frase_exata=True)
+    assert not r2.ok and r2.sqlstate == "LD003", r2.mensagem

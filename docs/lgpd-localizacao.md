@@ -23,10 +23,35 @@
   tabela `requisicoes`, sem registro nem ator) com `detalhes = {recurso, apagadas, corte}`. Retorna a
   contagem apagada.
 
-## Como acionar o expurgo hoje (manual)
+## Agendamento (migration `20261116120100_agenda_expurgo_localizacoes.sql`)
 
-Não há agendamento. O SQL Editor do Supabase executa como dono (`postgres`); o caminho auditável para
-automação é a RPC abaixo, chamada com `service_role` (backend ou pipeline):
+- A migration agenda o job `expurgar-localizacoes` no `pg_cron`: **dia 1 de cada mês, 03:23 UTC** (00:23 em
+  Brasília), comando `select public.expurgar_localizacoes_vencidas()`. O job roda com o papel que agendou
+  (`postgres`, dono da função `SECURITY DEFINER` com `search_path` vazio); ninguém da API (`anon`,
+  `authenticated`) executa a função.
+- É condicional: se a extensão estiver instalada, agenda; se estiver só disponível, tenta instalar; se não der,
+  apenas emite um aviso (NOTICE) e a migration segue sem falhar. É idempotente (reaplicar atualiza o job).
+- Cada execução, mesmo com 0 linhas, grava uma linha de auditoria `localizacao_expurgada` (só contagem e corte).
+
+### O que o admin precisa fazer (ação manual no painel)
+
+1. Painel Supabase > Database > Extensions > habilitar **pg_cron** (se a migration não conseguiu).
+2. Se a extensão foi habilitada **depois** do `db push`, rode no SQL Editor:
+
+```sql
+select cron.schedule('expurgar-localizacoes', '23 3 1 * *', 'select public.expurgar_localizacoes_vencidas()');
+```
+
+3. Conferir: `select jobname, schedule, active from cron.job;` e, depois da primeira execução,
+   `select * from cron.job_run_details order by start_time desc limit 5;`.
+4. Monitoramento: a ausência da linha mensal `localizacao_expurgada` em `auditoria` indica job parado (ainda
+   não há alerta automático; definir o responsável).
+5. Alternativa sem `pg_cron`: job no pipeline chamando a RPC com `service_role` (abaixo).
+
+## Como acionar o expurgo manualmente
+
+O SQL Editor do Supabase executa como dono (`postgres`); o caminho auditável para automação externa é a RPC
+abaixo, chamada com `service_role` (backend ou pipeline):
 
 ```sql
 select public.expurgar_localizacoes_vencidas();
@@ -35,11 +60,8 @@ select public.expurgar_localizacoes_vencidas();
 Via API REST do Supabase: `POST /rest/v1/rpc/expurgar_localizacoes_vencidas` com a chave `service_role`
 (somente em ambiente servidor; nunca no front).
 
-## O que falta para agendar
+## Pendências (decisão da AGU, fora do código)
 
-- A extensão `pg_cron` está disponível no projeto, mas **não instalada** e nenhuma migration a habilita.
-  Opções: (a) habilitar `pg_cron` no painel e agendar, por exemplo mensalmente,
-  `select cron.schedule('expurgar-localizacoes', '23 3 1 * *', 'select public.expurgar_localizacoes_vencidas()');`
-  ou (b) job no pipeline/CI chamando a RPC com `service_role`.
-- Definir quem monitora a linha de auditoria `localizacao_expurgada` (falha de agendamento não gera alerta).
-- Ratificar a base legal e o prazo com a AGU.
+- **Base legal e prazo**: ratificar com o encarregado/DPO da AGU a base legal (LGPD art. 7º/11) e confirmar o
+  prazo de 12 meses. Enquanto isso não ocorrer, o recurso de localização não deve ir para produção.
+- Definir quem monitora a linha de auditoria `localizacao_expurgada`.

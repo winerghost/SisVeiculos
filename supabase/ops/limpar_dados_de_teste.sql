@@ -41,7 +41,8 @@
 --   gatilhos religados e verificados.
 --
 -- TRAVAS: (a) se o banco estiver LACRADO (comentario 'sisveiculos:lacrado') recusa sempre;
---   (b) so apaga com v_executar = true E a frase exata de v_confirmacao E o total de linhas do
+--   (b) so apaga com v_executar = true E a frase exata de v_confirmacao (com " E AUDITORIA" no fim se
+--   v_apagar_auditoria = true; o padrao e false, que preserva a auditoria) E o total de linhas do
 --   escopo copiado do ensaio em v_confere_total (erro LD007 se nao bater); (c) parametro NULL e
 --   recusado (LD003), pois NULL contornaria as comparacoes.
 -- O banco NAO conhece o "ref" do projeto Supabase, entao nao ha como o script conferir o
@@ -55,6 +56,8 @@ declare
   -- true = apaga de verdade. false (padrao) = ENSAIO: faz tudo, mostra as contagens e DESFAZ.
   v_executar         boolean := false;
   -- Para apagar de verdade escreva exatamente:  APAGAR DADOS DE TESTE ofwvoztarroglekfwohs
+  -- Se v_apagar_auditoria = true, a frase TEM de terminar com " E AUDITORIA":
+  --   APAGAR DADOS DE TESTE ofwvoztarroglekfwohs E AUDITORIA
   v_confirmacao      text    := '';
   -- SEGUNDA CONFIRMACAO: copie do ENSAIO o TOTAL de linhas das 10 tabelas do escopo (checklist_fotos,
   -- checklists, notificacoes, localizacoes_viagem, requisicoes, perfil_fotos, acessos_login,
@@ -64,8 +67,9 @@ declare
   v_confere_total    int     := -1;
   -- Identificador do projeto (faz parte da frase de confirmacao; nao e conferido pelo banco).
   v_ref_esperado     text    := 'ofwvoztarroglekfwohs';
-  -- true = apaga tambem a auditoria (historico de acoes de teste). false = preserva a auditoria.
-  v_apagar_auditoria boolean := true;
+  -- false (padrao) = preserva a auditoria (append-only). true = apaga tambem a auditoria (historico de
+  -- acoes de teste) e EXIGE a frase com " E AUDITORIA" (escolha consciente; ver v_confirmacao).
+  v_apagar_auditoria boolean := false;
   -- true = depois de apagar, grava o LACRE (o script nunca mais roda neste banco).
   -- Prefira false e lacre no dia do lancamento (supabase/ops/lacrar_producao.sql).
   v_lacrar           boolean := false;
@@ -133,7 +137,8 @@ begin
       using errcode = 'LD002';
   end if;
 
-  v_frase := 'APAGAR DADOS DE TESTE ' || v_ref_esperado;
+  v_frase := 'APAGAR DADOS DE TESTE ' || v_ref_esperado
+             || case when v_apagar_auditoria then ' E AUDITORIA' else '' end;
   if v_executar and v_confirmacao is distinct from v_frase then
     raise exception 'RECUSADO: v_executar esta true, mas v_confirmacao nao e exatamente a frase "%". Nada foi apagado.', v_frase
       using errcode = 'LD003';

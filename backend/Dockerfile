@@ -1,4 +1,6 @@
-FROM python:3.12.12-alpine3.22
+# Tag + digest do indice multi-arch (verificado com `docker buildx imagetools inspect`).
+# Atualizar os dois juntos (ver docs/deploy-vps.md, "Atualizar a imagem base").
+FROM python:3.12.12-alpine3.22@sha256:848ba4413eb897e225159b8fc1b02094576cbae4aa73fc13142608ae2c8c0e32
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -9,8 +11,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN addgroup -S -g 10001 app && adduser -S -u 10001 -G app -H -s /sbin/nologin app
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+# Lock com hashes: --require-hashes recusa pacote fora do lock ou com hash diferente.
+COPY requirements.lock.txt .
+RUN pip install --require-hashes -r requirements.lock.txt
 
 COPY --chown=root:root . .
 
@@ -18,10 +21,12 @@ USER 10001:10001
 EXPOSE 8000
 
 # Factory em backend/app/__init__.py (create_app). /tmp deve ser tmpfs (container read-only).
+# Access log sem IP do cliente (%(h)s): LGPD. O IP mascarado já é gravado pela auditoria de
+# acessos (mascarar_ip); aqui só método, caminho (%(U)s, sem query), status, bytes e latência.
 # 1 worker + 8 threads: o rate limit é em memória por processo; com 2+ workers o limite
 # efetivo multiplicaria. Trade-off: sem paralelismo real de CPU (GIL); a carga é I/O (Supabase).
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "8", \
      "--worker-tmp-dir", "/tmp", "--timeout", "30", "--limit-request-line", "4094", \
      "--access-logfile", "-", \
-     "--access-logformat", "%(h)s %(m)s %(U)s %(s)s %(b)s %(L)ss", \
+     "--access-logformat", "%(m)s %(U)s %(s)s %(b)s %(L)ss", \
      "app:create_app()"]

@@ -209,7 +209,7 @@ def test_migration_funcao_teste_e_idempotente() -> None:
     sql = (
         Path(__file__).resolve().parents[1] / "migrations" / "20261111120200_ia_uso_funcao_teste.sql"
     ).read_text(encoding="utf-8")
-    with h.conectar() as c:
+    with h.reaplicando_migration() as c:
         c.execute(sql)
         c.execute(sql)
         (defn,) = c.execute(

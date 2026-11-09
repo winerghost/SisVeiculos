@@ -146,3 +146,54 @@ def test_dois_admins_se_desativando_ao_mesmo_tempo_nao_zeram_o_par() -> None:
     assert sorted(resultados) == ["AG002", "ok"], resultados
     ativos = [h.perfil_de(x)[1] for x in (a, b)]
     assert ativos.count(True) == 1
+
+
+def test_anel_de_admins_se_desativando_ao_mesmo_tempo_nunca_zera_o_grupo() -> None:
+    """A-07: invariante "ao menos um admin ativo" sob concorrencia, pelo trigger REAL.
+
+    Usa a mesma rota SQL do backend (`UPDATE public.perfis SET ativo=false, alterado_por=<ator>
+    WHERE id=<alvo>`, repositorios/supabase_repo.py, via PostgREST com service_role): sem RPC nem
+    logica de aplicacao, quem serializa e o advisory lock do gatilho `perfis_guarda_admin`.
+    Quatro admins em anel (A desativa B, B desativa C, C desativa D, D desativa A) disparam juntos,
+    cada um segurando a transacao um instante para forcar a disputa. Sem a serializacao, todos
+    passariam na checagem "o ator e admin ativo" e o grupo ficaria inteiro inativo.
+
+    Garantias: (1) sobra ao menos um ativo; (2) toda recusa e AG002 (ator ja desativado por outra
+    transacao) ou AG009 (ultimo admin), nunca erro inesperado; (3) cada sucesso foi feito por um
+    ator que estava ativo; (4) a soma bate: ativos finais = 4 - sucessos.
+    """
+    admins = [h.criar_usuario(f"anel-{i}", "admin") for i in range(4)]
+    barreira = threading.Barrier(4, timeout=60)
+    resultados: dict[int, str] = {}
+    lock = threading.Lock()
+
+    def desativar(i: int) -> None:
+        ator, alvo = admins[i], admins[(i + 1) % 4]
+        with psycopg.connect(h.DSN) as conn:  # type: ignore[arg-type]
+            barreira.wait()
+            try:
+                conn.execute(
+                    "update public.perfis set ativo=false, alterado_por=%s where id=%s", (ator, alvo)
+                )
+                conn.execute("select pg_sleep(0.3)")  # segura o lock para forcar a disputa
+                conn.commit()
+                r = "ok"
+            except psycopg.Error as e:
+                conn.rollback()
+                r = str(e.sqlstate)
+        with lock:
+            resultados[i] = r
+
+    ts = [threading.Thread(target=desativar, args=(i,)) for i in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(timeout=120)
+
+    assert len(resultados) == 4, resultados
+    assert set(resultados.values()) <= {"ok", "AG002", "AG009"}, resultados
+    ativos = [h.perfil_de(x)[1] for x in admins]
+    assert any(ativos), f"o grupo ficou sem admin ativo: {resultados}"
+    sucessos = [i for i, r in resultados.items() if r == "ok"]
+    assert ativos.count(True) == 4 - len(sucessos), (resultados, ativos)
+    assert len(sucessos) <= 3  # nunca os 4

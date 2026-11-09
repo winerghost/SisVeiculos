@@ -11,7 +11,7 @@ from typing import Any
 from flask import Blueprint, g, jsonify, request
 
 from app.auth.decoradores import autenticar, tem_segundo_fator
-from app.errors import ErroApi, RequisicaoInvalida, SemPermissao
+from app.errors import ErroApi, RequisicaoInvalida
 from app.extensions import chave_usuario, deps, limiter
 from app.services.acessos import ServicoAcessos
 from app.services.admin_configuracoes import ServicoConfiguracoes
@@ -30,9 +30,7 @@ admin = Blueprint("admin", __name__, url_prefix="/api/admin")
 def _exigir_admin() -> None:
     if request.method == "OPTIONS":  # preflight do CORS não leva Authorization
         return
-    perfil = autenticar()
-    if perfil.role != "admin":
-        raise SemPermissao("Você não tem permissão para esta ação.")
+    autenticar(("admin",))  # o role é checado antes do MFA e do registro de acesso
 
 
 def _limite_escrita() -> str:

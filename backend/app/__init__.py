@@ -92,6 +92,7 @@ def create_app(
             cfg.n8n_webhook_token,
             ao_desistir=_n8n_desistiu,
             hmac_secret=cfg.n8n_hmac_secret,
+            hosts_permitidos=cfg.n8n_allowed_hosts,
         )
     atexit.register(notificador.fechar)
 

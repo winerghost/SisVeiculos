@@ -50,15 +50,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const [naoLidas, setNaoLidas] = React.useState(0);
 
-  const sairLocal = React.useCallback(async (mensagem: string | null) => {
-    await supabase().auth.signOut({ scope: 'local' });
-    setEu(null);
-    setPaineis(null);
-    setRelatorios(null);
-    setNaoLidas(0);
-    setAviso(mensagem);
-    setEstado('anonimo');
+  // Trava de reentrada: dois logouts/401 simultâneos resultam em um único encerramento.
+  const encerrando = React.useRef(false);
+
+  // Encerra a sessão. Logout manual usa escopo global (revoga os refresh tokens de todos os
+  // dispositivos); expiração/erro de sessão usa escopo local. O estado local e os caches de
+  // páginas são limpos ANTES de aguardar a rede, e o signOut global tem prazo curto (3 s) com
+  // queda para o escopo local, para que rede lenta nunca prenda o usuário na tela.
+  const encerrar = React.useCallback(async (mensagem: string | null, global: boolean) => {
+    if (encerrando.current) return;
+    encerrando.current = true;
+    try {
+      const auth = supabase().auth;
+      // Dispara a revogação já (lê o token do armazenamento) antes de limpar o estado.
+      const remoto = auth
+        .signOut({ scope: global ? 'global' : 'local' })
+        .then(({ error }) => error)
+        .catch(() => new Error('falha'));
+
+      setEu(null);
+      setPaineis(null);
+      setRelatorios(null);
+      setNaoLidas(0);
+      setAviso(mensagem);
+      setEstado('anonimo');
+
+      // Só as páginas (HTML sem dado de usuário, mas por precaução); assets-* são estáticos.
+      try {
+        if (typeof caches !== 'undefined') {
+          const nomes = await caches.keys();
+          await Promise.all(
+            nomes.filter((n) => n.startsWith('paginas-')).map((n) => caches.delete(n)),
+          );
+        }
+      } catch {
+        // Cache Storage indisponível: nada a limpar.
+      }
+
+      const prazo = new Promise<'prazo'>((r) => window.setTimeout(() => r('prazo'), 3000));
+      const r = await Promise.race([remoto, prazo]);
+      // Global que estourou o prazo ou falhou (sem rede/token inválido): encerra ao menos o local.
+      if (global && r) await auth.signOut({ scope: 'local' }).catch(() => undefined);
+    } finally {
+      encerrando.current = false;
+    }
   }, []);
+
+  const sairLocal = React.useCallback((m: string | null) => encerrar(m, false), [encerrar]);
 
   const tratarErro = React.useCallback(
     (e: unknown): string => {
@@ -152,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [carregarEu],
   );
 
-  const sair = React.useCallback(() => sairLocal(null), [sairLocal]);
+  const sair = React.useCallback(() => encerrar(null, true), [encerrar]);
 
   // Segundo fator (TOTP): só é chamado quando a API responde mfa_requerido.
   const verificarMfa = React.useCallback(

@@ -114,7 +114,7 @@ def test_papeis_da_api_sem_execute(papel: str) -> None:
 
 
 def test_migration_e_idempotente() -> None:
-    with h.conectar() as c:
+    with h.reaplicando_migration() as c:
         c.execute(MIGRATION)
         c.execute(MIGRATION)
 

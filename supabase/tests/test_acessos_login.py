@@ -238,7 +238,7 @@ def test_estrutura_da_tabela() -> None:
 
 
 def test_migrations_sao_idempotentes_e_nao_falham_sem_pg_cron() -> None:
-    with h.conectar() as c:
+    with h.reaplicando_migration() as c:
         # Reexecuta na ordem; o bloco pg_cron so avisa se a extensao faltar. O estado final tem
         # de ser o endurecido (a 122430 reconcede SELECT; a 122440 revoga).
         for _ in range(2):

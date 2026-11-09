@@ -12,12 +12,14 @@ from typing import Any
 from app.errors import ErroInterno
 from app.repositorios.armazenamento import MetadadosObjeto, UploadAssinado
 from tests.fakes_admin import erro_db
+from tests.imagens import jpeg, png, webp
 
 MAGIC = {
     "image/jpeg": bytes([0xFF, 0xD8, 0xFF, 0xE0]) + bytes(12),
     "image/png": bytes([0x89]) + b"PNG" + bytes([0x0D, 0x0A, 0x1A, 0x0A]) + bytes(8),
     "image/webp": b"RIFF" + bytes(4) + b"WEBPVP8 ",
 }
+IMAGEM_REAL = {"image/jpeg": jpeg, "image/png": png, "image/webp": webp}
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 
@@ -144,15 +146,29 @@ class ArmazenamentoMemoria:
     def __init__(self) -> None:
         self.objetos: dict[str, MetadadosObjeto] = {}
         self.inicios: dict[str, bytes] = {}  # primeiros bytes; padrão = assinatura válida
+        self.conteudos: dict[str, bytes] = {}  # corpo do objeto; padrão = imagem real do MIME
+        self.sobrescritos: list[str] = []
         self.removidos: list[str] = []
         self.urls_upload: list[str] = []  # caminhos para os quais houve URL de upload
         self.urls_leitura: list[tuple[str, int]] = []
         self.indisponivel = False
 
-    def enviar(self, caminho: str, mime: str, tamanho: int, inicio: bytes | None = None) -> None:
-        """Simula o navegador enviando o arquivo pela URL assinada."""
+    def enviar(
+        self,
+        caminho: str,
+        mime: str,
+        tamanho: int,
+        inicio: bytes | None = None,
+        dados: bytes | None = None,
+    ) -> None:
+        """Simula o navegador enviando o arquivo pela URL assinada. `tamanho` é o declarado nos
+        metadados (independe do corpo); `dados` padrão = imagem real do MIME."""
         self.objetos[caminho] = {"mime": mime, "tamanho": tamanho}
-        self.inicios[caminho] = MAGIC[mime] if inicio is None else inicio
+        corpo = IMAGEM_REAL[mime]() if dados is None else dados
+        self.conteudos[caminho] = corpo
+        self.inicios[caminho] = (
+            (MAGIC[mime] if dados is None else corpo[:16]) if inicio is None else inicio
+        )
 
     def _checar(self) -> None:
         if self.indisponivel:
@@ -185,3 +201,16 @@ class ArmazenamentoMemoria:
         self._checar()
         self.removidos.append(caminho)
         self.objetos.pop(caminho, None)
+
+    def ler_tudo(self, caminho: str, maximo: int) -> bytes | None:
+        self._checar()
+        if caminho not in self.objetos:
+            return None
+        return self.conteudos.get(caminho, b"")[: maximo + 1]
+
+    def sobrescrever(self, caminho: str, dados: bytes, mime: str) -> None:
+        self._checar()
+        self.sobrescritos.append(caminho)
+        self.conteudos[caminho] = dados
+        self.inicios[caminho] = dados[:16]
+        self.objetos[caminho] = {"mime": mime, "tamanho": len(dados)}

@@ -82,6 +82,14 @@ class Armazenamento(Protocol):
         """Remove o objeto (arquivo reprovado na conferência)."""
         ...
 
+    def ler_tudo(self, caminho: str, maximo: int) -> bytes | None:
+        """Lê até `maximo`+1 bytes (quem chama compara com `maximo`). None se não existe."""
+        ...
+
+    def sobrescrever(self, caminho: str, dados: bytes, mime: str) -> None:
+        """Regrava o objeto existente (upsert) com a versão sanitizada pelo servidor."""
+        ...
+
 
 class SupabaseArmazenamento:
     """Usa a credencial service_role (só no backend). O front nunca a recebe."""
@@ -182,6 +190,31 @@ class SupabaseArmazenamento:
     def remover(self, caminho: str) -> None:
         try:
             self._bucket().remove([caminho])
+        except Exception as e:
+            raise self._falha(e) from None
+
+    def ler_tudo(self, caminho: str, maximo: int) -> bytes | None:
+        try:
+            url = self.url_leitura(caminho, 60)  # a URL nunca é logada
+            with self._http.stream("GET", url) as r:
+                if r.status_code != 200:
+                    return None
+                buf = bytearray()
+                for parte in r.iter_bytes():
+                    buf += parte
+                    if len(buf) > maximo:  # para de baixar: o chamador recusa por tamanho
+                        break
+                return bytes(buf[: maximo + 1])
+        except ErroInterno:
+            raise
+        except Exception as e:
+            raise self._falha(e) from None
+
+    def sobrescrever(self, caminho: str, dados: bytes, mime: str) -> None:
+        """upsert=true só no servidor (service_role). O token de upload do navegador segue com
+        upsert=false: depois que o objeto existe, o cliente não consegue trocá-lo (409)."""
+        try:
+            self._bucket().upload(caminho, dados, {"content-type": mime, "upsert": "true"})
         except Exception as e:
             raise self._falha(e) from None
 

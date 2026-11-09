@@ -209,6 +209,21 @@ def cancelar(rid: uuid.UUID, por: uuid.UUID) -> None:
     _atualizar("update public.requisicoes set status='cancelada', cancelada_por=%s where id=%s", (por, rid))
 
 
+@contextmanager
+def reaplicando_migration() -> Iterator["psycopg.Connection"]:
+    """Conexao em transacao que SEMPRE termina em ROLLBACK, para testes de "migration idempotente".
+
+    Reaplicar uma migration antiga sobre o banco ja migrado sobrescreve definicoes mais novas (gatilhos,
+    funcoes, CHECKs) e deixaria o banco inconsistente para os testes seguintes (ex.: o gatilho
+    trg_auditoria_notificar voltaria a versao sem os avisos de motorista). O DDL do Postgres e
+    transacional: a reaplicacao e verificada dentro da transacao e depois desfeita.
+    """
+    assert DSN, f"banco de teste nao liberado: {MOTIVO_PULO}"
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        with conn.transaction(force_rollback=True):
+            yield conn
+
+
 PAPEIS_API = ("anon", "authenticated", "service_role")
 
 

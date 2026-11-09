@@ -195,6 +195,28 @@ Migrations NÃO têm rollback automático. Como proceder:
    DESLIGADOS. Ligue só depois de tudo acima validado, um por vez, em Configurações. MFA: cada
    admin/autorizador cadastra o TOTP antes de ligar (ver convites-supabase-auth.md, seção 8).
 6. Conferir `docker compose ps` e logs sem PII.
+7. Expurgo de localizações (LGPD). Habilite a extensão `pg_cron` no painel do Supabase
+   (Database > Extensions) ANTES do `supabase db push`; sem ela o agendamento não é criado.
+   Depois do push, no SQL Editor do hosted, confirme que o job existe e está ativo:
+
+   ```sql
+   select jobname, schedule, active from cron.job where jobname = 'expurgar-localizacoes';
+   ```
+
+   Deve retornar uma linha com `active = true`. Depois que o recurso de localização estiver
+   ligado, alerte (rotina mensal ou monitor) se esta consulta devolver `true`, isto é, nenhuma
+   execução registrada nos últimos 35 dias:
+
+   ```sql
+   select not exists (
+     select 1 from auditoria
+     where acao = 'localizacao_expurgada'
+       and ocorrido_em > now() - interval '35 days'
+   ) as sem_expurgo_recente;
+   ```
+
+   Se os nomes das colunas de `auditoria` (`acao`, `ocorrido_em`) diferirem, ajuste conforme a
+   migration `20261116120100_agenda_expurgo_localizacoes.sql`.
 
 ## 6. Pontos de operação
 
@@ -245,3 +267,26 @@ Migrations NÃO têm rollback automático. Como proceder:
   Nunca edite na VPS.
 - `port is already allocated` / `address already in use` na porta do frontend: outra aplicação usa
   essa porta; ponha uma livre em `FRONTEND_PORT` no `.env` e atualize o proxy do CloudPanel.
+
+## 8. Cadeia de suprimentos (backend)
+
+- **Imagem base** fixada por digest em `backend/Dockerfile` (`python:3.12.12-alpine3.22@sha256:...`).
+  Atualizar: `docker buildx imagetools inspect python:<nova-tag>` e trocar tag e digest juntos.
+- **Dependências com hash**: `backend/requirements.txt` guarda os pins diretos; `backend/requirements.lock.txt`
+  é o lock com hashes (inclui transitivas) usado pela imagem (`pip install --require-hashes`).
+  O CI instala o lock em venv limpo e roda `pip-audit --require-hashes --disable-pip` sobre ele.
+- **Regerar o lock** (após mudar `requirements.txt`), na mesma base da imagem, a partir da raiz do repo:
+
+  ```sh
+  docker run --rm -v "$PWD/backend/requirements.txt:/in/requirements.txt:ro" \
+    python:3.12.12-alpine3.22@sha256:848ba4413eb897e225159b8fc1b02094576cbae4aa73fc13142608ae2c8c0e32 \
+    sh -c 'pip install -q pip-tools && pip-compile -q --generate-hashes --allow-unsafe --strip-extras \
+      --no-header -o /dev/stdout /in/requirements.txt 2>/dev/null' > /tmp/lock.txt
+  ```
+
+  Reaplicar o cabeçalho de comentário do arquivo atual e revisar o diff.
+- **Access log do gunicorn** não registra IP do cliente nem query string (LGPD); o IP mascarado fica na
+  auditoria de acessos da aplicação.
+- **gitleaks**: repositório em conta pessoal, sem licença. Se migrar para organização, criar o secret
+  `GITLEAKS_LICENSE`.
+- **Playwright**: versão e Chromium seguem o `frontend/package-lock.json` (`npm ci`).

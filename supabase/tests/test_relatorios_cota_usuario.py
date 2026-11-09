@@ -8,6 +8,7 @@ exceto o teste de concorrencia (persiste linhas em envios_email, sem DELETE fisi
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from collections.abc import Iterator
@@ -48,15 +49,19 @@ def e() -> Iterator[dict]:
 
 
 def reservar(e: dict, sol: uuid.UUID, por_usuario: int | None = None, glob: int = GRANDE) -> dict:
+    # Filtros unicos por chamada: desde a migration 20261115120000 um envio pendente/enviando
+    # identico nos ultimos 30 s e deduplicado (nao consome cota). A dedupe e testada em
+    # test_rpcs_atomicas.py; aqui cada chamada precisa contar como um envio novo.
     c = e["c"]
+    filtros = json.dumps({"n": uuid.uuid4().hex})
     if por_usuario is None:
         return c.execute(
-            "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', '{}'::jsonb, %s)",
-            (sol, e["dest"], glob),
+            "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', %s::jsonb, %s)",
+            (sol, e["dest"], filtros, glob),
         ).fetchone()[0]
     return c.execute(
-        "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', '{}'::jsonb, %s, %s)",
-        (sol, e["dest"], glob, por_usuario),
+        "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', %s::jsonb, %s, %s)",
+        (sol, e["dest"], filtros, glob, por_usuario),
     ).fetchone()[0]
 
 
@@ -188,20 +193,21 @@ def test_cota_por_usuario_concorrente_so_uma_passa() -> None:
     res: list[str] = []
     barreira = threading.Barrier(2, timeout=60)
 
-    def tentar() -> None:
+    def tentar(i: int) -> None:
+        # filtros distintos por thread: envios identicos seriam deduplicados (migration 20261115120000)
         with psycopg.connect(h.DSN, autocommit=True) as c2:  # type: ignore[arg-type]
             barreira.wait()
             try:
                 c2.execute(
-                    "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', '{}'::jsonb, 1000, %s)",
-                    (sol, dest, base + 1),
+                    "select public.reservar_envio_email(%s, %s, 'resumo', 'csv', %s::jsonb, 1000, %s)",
+                    (sol, dest, json.dumps({"thread": i}), base + 1),
                 )
                 res.append("ok")
             except psycopg.Error as ex:
                 res.append(getattr(ex, "sqlstate", "?") or "?")
 
     try:
-        ts = [threading.Thread(target=tentar) for _ in range(2)]
+        ts = [threading.Thread(target=tentar, args=(i,)) for i in range(2)]
         for t in ts:
             t.start()
         for t in ts:

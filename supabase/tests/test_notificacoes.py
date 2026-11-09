@@ -44,6 +44,8 @@ TIPOS = {
     "requisicao_chegada", "requisicao_cancelada_terceiros", "requisicao_cancelada_pelo_solicitante",
     "checklist_avaria", "convite_aceito", "perfil_alterado_admin", "configuracao_alterada",
     "sistema_falha_envio",
+    # migration 20261113120000: avisos ao motorista (outros arquivos de teste os geram no mesmo banco)
+    "motorista_designado", "motorista_removido", "viagem_cancelada_motorista",
 }  # fmt: skip
 
 
@@ -328,13 +330,16 @@ def test_admin_desativado_nao_recebe_a_propria_notificacao(e: dict) -> None:
 
 
 def test_configuracao_alterada_vai_para_outros_admins_com_codigo_do_recurso(e: dict) -> None:
+    # Linhas novas = ids que nao existiam antes (nao depende do relogio: o relogio do container do
+    # Postgres no Windows pode dar saltos e misturar linhas de testes anteriores na janela de tempo).
     with h.conectar() as c:
-        (t0,) = c.execute("select clock_timestamp()").fetchone() or (None,)
+        antes = {r[0] for r in c.execute(
+            "select id from public.notificacoes where tipo='configuracao_alterada'").fetchall()}
     _flag("checklist", True, e["adm"])
     with h.conectar() as c:
-        linhas = c.execute(
-            "select usuario_id, critica, codigo from public.notificacoes where tipo='configuracao_alterada' "
-            "and criada_em >= %s", (t0,)).fetchall()
+        linhas = [r[1:] for r in c.execute(
+            "select id, usuario_id, critica, codigo from public.notificacoes where tipo='configuracao_alterada'"
+        ).fetchall() if r[0] not in antes]
     assert {r[0] for r in linhas} == _admins_ativos() - {e["adm"]}
     assert all(r[1] is False and r[2] == "checklist" for r in linhas)
 
@@ -903,7 +908,7 @@ def test_sem_pii_em_notificacoes_nem_nas_linhas_de_auditoria_do_gatilho(e: dict)
 
 
 def test_migration_e_idempotente_e_mantem_o_gatilho_unico(e: dict) -> None:
-    with h.conectar() as c:
+    with h.reaplicando_migration() as c:  # rollback: nao deixa o gatilho antigo para os testes seguintes
         (antes,) = c.execute("select count(*) from public.notificacoes").fetchone() or (0,)
         c.execute(MIGRATION)
         c.execute(MIGRATION)

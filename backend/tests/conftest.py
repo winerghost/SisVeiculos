@@ -13,7 +13,7 @@ from app.auth.jwt import VerificadorJWT
 from app.config import Config
 from app.extensions import limiter
 from app.services.admin_usuarios import INDICE_EMAILS
-from app.services.checklist import EMISSOES
+from app.services.checklist import EM_REGISTRO, EMISSOES, SANEADAS
 from app.services.convites import CONTROLE
 from app.services.foto_perfil import EMISSOES_FOTO
 from tests.fakes import RepoMemoria
@@ -102,6 +102,8 @@ def app(  # type: ignore[no-untyped-def]
     limiter.reset()
     CONTROLE.reiniciar()
     EMISSOES.reiniciar()
+    SANEADAS.reiniciar()
+    EM_REGISTRO.reiniciar()
     EMISSOES_FOTO.reiniciar()
     INDICE_EMAILS.reiniciar()
     return aplicacao

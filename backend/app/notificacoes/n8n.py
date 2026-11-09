@@ -23,11 +23,13 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
+import socket
 import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -52,6 +54,8 @@ EVENTOS = frozenset(
 _CAMPOS_REQ = ("status", "veiculo_id", "unidade")
 _HOSTS_PROIBIDOS = frozenset({"localhost", "localhost.localdomain", "ip6-localhost"})
 _SUFIXOS_PROIBIDOS = (".localhost", ".local", ".internal", ".intranet", ".lan", ".home.arpa")
+_ROTULO = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+_RE_HOST = re.compile(rf"(?=.{{1,253}}$){_ROTULO}(\.{_ROTULO})*")
 _MSG_PUBLICO = "N8N_WEBHOOK_URL deve apontar para um host público."
 
 
@@ -80,8 +84,44 @@ def _como_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
         return None
 
 
-def validar_url_webhook(url: str) -> None:
-    """Exige https e host público (anti-SSRF). Só mensagens genéricas, sem eco da URL."""
+def normalizar_hosts(hosts: Iterable[str]) -> frozenset[str]:
+    return frozenset(h.strip().lower().rstrip(".") for h in hosts if h and h.strip())
+
+
+def host_valido(host: str) -> bool:
+    """Nome de host simples (sem esquema, porta, caminho, credenciais ou curinga)."""
+    return bool(_RE_HOST.fullmatch(host)) or _como_ip(host) is not None
+
+
+def resolver_dns(host: str, porta: int) -> list[str]:
+    """Endereços IP do host (consulta DNS real). Lança OSError se não resolver."""
+    infos = socket.getaddrinfo(host, porta, proto=socket.IPPROTO_TCP)
+    return sorted({str(i[4][0]) for i in infos})
+
+
+def exigir_destino_publico(
+    host: str, porta: int, resolvedor: Callable[[str, int], list[str]] = resolver_dns
+) -> None:
+    """Resolve o host e exige que TODOS os IPs sejam globais (anti-SSRF por DNS: um nome
+    público que aponta para 127.0.0.1/10.x/169.254.x é recusado). Lança RuntimeError."""
+    try:
+        enderecos = resolvedor(host, porta)
+    except Exception:
+        raise RuntimeError("Host do webhook não resolveu.") from None
+    if not enderecos:
+        raise RuntimeError("Host do webhook não resolveu.")
+    for bruto in enderecos:
+        ip = _como_ip(str(bruto).split("%", 1)[0])
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        if ip is None or not ip.is_global or ip.is_multicast:
+            raise RuntimeError("Host do webhook resolve para endereço não público.")
+
+
+def validar_url_webhook(url: str, hosts_permitidos: Iterable[str] = ()) -> None:
+    """Exige https e host público (anti-SSRF) e, se houver allowlist, que o host conste nela.
+    Validação textual (sem DNS); a resolução é feita a cada entrega. Só mensagens genéricas,
+    sem eco da URL."""
     try:
         partes = urlsplit(url)
         host = (partes.hostname or "").lower().rstrip(".")
@@ -92,6 +132,9 @@ def validar_url_webhook(url: str) -> None:
         raise RuntimeError("N8N_WEBHOOK_URL deve usar https://.")
     if partes.username is not None or partes.password is not None:
         raise RuntimeError("N8N_WEBHOOK_URL não pode conter credenciais.")
+    permitidos = normalizar_hosts(hosts_permitidos)
+    if permitidos and host not in permitidos:
+        raise RuntimeError("N8N_WEBHOOK_URL: host fora de N8N_ALLOWED_HOSTS.")
     ip = _como_ip(host)
     if ip is not None:
         if not ip.is_global or ip.is_multicast:
@@ -130,11 +173,13 @@ class N8nWebhook:
         cliente: httpx.Client | None = None,
         ao_desistir: Callable[[str], None] | None = None,
         hmac_secret: str = "",
+        resolvedor: Callable[[str, int], list[str]] = resolver_dns,
     ) -> None:
         # httpx registra a URL completa em INFO; ela contém o segredo do caminho do webhook.
         for nome in ("httpx", "httpcore"):
             logging.getLogger(nome).setLevel(logging.WARNING)
         self._url = url
+        self._resolvedor = resolvedor
         self._token = token
         self._chave_hmac = (hmac_secret or token).encode()  # fallback: o token
         self._tentativas = max(1, tentativas)
@@ -207,6 +252,7 @@ class N8nWebhook:
         entrega_id = str(uuid.uuid4())
         for tentativa in range(1, self._tentativas + 1):
             try:
+                self._checar_destino()  # DNS pode mudar depois da subida (rebinding)
                 resp = self._cliente.post(
                     self._url, content=corpo, headers=self._cabecalhos(corpo, entrega_id, evento_id)
                 )
@@ -227,6 +273,13 @@ class N8nWebhook:
                     except Exception as exc:  # noqa: BLE001 - nunca derruba o worker
                         log.warning("n8n: callback de falha erro (%s)", type(exc).__name__)
 
+    def _checar_destino(self) -> None:
+        partes = urlsplit(self._url)
+        host = (partes.hostname or "").lower().rstrip(".")
+        if _como_ip(host) is not None:  # IP literal já validado como global na criação
+            return
+        exigir_destino_publico(host, partes.port or 443, self._resolvedor)
+
     def _cabecalhos(self, corpo: bytes, entrega_id: str, evento_id: str) -> dict[str, str]:
         ts = str(int(time.time()))  # novo a cada tentativa (janela anti-replay)
         mac = hmac.new(self._chave_hmac, ts.encode() + b"." + corpo, hashlib.sha256)
@@ -245,13 +298,14 @@ def criar_notificador(
     token: str,
     ao_desistir: Callable[[str], None] | None = None,
     hmac_secret: str = "",
+    hosts_permitidos: Iterable[str] = (),
 ) -> Notificador:
     """No-op sem URL ou sem token; senão valida a URL (anti-SSRF) e cria o webhook.
     `ao_desistir` (opcional) é chamado, na thread do worker, quando uma entrega é desistida.
     `hmac_secret` (opcional) assina o corpo; ausente, a assinatura usa o token (aviso único)."""
     if not url or not token:
         return NotificadorNulo()
-    validar_url_webhook(url)
+    validar_url_webhook(url, hosts_permitidos)
     if not hmac_secret:
         log.warning(
             "n8n: N8N_HMAC_SECRET não definido; a assinatura usa o N8N_WEBHOOK_TOKEN. "

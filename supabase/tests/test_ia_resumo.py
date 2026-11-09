@@ -113,7 +113,7 @@ def test_ia_uso_recusa_funcao_desconhecida() -> None:
 
 
 def test_migration_e_idempotente() -> None:
-    with h.conectar() as c:
+    with h.reaplicando_migration() as c:
         c.execute(MIGRATION)
         c.execute(MIGRATION)
         (defn,) = c.execute(

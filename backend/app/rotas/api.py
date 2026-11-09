@@ -245,9 +245,17 @@ def solicitar_upload_foto(requisicao_id: str, momento: str) -> Any:
     return jsonify(_checklist().solicitar_upload(g.perfil, requisicao_id, momento, corpo)), 201
 
 
+def _limite_registro() -> str:
+    return deps().config.limite_registro_checklist
+
+
+# O registro baixa e recodifica até 6 fotos (CPU e memória, atrás do semáforo de sanitização):
+# limite por usuário para um só não monopolizar as vagas; os demais recebem 503 se faltar vaga.
+# O contador é em memória (flask-limiter memory://), por processo: a produção usa 1 worker.
 @api.post("/requisicoes/<requisicao_id>/checklist/<momento>")
 @requer_auth("autorizador", "admin", "motorista")
 @limiter.limit(_limite_escrita)
+@limiter.limit(_limite_registro, key_func=chave_usuario)
 def registrar_checklist(requisicao_id: str, momento: str) -> Any:
     corpo = request.get_json(silent=True)
     return jsonify(_checklist().registrar(g.perfil, requisicao_id, momento, corpo)), 201

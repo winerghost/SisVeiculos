@@ -144,11 +144,11 @@ def test_token_sem_kid_401(repo):  # type: ignore[no-untyped-def]
     assert app.test_client().get("/api/eu", headers=_bearer(tok)).status_code == 401
 
 
-def test_falha_do_jwks_401_e_nao_500(repo):  # type: ignore[no-untyped-def]
+def test_falha_do_jwks_503_e_nao_401(repo):  # type: ignore[no-untyped-def]
     app = _app_com_resolvedor(repo, _resolvedor(_ClienteJWKS(_jwks("k1"), falha=True)))
     p = repo.novo_perfil()
     r = app.test_client().get("/api/eu", headers=_bearer(_tok(_claims(p.id))))
-    assert r.status_code == 401 and _codigo(r) == "nao_autenticado"
+    assert r.status_code == 503 and _codigo(r) == "indisponivel"  # infra, não credencial
 
 
 def test_jwks_valido_autentica(repo):  # type: ignore[no-untyped-def]

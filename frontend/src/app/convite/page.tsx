@@ -116,10 +116,17 @@ function Aceite() {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-5 bg-white p-6">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-16 w-auto" />
-      <h1 className="text-2xl font-semibold">Ativar minha conta</h1>
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-5 p-6">
+      <div className="abertura-logo mx-auto">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-24 w-auto" />
+      </div>
+      <h1
+        className="abertura-item text-center text-2xl font-semibold"
+        style={{ '--atraso': '0.5s' } as React.CSSProperties}
+      >
+        Ativar minha conta
+      </h1>
 
       {fase === 'verificando' ? (
         <p role="status" className="text-texto-2">

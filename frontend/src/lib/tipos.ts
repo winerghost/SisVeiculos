@@ -341,6 +341,10 @@ export interface ResultadoTesteIA {
 /** Resposta de GET /saudacao. `texto` já vem pronto; null = não exibir nada. */
 export interface RespostaSaudacao {
   texto: string | null;
+  /** Identifica o momento (data + período); muda quando o período ou o dia muda. Pode faltar. */
+  chave?: string | null;
+  /** Instante ISO em que a chave muda (validade do cache). Pode faltar. */
+  valido_ate?: string | null;
 }
 
 export type StatusSaudacao = 'pendente' | 'aprovada' | 'rejeitada';

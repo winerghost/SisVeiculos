@@ -42,7 +42,9 @@ def _servico() -> ServicoSaudacao:
 @requer_auth()
 @limiter.limit(LIMITE_LEITURA, key_func=chave_usuario)
 def obter_saudacao() -> Any:
-    return jsonify({"texto": _servico().para_usuario(g.perfil)})
+    resp = jsonify(_servico().atual(g.perfil))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @saudacao_admin.get("")

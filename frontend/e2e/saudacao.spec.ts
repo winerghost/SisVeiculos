@@ -23,6 +23,98 @@ test('saudação: texto null não renderiza banner', async ({ page }) => {
   await expect(page.getByRole('status').filter({ hasText: 'coruja' })).toHaveCount(0);
 });
 
+const banner = (page: Page, texto: string) => page.getByRole('status').filter({ hasText: texto });
+const menu = (page: Page, nome: string) =>
+  page.getByRole('link', { name: nome, exact: true }).first();
+
+test('saudação: fechar, trocar de menu e voltar não reaparece', async ({ page }) => {
+  let buscas = 0;
+  await entrarAdmin(page, {
+    saudacaoCorpo: () => {
+      buscas += 1;
+      return { texto: 'Bom dia, Marcos!', chave: '2026-11-08|manha', valido_ate: null };
+    },
+  });
+  await expect(banner(page, 'Bom dia, Marcos!')).toBeVisible();
+  await page.getByRole('button', { name: 'Fechar saudação' }).click();
+  await expect(banner(page, 'Bom dia, Marcos!')).toHaveCount(0);
+  await menu(page, 'Admin').click();
+  await menu(page, 'Requisições').click();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await expect(banner(page, 'Bom dia, Marcos!')).toHaveCount(0);
+  expect(buscas).toBe(1);
+});
+
+test('saudação: nova chave após valido_ate reaparece na tela corrente', async ({ page }) => {
+  let corpo: Record<string, unknown> = {
+    texto: 'Bom dia, Marcos!',
+    chave: '2026-11-08|manha',
+    valido_ate: new Date(Date.now() + 30_000).toISOString(),
+  };
+  await page.clock.install({ time: new Date() });
+  await entrarAdmin(page, { saudacaoCorpo: () => corpo });
+  await expect(banner(page, 'Bom dia, Marcos!')).toBeVisible();
+  await page.getByRole('button', { name: 'Fechar saudação' }).click();
+  await expect(banner(page, 'Bom dia, Marcos!')).toHaveCount(0);
+
+  corpo = {
+    texto: 'Boa tarde, Marcos!',
+    chave: '2026-11-08|tarde',
+    valido_ate: new Date(Date.now() + 3_600_000).toISOString(),
+  };
+  await page.clock.fastForward(61_000);
+  await menu(page, 'Admin').click();
+  await expect(banner(page, 'Boa tarde, Marcos!')).toBeVisible();
+  // Mesma chave dispensada de novo: fica fechada.
+  await page.getByRole('button', { name: 'Fechar saudação' }).click();
+  await menu(page, 'Requisições').click();
+  await expect(banner(page, 'Boa tarde, Marcos!')).toHaveCount(0);
+});
+
+test('saudação: valido_ate vencido não gera mais de uma busca em 60 s', async ({ page }) => {
+  let buscas = 0;
+  await entrarAdmin(page, {
+    saudacaoCorpo: () => {
+      buscas += 1;
+      // Validade já vencida para o relógio do cliente (relógio adiantado).
+      return {
+        texto: 'Bom dia, Marcos!',
+        chave: 'k1',
+        valido_ate: new Date(Date.now() - 1_000).toISOString(),
+      };
+    },
+  });
+  await expect(banner(page, 'Bom dia, Marcos!')).toBeVisible();
+  await menu(page, 'Admin').click();
+  await menu(page, 'Requisições').click();
+  await menu(page, 'Admin').click();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  expect(buscas).toBe(1);
+});
+
+test('saudação: recarregar a página mostra de novo', async ({ page }) => {
+  await entrarAdmin(page, {
+    saudacaoCorpo: () => ({ texto: 'Bom dia, Marcos!', chave: 'k1', valido_ate: null }),
+  });
+  await page.getByRole('button', { name: 'Fechar saudação' }).click();
+  await expect(banner(page, 'Bom dia, Marcos!')).toHaveCount(0);
+  await page.reload();
+  await expect(banner(page, 'Bom dia, Marcos!')).toBeVisible();
+});
+
+test('saudação: sair limpa a dispensa', async ({ page }) => {
+  await entrarAdmin(page, {
+    saudacaoCorpo: () => ({ texto: 'Bom dia, Marcos!', chave: 'k1', valido_ate: null }),
+  });
+  await page.getByRole('button', { name: 'Fechar saudação' }).click();
+  await expect(banner(page, 'Bom dia, Marcos!')).toHaveCount(0);
+  await page.getByRole('button', { name: /sair/i }).first().click();
+  await page.getByLabel('E-mail').fill('admin@agu.gov.br');
+  await page.getByLabel('Senha', { exact: true }).fill('senha-correta');
+  await page.getByRole('button', { name: 'Entrar' }).click();
+  await expect(banner(page, 'Bom dia, Marcos!')).toBeVisible();
+});
+
 test('saudação: bloco só aparece com a função habilitada', async ({ page }) => {
   await entrarAdmin(page);
   await page.goto('/admin/configuracoes');

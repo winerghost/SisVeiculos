@@ -57,6 +57,7 @@ class Ocasiao:
     principal: str
     apoio: tuple[str, ...]  # ocasiões de apoio (período do dia) para o fallback
     data: date  # data local usada na decisão
+    periodo: str = ""  # período do dia local (entra na semente da frase)
 
 
 def pascoa(ano: int) -> date:
@@ -110,10 +111,32 @@ def dia_especial(dia: date) -> str | None:
     return None
 
 
+def _local(instante: datetime) -> datetime:
+    return instante.replace(tzinfo=FUSO) if instante.tzinfo is None else instante.astimezone(FUSO)
+
+
 def resolver(instante: datetime) -> Ocasiao:
     """Ocasião de maior prioridade para o instante (sem fuso = já no fuso do projeto)."""
-    local = instante.replace(tzinfo=FUSO) if instante.tzinfo is None else instante.astimezone(FUSO)
+    local = _local(instante)
     dia = local.date()
     per = periodo(local.hour)
     principal = data_comemorativa(dia) or dia_especial(dia) or per
-    return Ocasiao(principal=principal, apoio=(per,), data=dia)
+    return Ocasiao(principal=principal, apoio=(per,), data=dia, periodo=per)
+
+
+# Horas locais em que o período muda (0h é a virada de dia).
+_FRONTEIRAS: tuple[int, ...] = (0, 5, 12, 18)
+
+
+def chave_validade(instante: datetime) -> tuple[str, datetime]:
+    """Chave `AAAA-MM-DD|periodo` (fuso do projeto) e o próximo instante em que ela muda.
+
+    A chave não leva nenhum dado pessoal. `valido_ate` cai em 00:00, 05:00, 12:00 ou 18:00 locais.
+    """
+    local = _local(instante)
+    chave = f"{local.date().isoformat()}|{periodo(local.hour)}"
+    inicio_dia = datetime(local.year, local.month, local.day, tzinfo=FUSO)
+    proxima = next((h for h in _FRONTEIRAS if h > local.hour), None)
+    if proxima is None:
+        return chave, inicio_dia + timedelta(days=1)
+    return chave, inicio_dia + timedelta(hours=proxima)

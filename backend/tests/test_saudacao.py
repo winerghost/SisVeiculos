@@ -19,7 +19,7 @@ from app.ia.provedores import Resultado
 from app.ia.repositorio import ConfigIABanco
 from app.ia.servico import ServicoIA
 from app.modelos import Perfil
-from app.saudacao.calendario import OCASIOES, PERIODOS, pascoa, resolver
+from app.saudacao.calendario import OCASIOES, PERIODOS, chave_validade, pascoa, resolver
 from app.saudacao.catalogo import CATALOGO
 from app.saudacao.servico import (
     CACHE,
@@ -307,6 +307,70 @@ def test_servico_sem_nome_no_perfil() -> None:
     assert t and "{nome}" not in t
 
 
+# ------------------------------------------------------------------ chave e validade do período
+@pytest.mark.parametrize(
+    ("h", "m", "chave", "ate"),
+    [
+        (0, 0, "2026-11-10|madrugada", "2026-11-10T05:00:00-03:00"),
+        (4, 59, "2026-11-10|madrugada", "2026-11-10T05:00:00-03:00"),
+        (5, 0, "2026-11-10|manha", "2026-11-10T12:00:00-03:00"),
+        (11, 59, "2026-11-10|manha", "2026-11-10T12:00:00-03:00"),
+        (12, 0, "2026-11-10|tarde", "2026-11-10T18:00:00-03:00"),
+        (17, 59, "2026-11-10|tarde", "2026-11-10T18:00:00-03:00"),
+        (18, 0, "2026-11-10|noite", "2026-11-11T00:00:00-03:00"),
+        (23, 59, "2026-11-10|noite", "2026-11-11T00:00:00-03:00"),
+    ],
+)
+def test_chave_e_validade_nas_fronteiras(h: int, m: int, chave: str, ate: str) -> None:
+    c, v = chave_validade(em(2026, 11, 10, h, m))
+    assert c == chave and v.isoformat() == ate
+
+
+def test_virada_de_dia_e_de_ano() -> None:
+    assert chave_validade(em(2026, 11, 10, 23, 59))[0] == "2026-11-10|noite"
+    assert chave_validade(em(2026, 11, 11, 0, 0))[0] == "2026-11-11|madrugada"
+    assert chave_validade(em(2026, 12, 31, 20))[1].isoformat() == "2027-01-01T00:00:00-03:00"
+
+
+def test_chave_com_outro_fuso_usa_o_fuso_do_projeto() -> None:
+    # 02:30 UTC = 23:30 do dia anterior em -03:00
+    c, v = chave_validade(datetime(2026, 11, 11, 2, 30, tzinfo=UTC))
+    assert c == "2026-11-10|noite" and v.isoformat() == "2026-11-11T00:00:00-03:00"
+
+
+def test_chave_estavel_no_periodo_e_diferente_entre_periodos() -> None:
+    assert chave_validade(em(2026, 11, 10, 5))[0] == chave_validade(em(2026, 11, 10, 11, 59))[0]
+    assert len({chave_validade(em(2026, 11, 10, h))[0] for h in (2, 9, 14, 21)}) == 4
+
+
+def test_frase_estavel_no_periodo_e_varia_entre_periodos() -> None:
+    dia = (2026, 11, 13)  # sexta: a ocasião principal vale o dia todo
+    assert _escolher(resolver(em(*dia, 5))) == _escolher(resolver(em(*dia, 11, 59)))
+    com_variacao = sum(
+        len({_escolher(resolver(em(*dia, h)), uid=f"u{i}") for h in (9, 14, 21)}) > 1
+        for i in range(30)
+    )
+    assert com_variacao > 0
+
+
+def test_servico_atual_contrato_e_usuario_sem_nome() -> None:
+    ia, _ = _servico_ia()
+    s = ServicoSaudacao(ia, None, agora=lambda: em(2026, 11, 10, 9))
+    r = s.atual(_perfil(""))
+    assert r["texto"] and "{nome}" not in r["texto"]
+    assert r["chave"] == "2026-11-10|manha" and r["valido_ate"] == "2026-11-10T12:00:00-03:00"
+    assert s.atual(_perfil("Ana"))["chave"] == r["chave"]
+
+
+def test_servico_atual_gate_desligado() -> None:
+    ia, _ = _servico_ia(ConfigIABanco(mestre=True, saudacao=False))
+    assert ServicoSaudacao(ia, None).atual(_perfil()) == {
+        "texto": None,
+        "chave": None,
+        "valido_ate": None,
+    }
+
+
 # ------------------------------------------------------------------------------ app / rotas
 @pytest.fixture
 def saud() -> RepoSaudacoesMemoria:
@@ -392,15 +456,28 @@ def test_get_saudacao_perfil_inativo_403(cli, repo, auth) -> None:  # type: igno
     assert cli.get("/api/saudacao", headers=auth(p.id)).status_code == 403
 
 
+VAZIO = {"texto": None, "chave": None, "valido_ate": None}
+
+
 def test_get_saudacao_desligada_devolve_texto_null(cli, repo, auth, ia_env) -> None:  # type: ignore[no-untyped-def]
     p = repo.novo_perfil("solicitante")
     ia_env[1].config = ConfigIABanco(mestre=True, saudacao=False)
     CACHE.limpar()
     r = cli.get("/api/saudacao", headers=auth(p.id))
-    assert r.status_code == 200 and r.get_json() == {"texto": None}
+    assert r.status_code == 200 and r.get_json() == VAZIO
     ia_env[1].config = ConfigIABanco(mestre=False, saudacao=True)
     CACHE.limpar()
-    assert cli.get("/api/saudacao", headers=auth(p.id)).get_json() == {"texto": None}
+    assert cli.get("/api/saudacao", headers=auth(p.id)).get_json() == VAZIO
+
+
+def test_get_saudacao_contrato_e_no_store(cli, repo, auth) -> None:  # type: ignore[no-untyped-def]
+    p = repo.novo_perfil("solicitante")
+    r = cli.get("/api/saudacao", headers=auth(p.id))
+    j = r.get_json()
+    assert set(j) == {"texto", "chave", "valido_ate"}
+    assert j["texto"] and j["chave"] and j["valido_ate"].endswith("-03:00")
+    assert r.headers["Cache-Control"] == "no-store"
+    assert p.id not in j["chave"]
 
 
 ROTAS_ADMIN: list[tuple[str, str]] = [

@@ -50,6 +50,8 @@ export interface OpcoesAdmin {
   resultadoTesteIA?: 'ok' | 'falha' | 'conflito';
   /** Texto de GET /api/saudacao (padrão null = sem banner). */
   saudacao?: string | null;
+  /** Corpo completo de GET /api/saudacao, chamado a cada busca (sobrepõe `saudacao`). */
+  saudacaoCorpo?: () => Record<string, unknown>;
   /** Inicia com a função saudação ligada (e a chave geral de IA). */
   saudacaoLigada?: boolean;
   /** POST /admin/ia/saudacoes/gerar responde 502 com esta mensagem. */
@@ -140,7 +142,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     },
   ];
   await page.route('**/api/saudacao', (route) =>
-    route.fulfill({ json: { texto: opcoes.saudacao ?? null } }),
+    route.fulfill({ json: opcoes.saudacaoCorpo?.() ?? { texto: opcoes.saudacao ?? null } }),
   );
   const acoesColecao = opcoes.semCriar ? [] : ['criar'];
   const corpos: {

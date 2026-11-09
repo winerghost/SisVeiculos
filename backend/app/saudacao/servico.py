@@ -26,7 +26,7 @@ from app.errors import (
 )
 from app.ia.servico import ServicoIA
 from app.modelos import Perfil
-from app.saudacao.calendario import OCASIOES, Ocasiao, resolver
+from app.saudacao.calendario import OCASIOES, Ocasiao, chave_validade, resolver
 from app.saudacao.catalogo import CATALOGO
 from app.saudacao.repositorio import RepositorioSaudacoes
 from app.saudacao.validacao import (
@@ -177,7 +177,7 @@ def escolher_texto(
     nome: str | None,
     aprovadas: Callable[[str], list[str]],
 ) -> str:
-    """Frase estável por (usuário, data, ocasião): o mesmo dia devolve sempre a mesma.
+    """Frase estável por (usuário, data, período, ocasião): no mesmo período devolve a mesma.
 
     `aprovadas(ocasiao)` traz as frases aprovadas no banco; revalidadas aqui (defesa em
     profundidade). Sem nome, só entram frases sem marcador (ou o marcador é removido).
@@ -196,7 +196,7 @@ def escolher_texto(
         pool = [t for t in pool if t]
         if not pool:
             continue
-        semente = f"{usuario_id}|{ocasiao.data.isoformat()}|{alvo}"
+        semente = f"{usuario_id}|{ocasiao.data.isoformat()}|{ocasiao.periodo}|{alvo}"
         texto = pool[_indice(semente, len(pool))]
         return texto.replace(PLACEHOLDER, primeiro) if primeiro else texto
     return ""  # inalcançável: o catálogo cobre todas as ocasiões
@@ -290,13 +290,21 @@ class ServicoSaudacao:
             return []
 
     def para_usuario(self, perfil: Perfil) -> str | None:
+        return self.atual(perfil)["texto"]
+
+    def atual(self, perfil: Perfil) -> dict[str, str | None]:
+        """Texto, chave do período e validade (ISO 8601 -03:00). Tudo nulo com o gate desligado."""
+        vazio: dict[str, str | None] = {"texto": None, "chave": None, "valido_ate": None}
         if not self._ligada():
-            return None
-        ocasiao = resolver(self._agora())
+            return vazio
+        agora = self._agora()
         texto = escolher_texto(
-            ocasiao, usuario_id=perfil.id, nome=perfil.nome, aprovadas=self._aprovadas
+            resolver(agora), usuario_id=perfil.id, nome=perfil.nome, aprovadas=self._aprovadas
         )
-        return texto or None
+        if not texto:
+            return vazio
+        chave, validade = chave_validade(agora)
+        return {"texto": texto, "chave": chave, "valido_ate": validade.isoformat()}
 
     # -- admin ---------------------------------------------------------------------------
     def _repositorio(self) -> RepositorioSaudacoes:

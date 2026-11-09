@@ -1,8 +1,12 @@
 """Upload único no Storage REAL (URL assinada sem upsert). Ignorado por padrão.
 
-Rode SOMENTE contra projeto de teste/homologação, com o .env carregado no ambiente:
+Guarda técnica (tests/guarda_banco.py): só roda contra Supabase LOCAL e descartável (host
+127.0.0.1/localhost) e com CONTRATO_CONFIRM=descartavel; URL remota é
+recusada (teste pulado):
 
-    RUN_INTEGRATION=1 python -m pytest -m integracao tests/test_integracao_storage.py
+    RUN_INTEGRATION=1 CONTRATO_CONFIRM=descartavel \
+    SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_ROLE_KEY=<chave local> \
+    python -m pytest -m integracao tests/test_integracao_storage.py
 
 Cenário (M2): a URL de upload é criada com `x-upsert: false` (storage3 2.34.1). Um primeiro
 PUT com o token cria o objeto (200). Um SEGUNDO PUT no mesmo caminho, mesmo com o token ainda
@@ -20,17 +24,21 @@ import httpx
 import pytest
 
 from app.repositorios.armazenamento import SupabaseArmazenamento
+from tests.guarda_banco import avaliar, marca_pular
+
+_LIBERACAO = avaliar("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
 
 pytestmark = [
     pytest.mark.integracao,
     pytest.mark.skipif(os.environ.get("RUN_INTEGRATION") != "1", reason="integração desligada"),
+    marca_pular(_LIBERACAO),
 ]
 
 PNG = bytes([0x89]) + b"PNG" + bytes([0x0D, 0x0A, 0x1A, 0x0A]) + bytes(8)
 
 
 def test_segundo_put_no_mesmo_caminho_da_409():
-    arm = SupabaseArmazenamento(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    arm = SupabaseArmazenamento(_LIBERACAO.url, _LIBERACAO.chave)
     caminho = f"teste-integracao/{uuid.uuid4()}/{uuid.uuid4()}.png"
     try:
         up = arm.url_upload(caminho)

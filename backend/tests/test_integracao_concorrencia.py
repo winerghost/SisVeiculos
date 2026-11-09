@@ -1,10 +1,13 @@
 """Concorrência contra o Supabase REAL (índice parcial ux_requisicoes_veiculo_aberta).
 
-Ignorado por padrão. Rode SOMENTE contra um projeto de teste/homologação, com o .env
-carregado no ambiente (nunca em produção):
+Ignorado por padrão. Guarda técnica (tests/guarda_banco.py): só roda contra Supabase LOCAL e
+descartável (host 127.0.0.1/localhost) e com CONTRATO_CONFIRM=descartavel;
+URL remota é recusada (teste pulado). O teste de contrato (test_contrato_supabase.py) cobre a
+mesma disputa sem IDs fixos; este exige IDs já existentes:
 
-    RUN_INTEGRATION=1 \\
-    INT_SOLICITANTE_IDS=<uuid1>,<uuid2> INT_AUTORIZADOR_ID=<uuid> INT_VEICULO_ID=<uuid> \\
+    RUN_INTEGRATION=1 CONTRATO_CONFIRM=descartavel \
+    SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_ROLE_KEY=<chave local> \
+    INT_SOLICITANTE_IDS=<uuid1>,<uuid2> INT_AUTORIZADOR_ID=<uuid> INT_VEICULO_ID=<uuid> \
     python -m pytest -m integracao tests/test_integracao_concorrencia.py
 
 Pré-requisitos: perfis ativos informados; veículo ativo SEM requisição aberta. O teste cria
@@ -21,17 +24,21 @@ import pytest
 from app.errors import VeiculoOcupado
 from app.modelos import Perfil
 from app.services.requisicoes import ServicoRequisicoes
+from tests.guarda_banco import avaliar, marca_pular
+
+_LIBERACAO = avaliar("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
 
 pytestmark = [
     pytest.mark.integracao,
     pytest.mark.skipif(os.environ.get("RUN_INTEGRATION") != "1", reason="integração desligada"),
+    marca_pular(_LIBERACAO),
 ]
 
 
 def test_duas_requisicoes_simultaneas_so_uma_persiste() -> None:
     from app.repositorios.supabase_repo import SupabaseRepositorio
 
-    repo = SupabaseRepositorio(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    repo = SupabaseRepositorio(_LIBERACAO.url, _LIBERACAO.chave)
     ids = os.environ["INT_SOLICITANTE_IDS"].split(",")[:2]
     veiculo = os.environ["INT_VEICULO_ID"]
     autorizador = repo.obter_perfil(os.environ["INT_AUTORIZADOR_ID"])

@@ -38,13 +38,14 @@ jobs:
           # (licença gratuita em gitleaks.io); em conta pessoal pode ficar vazio.
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
-  # Testes de banco (RLS, grants, SECURITY DEFINER, km, checklist, concorrencia) contra
-  # um Supabase LOCAL efemero. Nunca usa secrets nem conecta a projeto remoto.
-  banco:
+  # Decide se os jobs de Supabase local (banco, contrato) precisam rodar.
+  # Gatilho: supabase/**, repositorios do backend, testes de contrato/conftest, requirements e este workflow.
+  detectar-banco:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    # Executa em PR para main ou push em main; so quando supabase/** ou o workflow mudam.
+    timeout-minutes: 5
     if: github.event_name == 'push' || github.base_ref == 'main'
+    outputs:
+      rodar: ${{ steps.mudou.outputs.rodar }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Detectar mudancas relevantes
@@ -62,23 +63,30 @@ jobs:
             echo "Base indisponivel; rodando por seguranca."
             echo "rodar=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git diff --name-only "$base" HEAD | grep -qE '^(supabase/|\.github/workflows/ci\.yml$)'; then
+          if git diff --name-only "$base" HEAD | grep -qE '^(supabase/|backend/app/(repositorios|services|errors)|scripts/seed-admin\.sh$|backend/tests/(.*contrato.*|guarda_banco|test_guarda_banco|test_integracao_|conftest\.py$)|backend/requirements.*\.txt$|\.github/workflows/ci\.yml$)'; then
             echo "rodar=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Sem mudancas em supabase/** ou no workflow; pulando."
+            echo "Sem mudancas relevantes ao banco/contrato; pulando."
             echo "rodar=false" >> "$GITHUB_OUTPUT"
           fi
+
+  # Testes de banco (RLS, grants, SECURITY DEFINER, km, checklist, concorrencia) contra
+  # um Supabase LOCAL efemero. Nunca usa secrets nem conecta a projeto remoto.
+  banco:
+    needs: detectar-banco
+    if: needs.detectar-banco.outputs.rodar == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Instalar Supabase CLI
-        if: steps.mudou.outputs.rodar == 'true'
         uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           version: 3.0.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: steps.mudou.outputs.rodar == 'true'
         with:
           python-version: "3.12"
       - name: Dependencias dos testes (venv, versoes fixadas)
-        if: steps.mudou.outputs.rodar == 'true'
         run: |
           python -m venv "$RUNNER_TEMP/venv-banco"
           "$RUNNER_TEMP/venv-banco/bin/pip" install --require-virtualenv -r supabase/tests/requirements.txt
@@ -87,18 +95,15 @@ jobs:
       # start ja aplica TODAS as migrations em ordem; db reset garante banco limpo e
       # reaplica tudo (mesmo caminho que o dev local usa).
       - name: Subir Supabase local e aplicar migrations
-        if: steps.mudou.outputs.rodar == 'true'
         run: |
           supabase start -x realtime,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
           supabase db reset --local --no-seed
       # O db reset recria o banco e apaga o marcador: criar DEPOIS do reset e ANTES do pytest.
       - name: Marcar banco como descartavel
-        if: steps.mudou.outputs.rodar == 'true'
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
         run: psql "$TEST_DATABASE_URL" -c "comment on database postgres is 'sisveiculos:descartavel'"
       - name: Testes de banco
-        if: steps.mudou.outputs.rodar == 'true'
         env:
           # Credenciais padrao FIXAS e publicas do Supabase local (nao e segredo).
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
@@ -110,6 +115,79 @@ jobs:
       - name: Parar containers
         if: always()
         run: supabase stop --no-backup || true
+
+  # Teste de contrato: rota Flask + SupabaseRepositorio contra Postgres/PostgREST/gotrue
+  # reais do Supabase LOCAL efemero. Nunca usa secrets nem projeto remoto.
+  contrato:
+    needs: detectar-banco
+    if: needs.detectar-banco.outputs.rodar == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Instalar Supabase CLI
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: 3.0.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Dependencias do backend
+        run: pip install -r backend/requirements-dev.txt
+      # Diferente do job banco, aqui precisa da API HTTP: mantem kong (gateway) e postgrest
+      # alem de db, gotrue e storage-api.
+      - name: Subir Supabase local e aplicar migrations
+        run: |
+          supabase start -x realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          supabase db reset --local --no-seed
+      # O db reset apaga o marcador: criar DEPOIS do reset e ANTES do pytest.
+      - name: Marcar banco como descartavel
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: psql "$TEST_DATABASE_URL" -c "comment on database postgres is 'sisveiculos:descartavel'"
+      # Chaves do Supabase local sao efemeras; ficam em arquivo 600 (nao em GITHUB_ENV) e so os
+      # passos que as usam as carregam.
+      - name: Obter URL e service_role do Supabase local
+        run: |
+          set -eu
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/supabase.env"' EXIT
+          supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          url="$(sed -n 's/^API_URL="\(.*\)"$/\1/p' "$RUNNER_TEMP/supabase.env")"
+          key="$(sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p' "$RUNNER_TEMP/supabase.env")"
+          [ -n "$url" ] && [ -n "$key" ] || { echo "API_URL/SERVICE_ROLE_KEY ausentes em supabase status"; exit 1; }
+          echo "::add-mask::$key"
+          printf 'CONTRATO_SUPABASE_URL=%s\nCONTRATO_SERVICE_ROLE_KEY=%s\nCONTRATO_CONFIRM=descartavel\n' "$url" "$key" > "$RUNNER_TEMP/contrato.env"
+      # Os testes precisam de ao menos 1 admin ativo (nao se cria admin pela API): conta no Auth
+      # local (efemero, senha aleatoria descartada) e seed pelo script oficial do projeto.
+      - name: Semear admin no banco local
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          SEED_ADMIN_EMAIL: admin-contrato@teste.example.com
+        run: |
+          set -eu
+          set -a; . "$RUNNER_TEMP/contrato.env"; set +a
+          senha="$(openssl rand -hex 24)"
+          echo "::add-mask::$senha"
+          curl -fsS -o /dev/null -X POST "$CONTRATO_SUPABASE_URL/auth/v1/admin/users" \
+            -H "apikey: $CONTRATO_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $CONTRATO_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"$SEED_ADMIN_EMAIL\",\"password\":\"$senha\",\"email_confirm\":true}"
+          sh scripts/seed-admin.sh
+      - name: Testes de contrato
+        working-directory: backend
+        run: |
+          set -eu
+          set -a; . "$RUNNER_TEMP/contrato.env"; set +a
+          python -m pytest -m contrato -p no:cacheprovider
+      - name: Parar containers
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/contrato.env"
+          supabase stop --no-backup || true
 
   backend:
     needs: detectar

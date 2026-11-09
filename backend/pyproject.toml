@@ -17,5 +17,8 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["integracao: roda contra o Supabase real (RUN_INTEGRATION=1)"]
+markers = [
+  "integracao: roda contra Supabase LOCAL descartavel (RUN_INTEGRATION=1 + guarda de tests/guarda_banco.py)",
+  "contrato: rota Flask real + SupabaseRepositorio contra Supabase local (CONTRATO_SUPABASE_URL, CONTRATO_SERVICE_ROLE_KEY, CONTRATO_CONFIRM=descartavel)",
+]
 pythonpath = ["."]

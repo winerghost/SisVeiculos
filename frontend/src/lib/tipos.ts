@@ -35,6 +35,8 @@ export interface Motorista {
 /** GET /api/motoristas (staff): candidatos para o seletor da autorização. */
 export interface ListaMotoristas {
   itens: Motorista[];
+  /** Id do motorista que a API designa por padrão (único ativo); null/ausente = sem padrão. */
+  padrao?: string | null;
 }
 
 export interface Requisicao {
@@ -568,11 +570,20 @@ export interface FiltroRelatorio {
   padrao: string | boolean | null;
 }
 
+/** Coluna que o catálogo permite escolher; só os relatórios com seleção trazem a lista. */
+export interface ColunaDisponivel {
+  chave: string;
+  rotulo: string;
+  /** Nome do filtro (flag) que a API exige ligado para esta coluna, ou null. */
+  exige_flag: string | null;
+}
+
 export interface RelatorioCatalogo {
   tipo: string;
   rotulo: string;
   descricao: string;
   filtros: FiltroRelatorio[];
+  colunas_disponiveis?: ColunaDisponivel[];
 }
 
 export interface RespostaRelatorios {
@@ -595,6 +606,8 @@ export interface PreviaRelatorio {
   linhas: Record<string, string>[];
   total_linhas: number;
   truncado: boolean;
+  /** Colunas pedidas que só vão no arquivo (ex.: observação). */
+  colunas_omitidas?: string[];
   /** A API libera o botão "Resumir com IA" (função ligada e permitida). */
   resumo_ia?: boolean;
 }

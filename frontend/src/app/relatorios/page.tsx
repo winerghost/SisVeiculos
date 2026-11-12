@@ -12,6 +12,7 @@ import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { AppShell } from '@/components/app-shell';
 import { AcompanharEnvio, DrawerEnvio } from '@/components/relatorios/envio';
+import { ColunasRelatorio } from '@/components/relatorios/colunas';
 import { FiltrosRelatorio } from '@/components/relatorios/filtros';
 import { Previa } from '@/components/relatorios/previa';
 import { Alerta } from '@/components/ui/alert';
@@ -34,6 +35,7 @@ function Conteudo() {
   const [inicial] = React.useState(() => lerQuery(params));
   const [escolhido, setEscolhido] = React.useState<string | null>(inicial.tipo);
   const [valores, setValores] = React.useState<Record<string, string>>(inicial.valores);
+  const [colunas, setColunas] = React.useState<string[] | null>(null);
   const [previa, setPrevia] = React.useState<PreviaRelatorio | null>(null);
   const [mensagem, setMensagem] = React.useState<string | null>(null);
   const [envioEmail, setEnvioEmail] = React.useState<EnvioRelatorio | null>(null);
@@ -58,7 +60,8 @@ function Conteudo() {
 
   const filtros = relatorio.filtros;
   const efetivos = valoresEfetivos(filtros, valores);
-  const consulta = paraQuery(efetivos);
+  const consulta = paraQuery(efetivos, colunas);
+  const disponiveis = relatorio.colunas_disponiveis ?? [];
   const { canais } = dados;
 
   const limpar = () => {
@@ -118,7 +121,7 @@ function Conteudo() {
     const r = await acao.executar(() =>
       api.enviarRelatorioEmail(relatorio!.tipo, {
         formato,
-        filtros: paraCorpo(filtros, efetivos),
+        filtros: paraCorpo(filtros, efetivos, colunas),
         destinatario_id: destinatarioId,
       }),
     );
@@ -135,6 +138,7 @@ function Conteudo() {
           onChange={(e) => {
             setEscolhido(e.target.value);
             setValores({});
+            setColunas(null);
             setEnvioEmail(null);
             limpar();
           }}
@@ -163,6 +167,26 @@ function Conteudo() {
           }}
         />
       </div>
+
+      {disponiveis.length > 0 ? (
+        <div className="mt-4">
+          <ColunasRelatorio
+            key={relatorio.tipo}
+            disponiveis={disponiveis}
+            filtros={filtros}
+            valores={efetivos}
+            selecao={colunas}
+            onAplicar={(c) => {
+              setColunas(c);
+              limpar();
+            }}
+            onRestaurar={() => {
+              setColunas(null);
+              limpar();
+            }}
+          />
+        </div>
+      ) : null}
 
       <div className="mt-4 flex flex-col gap-3">
         <Button
@@ -229,7 +253,7 @@ function Conteudo() {
       {envioEmail ? (
         <AcompanharEnvio key={envioEmail.id} id={envioEmail.id} inicial={envioEmail} />
       ) : null}
-      {previa ? <Previa previa={previa} filtros={filtros} consulta={consulta} /> : null}
+      {previa ? <Previa previa={previa} filtros={filtros} consulta={paraQuery(efetivos)} /> : null}
 
       <DrawerEnvio
         modo={drawer}

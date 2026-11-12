@@ -65,8 +65,19 @@ MSG_VEICULO_OCUPADO = (
 
 COLUNAS_CONFIG = (
     "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
-    "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao"
+    "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao,"
+    "vigilante_km"
 )
+
+
+def _filtro_dono(q: Any, usuario_id: str | None, ou_status: tuple[str, ...] | None) -> Any:
+    """Dono; com `ou_status` (vigilante): dono OU status na lista. Os valores são UUID/enum
+    gerados no servidor (nunca texto livre do cliente)."""
+    if usuario_id is None:
+        return q
+    if not ou_status:
+        return q.eq("usuario_id", usuario_id)
+    return q.or_(f"usuario_id.eq.{usuario_id},status.in.({','.join(ou_status)})")
 
 
 def _configuracoes(r: dict[str, Any]) -> Configuracoes:
@@ -81,6 +92,7 @@ def _configuracoes(r: dict[str, Any]) -> Configuracoes:
         motorista=bool(r.get("motorista")),
         motorista_registra=bool(r.get("motorista_registra")),
         motorista_localizacao=bool(r.get("motorista_localizacao")),
+        vigilante_km=bool(r.get("vigilante_km")),
     )
 
 
@@ -124,6 +136,7 @@ MSG_OCUPADO_ADMIN = "O sistema está processando outra alteração administrativ
 # abaixo do gunicorn --timeout 30. O timeout HTTP do PostgREST (20 s) fica acima desse orçamento
 # por tentativa e abaixo do gunicorn.
 TIMEOUT_POSTGREST = 20
+LIMITE_LANCAMENTOS_KM = 10_000  # teto do cruzamento km x vigilante (relatórios)
 LOTE_IN = 50  # ids por consulta `in (...)` (UUIDs longos: evita URL gigante)
 
 MSG_KM_OBRIGATORIO = (
@@ -148,6 +161,8 @@ MSG_LOCALIZACAO_OBRIGATORIA = (
 MSG_REGISTRO_INVALIDO = "Não foi possível registrar: viagem ou momento inválido."
 MSG_DEP_MOTORISTA_REGISTRA = "'Motorista registra' exige o perfil Motorista ligado."
 MSG_DEP_LOCALIZACAO = "'Localização do motorista' exige 'Motorista registra' ligado."
+MSG_DEP_VIGILANTE_KM = "'KM pelo vigilante' exige a Quilometragem ligada."
+MSG_DEP_VIGILANTE_KM_DESLIGAR = "Desligue 'KM pelo vigilante' antes de desligar a Quilometragem."
 
 MSG_CHECKLIST_SAIDA = "O checklist de saída é obrigatório antes de registrar a saída."
 MSG_CHECKLIST_CHEGADA = "O checklist de chegada é obrigatório antes de registrar a chegada."
@@ -302,6 +317,10 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return RequisicaoInvalida(MSG_LOCALIZACAO_OBRIGATORIA, "localizacao_obrigatoria")
     if codigo == "AG037":
         return RequisicaoInvalida(MSG_REGISTRO_INVALIDO, "registro_invalido")
+    if codigo == "23514" and "ck_configuracoes_vigilante" in texto:
+        return DependenciaRecurso(MSG_DEP_VIGILANTE_KM_DESLIGAR)
+    if codigo == "AG010" and "vigilante" in texto.lower():
+        return DependenciaRecurso(MSG_DEP_VIGILANTE_KM)
     if codigo == "23514" and "ck_configuracoes_localizacao" in texto:
         return DependenciaRecurso(MSG_DEP_LOCALIZACAO)
     if codigo == "23514" and "ck_configuracoes_motorista" in texto:
@@ -451,11 +470,11 @@ class SupabaseRepositorio:
         limite: int,
         offset: int,
         motorista_id: str | None = None,
+        ou_status: tuple[str, ...] | None = None,
     ) -> list[Requisicao]:
         def consulta() -> Any:
             q = self._c.table("requisicoes").select(COLUNAS_REQ)
-            if usuario_id is not None:
-                q = q.eq("usuario_id", usuario_id)
+            q = _filtro_dono(q, usuario_id, ou_status)
             if motorista_id is not None:
                 q = q.eq("motorista_id", motorista_id)
             if status is not None:
@@ -465,12 +484,16 @@ class SupabaseRepositorio:
         return list(_exec(consulta).data)
 
     def contar_requisicoes(
-        self, *, usuario_id: str | None, status: str | None, motorista_id: str | None = None
+        self,
+        *,
+        usuario_id: str | None,
+        status: str | None,
+        motorista_id: str | None = None,
+        ou_status: tuple[str, ...] | None = None,
     ) -> int:
         def consulta() -> Any:
             q = self._c.table("requisicoes").select("id", count="exact").limit(1)  # type: ignore[arg-type]
-            if usuario_id is not None:
-                q = q.eq("usuario_id", usuario_id)
+            q = _filtro_dono(q, usuario_id, ou_status)
             if motorista_id is not None:
                 q = q.eq("motorista_id", motorista_id)
             if status is not None:
@@ -596,21 +619,24 @@ class SupabaseRepositorio:
         incluir_nomes: bool,
         incluir_trajeto: bool,
         limite: int,
+        incluir_observacao: bool = False,
     ) -> dict[str, Any]:
-        return self._rpc_relatorio(
-            "rel_movimentacao",
-            {
-                "p_inicio": inicio,
-                "p_fim": fim,
-                "p_campo_data": campo_data,
-                "p_unidade": unidade,
-                "p_veiculo": veiculo,
-                "p_usuario": usuario,
-                "p_incluir_nomes": incluir_nomes,
-                "p_incluir_trajeto": incluir_trajeto,
-                "p_limite": limite,
-            },
-        )
+        params: dict[str, Any] = {
+            "p_inicio": inicio,
+            "p_fim": fim,
+            "p_campo_data": campo_data,
+            "p_unidade": unidade,
+            "p_veiculo": veiculo,
+            "p_usuario": usuario,
+            "p_incluir_nomes": incluir_nomes,
+            "p_incluir_trajeto": incluir_trajeto,
+            "p_limite": limite,
+        }
+        if incluir_observacao:
+            # Só enviado quando pedido: o RPC antigo (sem este parâmetro) segue funcionando até a
+            # migration da observação ser aplicada.
+            params["p_incluir_observacao"] = True
+        return self._rpc_relatorio("rel_movimentacao", params)
 
     def _rel_agrupado(
         self,
@@ -685,6 +711,67 @@ class SupabaseRepositorio:
             "rel_auditoria",
             {"p_inicio": inicio, "p_fim": fim, "p_acao": acao, "p_limite": limite},
         )
+
+    def lancamentos_vigilante_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        incluir_nomes: bool,
+    ) -> dict[str, dict[str, Any]]:
+        perfis = _exec(
+            lambda: self._c.table("perfis").select("id,nome").eq("role", "vigilante").execute()
+        ).data
+        if not perfis:
+            return {}
+        nomes = {str(p["id"]): str(p["nome"]) for p in perfis}
+        lista = ",".join(sorted(nomes))  # UUIDs lidos do banco, nunca texto do cliente
+
+        def consulta() -> Any:
+            q = (
+                self._c.table("requisicoes")
+                .select(
+                    "id,veiculo_id,saida_real_em,km_saida,km_chegada,"
+                    "saida_registrada_por,chegada_registrada_por"
+                )
+                .eq("status", "concluida")
+                .gte("saida_real_em", inicio)
+                .lt("saida_real_em", fim)
+                .not_.is_("km_saida", "null")
+                .not_.is_("km_chegada", "null")
+                .or_(f"saida_registrada_por.in.({lista}),chegada_registrada_por.in.({lista})")
+            )
+            if unidade is not None:
+                q = q.eq("unidade", unidade)
+            if veiculo is not None:
+                q = q.eq("veiculo_id", veiculo)
+            if usuario is not None:
+                q = q.eq("usuario_id", usuario)
+            return q.order("saida_real_em").range(0, LIMITE_LANCAMENTOS_KM - 1).execute()
+
+        saida: dict[str, dict[str, Any]] = {}
+        for r in _exec(consulta).data:
+            # Só conta quem registrou o campo E o km desse campo existe (a saída sem km de um
+            # vigilante, completada pela equipe na chegada, não é lançamento dele).
+            autores = [
+                nomes[a]
+                for a, km in (
+                    (r["saida_registrada_por"], r["km_saida"]),
+                    (r["chegada_registrada_por"], r["km_chegada"]),
+                )
+                if a in nomes and km is not None
+            ]
+            if not autores:
+                continue
+            saida[str(r["id"])] = {
+                "veiculo_id": r["veiculo_id"],
+                "saida_real_em": r["saida_real_em"],
+                "lancado_por": " e ".join(dict.fromkeys(autores)) if incluir_nomes else None,
+            }
+        return saida
 
     def rel_opcionais_km(
         self,

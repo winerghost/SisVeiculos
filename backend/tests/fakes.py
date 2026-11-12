@@ -150,23 +150,37 @@ class RepoMemoria(
         limite: int,
         offset: int,
         motorista_id: str | None = None,
+        ou_status: tuple[str, ...] | None = None,
     ) -> list[Requisicao]:
         itens = [
             dict(r)
             for r in self.requisicoes.values()
-            if (usuario_id is None or r["usuario_id"] == usuario_id)
+            if (
+                usuario_id is None
+                or r["usuario_id"] == usuario_id
+                or r["status"] in (ou_status or ())
+            )
             and (motorista_id is None or r.get("motorista_id") == motorista_id)
             and (status is None or r["status"] == status)
         ]
         return itens[offset : offset + limite]
 
     def contar_requisicoes(
-        self, *, usuario_id: str | None, status: str | None, motorista_id: str | None = None
+        self,
+        *,
+        usuario_id: str | None,
+        status: str | None,
+        motorista_id: str | None = None,
+        ou_status: tuple[str, ...] | None = None,
     ) -> int:
         return sum(
             1
             for r in self.requisicoes.values()
-            if (usuario_id is None or r["usuario_id"] == usuario_id)
+            if (
+                usuario_id is None
+                or r["usuario_id"] == usuario_id
+                or r["status"] in (ou_status or ())
+            )
             and (motorista_id is None or r.get("motorista_id") == motorista_id)
             and (status is None or r["status"] == status)
         )
@@ -383,6 +397,13 @@ class RepoMemoria(
     def _ck(nome: str) -> Exception:
         return erro_db("23514", f'violates check constraint "{nome}"')
 
+    def _lancamento_vigilante_sem_km(self, r: Requisicao, campos: dict[str, Any]) -> bool:
+        """Vigilante com `vigilante_km` desligada registra sem km (decisão do ramo no banco)."""
+        ator = self.perfis.get(
+            str(campos.get("saida_registrada_por") or campos.get("chegada_registrada_por") or "")
+        )
+        return bool(ator and ator.role == "vigilante" and not self.config.vigilante_km)
+
     def _triggers_km(self, r: Requisicao, campos: dict[str, Any]) -> None:
         """Emula as constraints e o trigger da migration 18 (erros traduzidos de verdade)."""
         for c in ("km_saida", "km_chegada"):
@@ -398,7 +419,7 @@ class RepoMemoria(
             raise self._ck("ck_requisicoes_km_saida_nao_negativo")
         if any(v > 2_147_483_647 for v in km):
             raise erro_db("22003", "integer out of range")
-        if self.config.quilometragem:
+        if self.config.quilometragem and not self._lancamento_vigilante_sem_km(r, campos):
             if novo["status"] == "em_uso" and novo["km_saida"] is None:
                 raise erro_db("AG012", "Quilometragem de saída é obrigatória.")
             if novo["status"] == "concluida" and len(km) < 2:

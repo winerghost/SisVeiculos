@@ -22,6 +22,10 @@ function Conteudo() {
     else await cfg.recarregar();
   }
 
+  // `exige` traz chaves; o rótulo vem do próprio item devolvido pela API (fallback: a chave).
+  const rotuloDe = (chave: string) =>
+    cfg.dados?.itens.find((x) => x.chave === chave)?.rotulo ?? chave;
+
   return (
     <>
       <p className="mb-4 text-texto-2">
@@ -50,6 +54,11 @@ function Conteudo() {
                     {i.rotulo}
                   </h2>
                   <p className="text-texto-2">{i.descricao}</p>
+                  {i.exige && i.exige.length > 0 ? (
+                    <p className="mt-1 text-sm text-texto-2">
+                      Exige: {i.exige.map((k) => rotuloDe(k)).join(', ')}
+                    </p>
+                  ) : null}
                   {i.motivo_indisponibilidade ? (
                     <p className="mt-2 rounded-padrao bg-[#fff1d6] px-3 py-1 text-[#7a4a00]">
                       {i.motivo_indisponibilidade}

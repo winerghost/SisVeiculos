@@ -37,6 +37,8 @@ MSG_MOTORISTA_INVALIDO = (
 )
 ESTADOS_ATRIBUICAO = ("autorizada", "em_uso")  # onde o motorista pode ser atribuído ou trocado
 ACOES_MOTORISTA = frozenset({"registrar_saida", "registrar_chegada"})
+# Vigilante: registra saída/chegada de QUALQUER requisição nestes estados (e só isso).
+ESTADOS_VIGILANTE = ("autorizada", "em_uso")
 MSG_OCUPADO = (
     "Este veículo já possui uma requisição em aberto. "
     "Ele só aceita novo pedido após a conclusão, negativa ou cancelamento da anterior."
@@ -255,7 +257,8 @@ def _autor(
     if not ator:
         return None
     if ocultar_nomes and ator != req.get("usuario_id"):
-        return {"papel": PAPEL_EQUIPE}
+        # Sem nome da equipe; o motorista designado aparece como tal (id já conhecido da viagem).
+        return {"papel": "Motorista" if ator == req.get("motorista_id") else PAPEL_EQUIPE}
     nome = nomes.get(ator)
     return {"nome": nome} if nome else None
 
@@ -279,6 +282,10 @@ class ServicoRequisicoes:
         t = TRANSICOES[acao]
         if req["status"] not in t.origem:
             return False
+        if perfil.role == "vigilante":
+            # Registra saída/chegada de qualquer autorizada/em_uso; nunca autoriza, nega
+            # nem cancela (a origem do estado já foi checada acima).
+            return acao in ACOES_MOTORISTA
         if perfil.role == "motorista":
             # Só registra saída/chegada das PRÓPRIAS viagens e só com o recurso ligado.
             return (
@@ -328,14 +335,15 @@ class ServicoRequisicoes:
             saida["autorizar"] = {"campos_obrigatorios": [], "campos_opcionais": ["motorista_id"]}
         # Localização: só o motorista a informa (autorizador/admin registrando não coleta).
         coleta = perfil.role == "motorista" and config.motorista_localizacao
-        if not config.quilometragem and not config.checklist and not coleta:
+        pede_km = self._pede_km(perfil, config)
+        if not pede_km and not config.checklist and not coleta:
             return saida
         feitos = (checklists or {}).get(req["id"], set())
         for acao, momento in (("registrar_saida", "saida"), ("registrar_chegada", "chegada")):
             if not self._pode(acao, perfil, req, config):
                 continue
             campos: list[str] = []
-            if config.quilometragem:
+            if pede_km:
                 if acao == "registrar_saida":
                     campos = ["km_saida"]
                 else:
@@ -355,6 +363,13 @@ class ServicoRequisicoes:
                 entrada["checklist_pendente"] = momento
             saida[acao] = entrada
         return saida
+
+    @staticmethod
+    def _pede_km(perfil: Perfil, config: Configuracoes) -> bool:
+        """Vigilante só informa km com `vigilante_km` ligada (e a quilometragem ligada)."""
+        if perfil.role == "vigilante":
+            return config.quilometragem and config.vigilante_km
+        return config.quilometragem
 
     def apresentar(self, perfil: Perfil, req: Requisicao) -> dict[str, Any]:
         return self.apresentar_lote(perfil, [req])[0]
@@ -385,7 +400,7 @@ class ServicoRequisicoes:
         )
         return [
             {
-                **self._sem_equipe(r, staff),
+                **self._sem_equipe(r, staff, perfil),
                 # Sempre presentes (null se nunca gravados): desligar o recurso não esconde
                 # o que já foi gravado.
                 "km_saida": r.get("km_saida"),
@@ -399,7 +414,12 @@ class ServicoRequisicoes:
                     r, nomes, ocultar_nomes=not staff, agora=agora
                 ),
                 "veiculo_descricao": veiculos.get(r.get("veiculo_id") or ""),
-                "solicitante_foto_url": fotos.get(r.get("usuario_id") or ""),
+                # Só a equipe e o próprio dono veem a foto do solicitante (minimização, LGPD).
+                "solicitante_foto_url": (
+                    fotos.get(r.get("usuario_id") or "")
+                    if staff or r.get("usuario_id") == perfil.id
+                    else None
+                ),
                 **self._autores(r, staff, nomes, fotos),
             }
             for r in reqs
@@ -411,15 +431,21 @@ class ServicoRequisicoes:
         return {"id": mid, "nome": nomes.get(mid)} if mid else None
 
     @staticmethod
-    def _sem_equipe(r: Requisicao, staff: bool) -> Requisicao:
-        """Visão do solicitante: ids de quem agiu só permanecem se for o próprio dono."""
+    def _sem_equipe(r: Requisicao, staff: bool, perfil: Perfil | None = None) -> Requisicao:
+        """Visão do solicitante: ids de quem agiu só permanecem se for o próprio dono.
+
+        Vigilante vendo requisição alheia: a observação (texto livre) não é devolvida.
+        """
         if staff:
             return r
-        return {
+        visivel = {
             k: v
             for k, v in r.items()
             if k not in CAMPOS_ATORES + ("cancelada_por",) or v == r.get("usuario_id")
         }
+        if perfil is not None and perfil.role == "vigilante" and r.get("usuario_id") != perfil.id:
+            visivel.pop("observacao", None)
+        return visivel
 
     @staticmethod
     def _autores(
@@ -443,6 +469,8 @@ class ServicoRequisicoes:
             if req is None or req.get("motorista_id") != perfil.id:
                 raise NaoEncontrado("Viagem não encontrada.")
             return req
+        if perfil.role == "vigilante" and req is not None and req["status"] in ESTADOS_VIGILANTE:
+            return req  # vê para registrar saída/chegada (só autorizada/em_uso)
         # 404 (e não 403) para não revelar a existência de requisição alheia.
         if req is None or (perfil.role not in STAFF and req["usuario_id"] != perfil.id):
             raise NaoEncontrado("Requisição não encontrada.")
@@ -461,15 +489,21 @@ class ServicoRequisicoes:
         offset = max(0, offset)
         dono: str | None = None if perfil.role in STAFF else perfil.id
         motorista: str | None = None
+        ou_status = ESTADOS_VIGILANTE if perfil.role == "vigilante" else None
         if perfil.role == "motorista":
             # O motorista nunca é dono: enxerga só as viagens atribuídas (filtro na consulta).
             self.exigir_motorista_ligado()
             dono, motorista = None, perfil.id
         itens = self._repo.listar_requisicoes(
-            usuario_id=dono, status=status, limite=limite, offset=offset, motorista_id=motorista
+            usuario_id=dono,
+            status=status,
+            limite=limite,
+            offset=offset,
+            motorista_id=motorista,
+            ou_status=ou_status,
         )
         total = self._repo.contar_requisicoes(
-            usuario_id=dono, status=status, motorista_id=motorista
+            usuario_id=dono, status=status, motorista_id=motorista, ou_status=ou_status
         )
         return {"itens": self.apresentar_lote(perfil, itens), "total": total}
 
@@ -538,7 +572,7 @@ class ServicoRequisicoes:
         campos = {
             "status": t.destino,
             t.campo_ator: perfil.id,
-            **self._km(acao, req, corpo),
+            **self._km(acao, req, corpo, perfil),
             # Autorizador/admin NÃO coleta localização: latitude/longitude do corpo são ignoradas.
             **self._motorista_na_autorizacao(acao, perfil, corpo, config),
         }
@@ -557,7 +591,7 @@ class ServicoRequisicoes:
         Km e checklist seguem as mesmas validações do registro da equipe. Com a localização ligada,
         latitude e longitude são obrigatórias (sem exceção); desligada, são ignoradas.
         """
-        km = self._km(acao, req, corpo)
+        km = self._km(acao, req, corpo, perfil)
         coordenadas = validar_localizacao(corpo) if config.motorista_localizacao else None
         momento = "saida" if acao == "registrar_saida" else "chegada"
         resultado = self._repo.registrar_transicao_motorista(
@@ -584,16 +618,25 @@ class ServicoRequisicoes:
         `motorista_alterado_por` (o autorizador/admin do JWT) vai no MESMO UPDATE que muda
         `motorista_id`: o trigger do banco o exige (AG002) e o zera em seguida.
         """
-        if acao != "autorizar" or not config.motorista or corpo is None:
+        if acao != "autorizar" or not config.motorista:
             return {}
-        if not isinstance(corpo, dict):
+        if corpo is not None and not isinstance(corpo, dict):
             raise RequisicaoInvalida("Envie um objeto JSON.")
-        if corpo.get("motorista_id") is None:
-            return {}
+        escolhido = None if corpo is None else corpo.get("motorista_id")
+        if escolhido is None:
+            escolhido = self.motorista_padrao()  # exatamente 1 motorista ativo, senão None
+            if escolhido is None:
+                return {}
+            return {"motorista_id": escolhido, "motorista_alterado_por": perfil.id}
         return {
-            "motorista_id": self.validar_motorista(corpo["motorista_id"]),
+            "motorista_id": self.validar_motorista(escolhido),
             "motorista_alterado_por": perfil.id,
         }
+
+    def motorista_padrao(self) -> str | None:
+        """Id do único motorista ATIVO, ou None (nenhum ou mais de um: o autorizador escolhe)."""
+        ativos = self._repo.listar_perfis(role="motorista", ativo=True, limite=2, offset=0)
+        return str(ativos[0]["id"]) if len(ativos) == 1 else None
 
     def _exigir_checklist(self, acao: str, req: Requisicao) -> None:
         """Recurso ligado: o checklist do momento precisa existir antes da saída/chegada.
@@ -610,7 +653,7 @@ class ServicoRequisicoes:
                 f"O checklist de {rotulo} é obrigatório antes de registrar a {rotulo}."
             )
 
-    def _km(self, acao: str, req: Requisicao, corpo: Any) -> dict[str, int]:
+    def _km(self, acao: str, req: Requisicao, corpo: Any, perfil: Perfil) -> dict[str, int]:
         """Km da transição. Recurso desligado: o corpo é ignorado (nada gravado, sem erro).
 
         Ligado: saída exige `km_saida`; chegada exige `km_chegada` e, se a saída ficou sem km
@@ -619,8 +662,8 @@ class ServicoRequisicoes:
         """
         if acao not in {"registrar_saida", "registrar_chegada"}:
             return {}
-        if not self._repo.ler_configuracoes().quilometragem:
-            return {}
+        if not self._pede_km(perfil, self._repo.ler_configuracoes()):
+            return {}  # vigilante sem `vigilante_km`: o corpo é ignorado
         if corpo is None:
             corpo = {}
         if not isinstance(corpo, dict):
@@ -648,6 +691,6 @@ class ServicoRequisicoes:
             and req["usuario_id"] == perfil.id
         ):
             return "Você não pode decidir sobre a sua própria requisição."
-        if acao == "cancelar":
+        if acao == "cancelar" and perfil.role != "vigilante":
             return "Você só pode cancelar a sua própria requisição enquanto estiver solicitada."
         return "Você não tem permissão para esta ação."

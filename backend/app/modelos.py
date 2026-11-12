@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-Role = Literal["solicitante", "autorizador", "admin", "motorista"]
+Role = Literal["solicitante", "autorizador", "admin", "motorista", "vigilante"]
 Status = Literal["solicitada", "autorizada", "em_uso", "concluida", "negada", "cancelada"]
 
 ESTADOS_ABERTOS: frozenset[str] = frozenset({"solicitada", "autorizada", "em_uso"})
@@ -40,6 +40,7 @@ class Configuracoes:
     motorista: bool = False
     motorista_registra: bool = False  # exige `motorista`
     motorista_localizacao: bool = False  # exige `motorista_registra`
+    vigilante_km: bool = False  # exige `quilometragem`
 
     def como_dict(self) -> dict[str, bool]:
         return {
@@ -53,4 +54,5 @@ class Configuracoes:
             "motorista": self.motorista,
             "motorista_registra": self.motorista_registra,
             "motorista_localizacao": self.motorista_localizacao,
+            "vigilante_km": self.vigilante_km,
         }

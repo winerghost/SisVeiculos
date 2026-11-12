@@ -220,9 +220,12 @@ class ServicoChecklist:
     def _requisicao_operador(
         self, perfil: Perfil, requisicao_id: str, *, escrita: bool
     ) -> Requisicao:
-        """Staff, ou o motorista da própria viagem (escrita só com `motorista_registra`)."""
+        """Staff, o motorista da própria viagem (escrita só com `motorista_registra`) ou o
+        vigilante (só escrita: `obter` limita a requisições autorizadas/em uso)."""
         req = self._requisicoes.obter(perfil, requisicao_id)  # 404 para requisição alheia
         if perfil.role in STAFF:
+            return req
+        if perfil.role == "vigilante" and escrita:
             return req
         if perfil.role == "motorista" and not (
             escrita and not self._repo.ler_configuracoes().motorista_registra

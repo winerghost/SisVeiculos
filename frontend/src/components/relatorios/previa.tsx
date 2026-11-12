@@ -29,6 +29,12 @@ export function Previa({
         aviso="Resumo gerado por IA do relatório completo; confira com o arquivo do relatório"
         gerar={() => api.resumoRelatorio(previa.tipo, consulta)}
       />
+      {previa.colunas_omitidas && previa.colunas_omitidas.length > 0 ? (
+        <p role="note" className="mt-3 rounded-padrao bg-[#e8ecf2] px-3 py-2 text-texto-2">
+          Não aparecem na prévia, só no arquivo:{' '}
+          {previa.colunas_omitidas.map((k) => k.replace(/_/g, ' ')).join(', ')}.
+        </p>
+      ) : null}
       {previa.truncado ? (
         <p role="note" className="mt-3 rounded-padrao bg-[#fff1d6] px-3 py-2 text-[#7a4a00]">
           Mostrando as primeiras {previa.linhas.length} linhas. Baixe o arquivo para ver tudo.

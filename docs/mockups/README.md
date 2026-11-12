@@ -1,6 +1,6 @@
 # Mockups do app (referência visual)
 
-Imagens de 390×844 px (celular) do sistema de controle de veículos da AGU.
+Imagens de 390×844 px (celular, escala 2x), geradas por captura das telas reais (API mockada; ver `docs/plano-de-acao-mockups.md`) do sistema de controle de veículos da AGU.
 Servem como referência de **layout e visual**. Regras de negócio, validações e permissões estão no `CLAUDE.md`; em caso de conflito, vale o `CLAUDE.md`.
 
 ## Telas
@@ -19,10 +19,30 @@ Servem como referência de **layout e visual**. Regras de negócio, validações
 | `10-configuracoes.png` | Recursos opcionais: Quilometragem, Abastecimento e manutenção, Checklist, MFA | Admin |
 | `11-seletor-data-hora.png` | Seletor de data e hora em gaveta (Drawer) com calendário e hora/minuto | Solicitante |
 
+## Telas capturadas das rotas reais (novas)
+
+| Arquivo | Tela |
+|---|---|
+| `12-detalhe-requisicao` | Detalhe da requisição com linha do tempo |
+| `13-viagem` | Lista de viagens em uso (com km) |
+| `14-checklist-saida` | Checklist na saída |
+| `15-motorista`, `16-motorista-detalhe` | Motorista |
+| `17-notificacoes`, `56-sino-notificacoes` | Notificações |
+| `18-redefinir-senha`, `19-convite-aceite` | Redefinir senha e aceite de convite |
+| `30-admin-inicio`, `31-convites-pendentes`, `32-acessos` | Admin: início, convites e acessos |
+| `33-configuracoes-recursos-ligados`, `34-configuracoes-saudacoes-ia` | Configurações |
+| `35-seguranca-mfa`, `36-detalhe-usuario-foto` | Segurança (TOTP) e foto do usuário |
+| `50` a `52` | Dashboards: operação, painel, resumo com IA |
+| `53`, `54` | Relatórios: filtros e prévia com resumo IA |
+| `55-home-saudacao-sazonal` | Banner de saudação |
+| `57-menu-inferior-autorizador`, `58-menu-admin` | Menus |
+
+Regerar: `cd frontend && npx serve out -l 3100` e `npx playwright test -c playwright.capturas.config.ts`.
+
 ## Como usar
 
 - A biblioteca de componentes é o shadcn/ui com Tailwind. Reproduza a estrutura, a hierarquia e o espaçamento das telas.
-- As telas 01, 02 e 04 a 10 foram desenhadas antes dessa escolha e usam campos de 48 px e raio de 10 px. Vale o padrão da tela 03 e do `CLAUDE.md`: raio de 8 px e campos de 44 px.
+- Todos os PNGs são capturas das telas reais (campos de 48 px, raio de 8 px nos campos). A divergência com os 44 px do `CLAUDE.md` está registrada no plano de ação.
 - O frontend só exibe. Mensagens de erro, botões disponíveis e estados vêm da API (por exemplo, o aviso de "Horário indisponível" na tela 03 é texto devolvido pelo servidor). O calendário da tela 11 não calcula disponibilidade.
 - Nomes, e-mails, horários e placas são dados de exemplo.
 - As opções (Quilometragem, Checklist etc.) só mostram campos extras quando o recurso estiver habilitado em Configurações; essas variações ainda não foram desenhadas.

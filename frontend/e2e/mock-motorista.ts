@@ -27,6 +27,8 @@ export interface OpcoesMotorista {
   trocarMotorista?: boolean;
   /** Dados de GET /api/admin/requisicoes/<id>/localizacoes; sem isto a API responde 403. */
   localizacoesAdmin?: Record<string, unknown>[];
+  /** GET /api/motoristas devolve `padrao` (contrato assumido: id do único motorista ativo). */
+  motoristaPadrao?: boolean;
 }
 
 const OUTRO = { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', nome: 'Rita Alves' };
@@ -233,7 +235,12 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
   });
 
   await page.route('**/api/motoristas', (route) =>
-    route.fulfill({ json: { itens: [MOTORISTA, OUTRO] } }),
+    route.fulfill({
+      json: {
+        itens: opcoes.motoristaPadrao ? [MOTORISTA] : [MOTORISTA, OUTRO],
+        padrao: opcoes.motoristaPadrao ? MOTORISTA.id : null,
+      },
+    }),
   );
   await page.route(/\/api\/requisicoes\/[^/]+\/motorista$/, async (route) => {
     const corpo = route.request().postDataJSON() as { motorista_id: string };

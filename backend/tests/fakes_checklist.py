@@ -79,7 +79,7 @@ class ChecklistMemoria:
             if (
                 p is None
                 or not p.ativo
-                or not (p.role in {"autorizador", "admin"} or motorista_da_viagem)
+                or not (p.role in {"autorizador", "admin", "vigilante"} or motorista_da_viagem)
             ):
                 raise erro_db("AG002", "Apenas autorizador ou admin ativo registra checklist.")
             if avarias != (descricao_avarias is not None):

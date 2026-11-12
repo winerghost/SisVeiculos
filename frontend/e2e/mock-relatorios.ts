@@ -21,7 +21,23 @@ export interface OpcoesRelatorios {
   semEscopo?: boolean;
   /** POST previa/resumo responde com este erro da API. */
   erroResumo?: { status: number; codigo: string; mensagem: string };
+  /**
+   * Contrato assumido (plano-motorista-vigilante §3): o catálogo de "Movimentação" traz o filtro
+   * bool `lancado_por_vigilante` e a prévia traz as colunas `lancado_por`/`km_*`.
+   */
+  kmVigilante?: boolean;
+  /** Catálogo de "Movimentação" traz `colunas_disponiveis`; a prévia respeita `colunas`. */
+  selecaoColunas?: boolean;
+  /** Prévia/arquivo respondem 400 a `colunas` (mensagem vinda da API). */
+  erroColunas?: string;
 }
+
+const COLUNAS_DISPONIVEIS = [
+  { chave: 'data', rotulo: 'Data', exige_flag: null },
+  { chave: 'solicitante', rotulo: 'Solicitante', exige_flag: null },
+  { chave: 'situacao', rotulo: 'Situação', exige_flag: null },
+  { chave: 'observacao', rotulo: 'Observação', exige_flag: 'incluir_observacao' },
+];
 
 const erro = (route: Route, status: number, codigo: string, mensagem: string) =>
   route.fulfill({ status, json: { erro: { codigo, mensagem } } });
@@ -94,6 +110,15 @@ const USO = {
   ],
 };
 
+const FILTRO_VIGILANTE = {
+  nome: 'lancado_por_vigilante',
+  rotulo: 'Lançado por vigilante',
+  tipo: 'bool',
+  opcoes: null,
+  obrigatorio: false,
+  padrao: false,
+};
+
 export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}) {
   const consultas: { rota: string; query: Record<string, string> }[] = [];
   const corposEmail: unknown[] = [];
@@ -118,7 +143,32 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
       const autorizador = quem === 'autorizador';
       return route.fulfill({
         json: {
-          relatorios: autorizador ? [MOVIMENTACAO, PENDENCIAS, USO] : [MOVIMENTACAO, PENDENCIAS],
+          relatorios: (autorizador
+            ? [MOVIMENTACAO, PENDENCIAS, USO]
+            : [MOVIMENTACAO, PENDENCIAS]
+          ).map((r) => {
+            const base =
+              opcoes.kmVigilante && r.tipo === 'movimentacao'
+                ? { ...r, filtros: [...r.filtros, FILTRO_VIGILANTE] }
+                : r;
+            return opcoes.selecaoColunas && r.tipo === 'movimentacao'
+              ? {
+                  ...base,
+                  filtros: [
+                    ...base.filtros,
+                    {
+                      nome: 'incluir_observacao',
+                      rotulo: 'Incluir observação',
+                      tipo: 'bool',
+                      opcoes: null,
+                      obrigatorio: false,
+                      padrao: false,
+                    },
+                  ],
+                  colunas_disponiveis: COLUNAS_DISPONIVEIS,
+                }
+              : base;
+          }),
           canais: {
             download: true,
             email: opcoes.email ?? false,
@@ -175,20 +225,52 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
         },
       });
     }
+    if ((acao === 'previa' || acao === 'arquivo') && opcoes.erroColunas && query.colunas) {
+      return erro(route, 400, 'coluna_invalida', opcoes.erroColunas);
+    }
     if (acao === 'previa') {
+      const pedidas = query.colunas ? query.colunas.split(',') : null;
+      const todas = [
+        { chave: 'data', rotulo: 'Data' },
+        { chave: 'solicitante', rotulo: 'Solicitante' },
+        { chave: 'situacao', rotulo: 'Situação' },
+      ];
+      const cols = pedidas
+        ? pedidas.map((k) => todas.find((c) => c.chave === k)).filter((c) => c !== undefined)
+        : null;
       return route.fulfill({
         json: {
           tipo,
           rotulo: 'Movimentação de veículos',
           filtros: { ...query },
-          colunas: [
-            { chave: 'data', rotulo: 'Data' },
-            { chave: 'solicitante', rotulo: 'Solicitante' },
-            { chave: 'situacao', rotulo: 'Situação' },
+          colunas_omitidas: query.incluir_observacao === 'true' ? ['observacao'] : [],
+          colunas: cols ?? [
+            ...todas,
+            ...(opcoes.kmVigilante
+              ? [
+                  { chave: 'km_saida', rotulo: 'Km de saída' },
+                  { chave: 'km_chegada', rotulo: 'Km de chegada' },
+                  { chave: 'lancado_por', rotulo: 'KM lançado por' },
+                ]
+              : []),
           ],
           linhas: [
-            { data: '05/11/2026', solicitante: 'Marcos Silva', situacao: 'Concluída' },
-            { data: '06/11/2026', solicitante: 'Ana Souza', situacao: 'Em uso' },
+            {
+              data: '05/11/2026',
+              solicitante: 'Marcos Silva',
+              situacao: 'Concluída',
+              km_saida: '1200',
+              km_chegada: '1245',
+              lancado_por: 'Paulo Reis (vigilante)',
+            },
+            {
+              data: '06/11/2026',
+              solicitante: 'Ana Souza',
+              situacao: 'Em uso',
+              km_saida: '1245',
+              km_chegada: '',
+              lancado_por: 'Paulo Reis (vigilante)',
+            },
           ],
           total_linhas: opcoes.truncado ? 50 : 2,
           truncado: opcoes.truncado ?? false,

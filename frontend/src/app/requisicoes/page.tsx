@@ -62,7 +62,7 @@ function Conteudo() {
               req={r}
               mostrarSolicitante={todas}
               ocupado={acao.ocupado}
-              onAcao={(req, a) => void acao.executar(req, a)}
+              onAcao={(req, a, c) => void acao.executar(req, a, c)}
             />
           ))}
         </ul>

@@ -130,7 +130,7 @@ def listar_requisicoes() -> Any:
 
 
 @api.post("/requisicoes")
-@requer_auth("solicitante", "autorizador", "admin")
+@requer_auth("solicitante", "autorizador", "admin", "vigilante")
 @limiter.limit(_limite_escrita)
 def criar_requisicao() -> Any:
     corpo = request.get_json(silent=True)
@@ -164,14 +164,14 @@ def negar(requisicao_id: str) -> Any:
 
 
 @api.post("/requisicoes/<requisicao_id>/saida")
-@requer_auth("autorizador", "admin", "motorista")  # motorista: o service confere flag e dono
+@requer_auth("autorizador", "admin", "motorista", "vigilante")  # service confere flag/dono
 @limiter.limit(_limite_escrita)
 def registrar_saida(requisicao_id: str) -> Any:
     return _acao("registrar_saida", requisicao_id, com_corpo=True)
 
 
 @api.post("/requisicoes/<requisicao_id>/chegada")
-@requer_auth("autorizador", "admin", "motorista")  # motorista: o service confere flag e dono
+@requer_auth("autorizador", "admin", "motorista", "vigilante")  # service confere flag/dono
 @limiter.limit(_limite_escrita)
 def registrar_chegada(requisicao_id: str) -> Any:
     return _acao("registrar_chegada", requisicao_id, com_corpo=True)
@@ -237,7 +237,7 @@ def _limite_leitura_fotos_ip() -> str:
 # segunda camada. A autenticação (`requer_auth`) é o decorator mais externo, então `g.perfil`
 # já existe quando o limite decorado é avaliado.
 @api.post("/requisicoes/<requisicao_id>/checklist/<momento>/fotos")
-@requer_auth("autorizador", "admin", "motorista")
+@requer_auth("autorizador", "admin", "motorista", "vigilante")
 @limiter.limit(_limite_upload_ip)
 @limiter.limit(_limite_upload, key_func=chave_usuario)
 def solicitar_upload_foto(requisicao_id: str, momento: str) -> Any:
@@ -253,7 +253,7 @@ def _limite_registro() -> str:
 # limite por usuário para um só não monopolizar as vagas; os demais recebem 503 se faltar vaga.
 # O contador é em memória (flask-limiter memory://), por processo: a produção usa 1 worker.
 @api.post("/requisicoes/<requisicao_id>/checklist/<momento>")
-@requer_auth("autorizador", "admin", "motorista")
+@requer_auth("autorizador", "admin", "motorista", "vigilante")
 @limiter.limit(_limite_escrita)
 @limiter.limit(_limite_registro, key_func=chave_usuario)
 def registrar_checklist(requisicao_id: str, momento: str) -> Any:

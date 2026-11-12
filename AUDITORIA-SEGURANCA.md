@@ -89,14 +89,14 @@ Executado por 7 agentes de correção (2 rodadas) e validado por 5 de QA/reaudit
 
 | Status | Achados |
 |---|---|
-| Fechado | S-01, S-02, S-05, S-06, S-07, S-08, A-01, A-02, A-03, A-06, I-01 a I-06, I-07, I-12, DB-03, DB-04, F2, F3, N-01, N-02, N-03, N-06, N-08, N-09 |
-| Parcial | S-03 (agenda via pg_cron; se a extensão faltar só emite NOTICE, N-04), S-04 e N-05 (rebinding de DNS residual; `N8N_ALLOWED_HOSTS` recomendado, não obrigatório), A-07 (teste de serviço + teste SQL de concorrência existente passam; falta teste Flask contra o trigger real), N-07 (teste escrito, só roda contra Supabase local) |
-| Aberto, ação manual | DB-01, DB-02 (painel Supabase), A-04 (firewall VPS/Cloudflare), N-04 (conferir `cron.job` após o push) |
+| Fechado | S-03, N-04, N-07, A-07, S-01, S-02, S-05, S-06, S-07, S-08, A-01, A-02, A-03, A-06, I-01 a I-06, I-07, I-12, DB-03, DB-04, F2, F3, N-01, N-02, N-03, N-06, N-08, N-09 |
+| Parcial | S-04 e N-05 (rebinding de DNS residual; `N8N_ALLOWED_HOSTS` recomendado, não obrigatório) |
+| Aberto, ação manual | DB-01 (proteção contra senha vazada, único aviso restante do advisor), DB-02 (conferir signups, TOTP, senha mínima e Redirect URLs no painel), A-04 (firewall VPS/Cloudflare) |
 | Aberto, risco aceito | F1 (CSP `unsafe-inline`), A-05 (rate limit em memória, 1 worker), S-09 |
 
 ### Rodada 3 (investigação das falhas SQL, N-04, N-07, A-07)
 - **Falhas SQL pré-existentes: nenhum bug real de banco, nenhuma migration nova.** Eram testes acoplados à ordem ou desatualizados: `test_notificacoes.py::*migration_e_idempotente*` reaplicava a migration `20261110` e devolvia o gatilho `trg_auditoria_notificar` à versão sem avisos de motorista (novo helper `reaplicando_migration()` em `supabase/tests/dbhelpers.py`, com rollback); `reservar_envio_email` passou a deduplicar envios idênticos em 30 s (migration `20261115120000`) e os testes de cota repetiam chamadas idênticas; `ck_auditoria_acao` tem 24 ações; `perfis` tem 3 FKs RESTRICT; `localizacoes_viagem` faltava no TRUNCATE. Suíte SQL completa: 1 a 3 falhas por execução, só de ambiente (Docker/Windows), todas passam ao repetir.
-- **N-04 fechado:** o job `expurgar-localizacoes` existe em `cron.job` no stack local (`23 3 1 * *`); o CI agora falha se faltar (passo no job `banco`); consultas de pós-deploy em `docs/deploy-vps.md` e `docs/deploy-banco.md`.
+- **N-04 fechado e verificado em produção (2026-11-09):** `cron.job` do hosted retornou `expurgar-localizacoes` com `23 3 1 * *` e `active = true`; `pg_cron` 1.6.4 instalado; as 2 migrations novas constam no histórico; advisors de segurança só com `auth_leaked_password_protection`; na VPS, backend e frontend `healthy` e sem `RuntimeError` nos logs. Também no stack local: o job `expurgar-localizacoes` existe em `cron.job` no stack local (`23 3 1 * *`); o CI agora falha se faltar (passo no job `banco`); consultas de pós-deploy em `docs/deploy-vps.md` e `docs/deploy-banco.md`.
 - **N-07 fechado:** testado no Storage local v1.89.13: a segunda PUT com `x-upsert: true` (`true`, `TRUE`, `1`) é recusada e o objeto não é trocado. O status é HTTP 400 com `statusCode: "409"` (`Duplicate`/`KeyAlreadyExists`) no corpo, não 409; o teste de integração foi ajustado para checar o motivo, não só o código.
 - **A-07 fechado:** teste SQL de concorrência existente + novo teste com 4 admins em anel desativando-se juntos (invariante: ao menos 1 ativo). O advisory lock do gatilho é o que serializa a corrida.
 

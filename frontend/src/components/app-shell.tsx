@@ -85,7 +85,7 @@ export function AppShell({
   if (permissoes.has('autorizar')) {
     itens.push({ href: '/autorizar', rotulo: 'Autorizar', icone: <ShieldCheck aria-hidden /> });
   }
-  if (permissoes.has('registrar_chegada') && !comViagens) {
+  if ((permissoes.has('registrar_chegada') || permissoes.has('registrar_saida')) && !comViagens) {
     itens.push({ href: '/viagem', rotulo: 'Viagem', icone: <Clock aria-hidden /> });
   }
   // Visível só se GET /api/dashboards respondeu com ao menos um painel.

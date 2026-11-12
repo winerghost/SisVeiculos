@@ -1,4 +1,4 @@
-import type { FiltroRelatorio, FormatoRelatorio } from './tipos';
+import type { ColunaDisponivel, FiltroRelatorio, FormatoRelatorio } from './tipos';
 
 // Só apresentação e montagem de parâmetros: o servidor valida e aplica qualquer regra.
 
@@ -25,17 +25,55 @@ export function valoresEfetivos(
   return Object.fromEntries(filtros.map((f) => [f.nome, escolhidos[f.nome] ?? padraoDe(f)]));
 }
 
-/** Query enviada à API: só os preenchidos. */
-export function paraQuery(valores: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(valores).filter(([, v]) => v !== ''));
+/** Query enviada à API: só os preenchidos; `colunas` (ordem preservada) vai separada por vírgula. */
+export function paraQuery(
+  valores: Record<string, string>,
+  colunas: string[] | null = null,
+): Record<string, string> {
+  const q = Object.fromEntries(Object.entries(valores).filter(([, v]) => v !== ''));
+  return colunas ? { ...q, colunas: colunas.join(',') } : q;
+}
+
+/** Item do seletor: a ordem da lista é a ordem de envio. */
+export interface ItemColuna {
+  chave: string;
+  marcada: boolean;
+}
+
+/** Lista inicial do seletor, na ordem do catálogo: marca as sem flag e as cuja flag está ligada na tela. */
+export function itensIniciais(
+  disponiveis: ColunaDisponivel[],
+  valores: Record<string, string>,
+): ItemColuna[] {
+  return disponiveis.map((c) => ({
+    chave: c.chave,
+    marcada: c.exige_flag === null || valores[c.exige_flag] === 'true',
+  }));
+}
+
+/** Chaves marcadas, na ordem escolhida. */
+export function chavesMarcadas(itens: ItemColuna[]): string[] {
+  return itens.filter((i) => i.marcada).map((i) => i.chave);
+}
+
+/** Troca o item de posição com o vizinho (delta -1 sobe, +1 desce). */
+export function mover(itens: ItemColuna[], indice: number, delta: -1 | 1): ItemColuna[] {
+  const destino = indice + delta;
+  if (destino < 0 || destino >= itens.length) return itens;
+  return itens.map((item, i) => {
+    if (i === indice) return itens[destino]!;
+    if (i === destino) return itens[indice]!;
+    return item;
+  });
 }
 
 /** Corpo JSON do envio por e-mail: bool vai como booleano; os demais como texto. */
 export function paraCorpo(
   filtros: FiltroRelatorio[],
   valores: Record<string, string>,
-): Record<string, string | boolean> {
-  const corpo: Record<string, string | boolean> = {};
+  colunas: string[] | null = null,
+): Record<string, string | boolean | string[]> {
+  const corpo: Record<string, string | boolean | string[]> = colunas ? { colunas } : {};
   for (const f of filtros) {
     const v = valores[f.nome];
     if (v === undefined || v === '') continue;

@@ -40,12 +40,12 @@ MIGRATION = (
 
 JANELA = ("2026-03-01 00:00:00-03", "2026-04-01 00:00:00-03")  # 31 dias, fuso de Sao Paulo
 ASSINATURAS = {
-    "rel_movimentacao": "public.rel_movimentacao(timestamptz, timestamptz, text, public.unidade, uuid, uuid, boolean, boolean, integer)",
+    "rel_movimentacao": "public.rel_movimentacao(timestamptz, timestamptz, text, public.unidade, uuid, uuid, boolean, boolean, integer, boolean)",
     "rel_resumo": "public.rel_resumo(timestamptz, timestamptz, text, public.unidade, uuid, uuid)",
     "rel_tempos": "public.rel_tempos(timestamptz, timestamptz, text, public.unidade, uuid, uuid)",
-    "rel_pendencias": "public.rel_pendencias(public.unidade, uuid, integer, uuid, boolean)",
+    "rel_pendencias": "public.rel_pendencias(public.unidade, uuid, integer, uuid, boolean, boolean)",
     "rel_auditoria": "public.rel_auditoria(timestamptz, timestamptz, text, integer)",
-    "rel_opcionais_km": "public.rel_opcionais_km(timestamptz, timestamptz, public.unidade, uuid, uuid, integer)",
+    "rel_opcionais_km": "public.rel_opcionais_km(timestamptz, timestamptz, public.unidade, uuid, uuid, integer, boolean)",
     "rel_opcionais_avarias": "public.rel_opcionais_avarias(timestamptz, timestamptz, public.unidade, uuid, uuid, boolean, integer)",
     "reservar_envio_email": "public.reservar_envio_email(uuid, uuid, text, text, jsonb, integer, integer)",
     "marcar_envio_email": "public.marcar_envio_email(uuid, text, text)",
@@ -404,7 +404,7 @@ def test_movimentacao_flags_de_nomes_e_trajeto(conn: "psycopg.Connection") -> No
     txt = json.dumps({"linhas": sem["linhas"], "colunas": sem["colunas"]})
     for proibido in ("Ana", "Sede-Forum", "Beto", "solicitante", "autorizado_por", "saida_por", "chegada_por", "trajeto"):
         assert proibido not in txt, proibido
-    assert sem["colunas_opcionais"] == {"km": False, "nomes": False, "trajeto": False}
+    assert sem["colunas_opcionais"] == {"km": False, "nomes": False, "trajeto": False, "observacao": False}
     com = mov(conn, d, nomes=True, trajeto=True)
     l1 = com["linhas"][0]
     assert l1["solicitante"] == "Ana" and l1["trajeto"] == "Sede-Forum"

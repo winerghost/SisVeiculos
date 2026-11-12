@@ -29,6 +29,13 @@ _PERMISSOES: dict[str, list[str]] = {
         "ver_acessos",
     ],
     "motorista": ["ver_viagens_atribuidas"],
+    "vigilante": [
+        "criar_requisicao",
+        "ver_proprias_requisicoes",
+        "ver_requisicoes_para_registro",
+        "registrar_saida",
+        "registrar_chegada",
+    ],
 }
 
 
@@ -37,6 +44,7 @@ _ROTULOS_ROLE = {
     "autorizador": "Autorizador",
     "admin": "Administrador",
     "motorista": "Motorista",
+    "vigilante": "Vigilante",
 }
 
 

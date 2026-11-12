@@ -107,8 +107,9 @@ MSG_DESTINO_SEM_PAPEL = (
     "Este relatório só pode ser enviado a destinatários com permissão para consultá-lo."
 )
 MSG_DESTINO_EXTERNO = (
-    "Relatórios com nomes, trajetos ou trilha de auditoria só podem ser enviados por e-mail a "
-    "endereços de domínio institucional. Baixe o arquivo pela tela ou desmarque essas opções."
+    "Relatórios com nomes, trajetos, observações ou trilha de auditoria só podem ser enviados "
+    "por e-mail a endereços de domínio institucional. Baixe o arquivo pela tela ou desmarque "
+    "essas opções."
 )
 
 # Execução dos envios em segundo plano (a requisição devolve 202 sem esperar o SMTP). Um processo
@@ -143,6 +144,7 @@ RELATORIOS: dict[str, Relatorio] = {
                 "veiculo",
                 "incluir_nomes",
                 "incluir_trajeto",
+                "incluir_observacao",
             ),
             TODOS,
         ),
@@ -178,7 +180,7 @@ RELATORIOS: dict[str, Relatorio] = {
             "opcionais_km",
             "Quilometragem por viagem",
             "Viagens concluídas com km de saída, de chegada e km rodado.",
-            ("inicio", "fim", "unidade", "veiculo"),
+            ("inicio", "fim", "unidade", "veiculo", "lancado_por_vigilante", "incluir_nomes"),
             STAFF,
             "quilometragem",
         ),
@@ -250,6 +252,7 @@ _STATUS = {
     "cancelada": "Cancelada",
 }
 _MOMENTO = {"saida": "Saída", "chegada": "Chegada"}
+_SIM_NAO = {"True": "Sim", "False": "Não"}
 _COMBUSTIVEL = {
     "vazio": "Vazio",
     "um_quarto": "1/4",
@@ -293,11 +296,14 @@ COLUNAS: dict[str, Coluna] = {
         _c("km_saida", "Km de saída", "inteiro"),
         _c("km_chegada", "Km de chegada", "inteiro"),
         _c("km_rodado", "Km rodado", "inteiro"),
+        _c("km_lancado_por_vigilante", "Km lançado por vigilante", mapa=_SIM_NAO),
+        _c("lancado_por", "Lançado por (vigilante)"),
         _c("solicitante", "Solicitante"),
         _c("autorizado_por", "Autorizado por"),
         _c("saida_por", "Saída registrada por"),
         _c("chegada_por", "Chegada registrada por"),
         _c("trajeto", "Trajeto"),
+        _c("observacao", "Observação"),
         _c("desde", "Desde", "datahora"),
         _c("decorrido_s", "Tempo no estado atual (hh:mm:ss)", "duracao"),
         _c("ocorrido_em", "Ocorrido em", "datahora"),
@@ -331,7 +337,100 @@ COLUNAS: dict[str, Coluna] = {
         _c("saida_dif_max_s", "Saída x prevista: máxima (hh:mm:ss)", "duracao"),
     )
 }
-COLUNAS_NOMES = frozenset({"solicitante", "autorizado_por", "saida_por", "chegada_por"})
+COLUNAS_NOMES = frozenset(
+    {"solicitante", "autorizado_por", "saida_por", "chegada_por", "lancado_por"}
+)
+FLAGS_BOOL = ("incluir_nomes", "incluir_trajeto", "incluir_observacao", "lancado_por_vigilante")
+
+
+@dataclass(frozen=True)
+class ColunaSel:
+    """Coluna que o cliente pode escolher. `exige_flag`: a opção `incluir_*` que precisa estar
+    ligada; `recurso`: o recurso opcional que precisa estar habilitado."""
+
+    chave: str
+    exige_flag: str | None = None
+    recurso: str | None = None
+
+
+def _sel(*itens: str | tuple[str, str | None, str | None]) -> tuple[ColunaSel, ...]:
+    return tuple(ColunaSel(i) if isinstance(i, str) else ColunaSel(*i) for i in itens)
+
+
+# Lista branca da seleção (ordem = ordem padrão do catálogo). Só estes três relatórios aceitam
+# `colunas`; resumo, tempos, auditoria e avarias mantêm colunas fixas.
+COLUNAS_SELECIONAVEIS: dict[str, tuple[ColunaSel, ...]] = {
+    "movimentacao": _sel(
+        "codigo",
+        "criada_em",
+        "unidade",
+        "veiculo",
+        "status",
+        "hora_saida_prevista",
+        "autorizada_em",
+        "saida_real_em",
+        "chegada_real_em",
+        "espera_autorizacao_s",
+        "duracao_uso_s",
+        ("km_saida", None, "quilometragem"),
+        ("km_chegada", None, "quilometragem"),
+        ("solicitante", "incluir_nomes", None),
+        ("autorizado_por", "incluir_nomes", None),
+        ("saida_por", "incluir_nomes", None),
+        ("chegada_por", "incluir_nomes", None),
+        ("trajeto", "incluir_trajeto", None),
+        ("observacao", "incluir_observacao", None),
+    ),
+    "pendencias": _sel(
+        "codigo",
+        "status",
+        "unidade",
+        "veiculo",
+        "hora_saida_prevista",
+        "desde",
+        "decorrido_s",
+        ("solicitante", "incluir_nomes", None),
+    ),
+    "opcionais_km": _sel(
+        "codigo",
+        "unidade",
+        "veiculo",
+        "saida_real_em",
+        "chegada_real_em",
+        "km_saida",
+        "km_chegada",
+        "km_rodado",
+        "km_lancado_por_vigilante",
+        ("lancado_por", "incluir_nomes", None),
+    ),
+}
+MSG_COLUNA_INVALIDA = "Coluna não disponível neste relatório."
+MAX_TEXTO_COLUNAS = 1000
+
+
+def _lista_colunas(args: Mapping[str, Any]) -> list[str] | None:
+    """Lê `colunas` (CSV, parâmetro repetido ou lista JSON), preservando a ordem. Ausente ou
+    vazio = None (usa o padrão). Item vazio ou repetido => 400."""
+    getlist = getattr(args, "getlist", None)
+    if getlist:
+        brutos: list[Any] = list(getlist("colunas"))
+    else:
+        valor = args.get("colunas")
+        brutos = list(valor) if isinstance(valor, list) else ([] if valor is None else [valor])
+    itens: list[str] = []
+    for b in brutos:
+        if not isinstance(b, str) or len(b) > MAX_TEXTO_COLUNAS:
+            raise RequisicaoInvalida("O parâmetro 'colunas' deve ser uma lista de nomes.")
+        itens += [p.strip() for p in b.split(",")]
+    if not any(itens):
+        return None
+    if not all(itens):
+        raise RequisicaoInvalida("O parâmetro 'colunas' tem item vazio.")
+    if len(set(itens)) != len(itens):
+        raise RequisicaoInvalida("O parâmetro 'colunas' tem coluna repetida.")
+    return itens
+
+
 COLUNAS_RESUMO = (
     "requisicoes",
     "autorizadas",
@@ -386,6 +485,37 @@ class Arquivo:
     mimetype: str
     nome: str
     formato: str
+
+
+def _lancamento_da_linha(
+    origem: dict[str, dict[str, Any]], linha: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Associa a linha do RPC (que só traz `left(id, 8)`) ao lançamento de vigilante.
+
+    O prefixo sozinho pode colidir; por isso também se exige o mesmo veículo e o mesmo instante
+    de saída. Sem correspondência única e inequívoca, a linha NÃO é atribuída ao vigilante.
+    """
+    codigo = str(linha.get("codigo"))
+    saida = _instante_relatorio(linha.get("saida_real_em"))
+    achados = [
+        info
+        for rid, info in origem.items()
+        if rid.startswith(codigo)
+        and str(info.get("veiculo_id")) == str(linha.get("veiculo_id"))
+        and saida is not None
+        and _instante_relatorio(info.get("saida_real_em")) == saida
+    ]
+    return achados[0] if len(achados) == 1 else None
+
+
+def _instante_relatorio(valor: Any) -> datetime | None:
+    if not isinstance(valor, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(valor)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _bool(valor: Any, nome: str) -> bool:
@@ -540,8 +670,12 @@ class ServicoRelatorios:
             return f("Unidade", "enum", [{"valor": u, "rotulo": u} for u in UNIDADES_ORDEM])
         if nome == "veiculo":
             return f("Veículo", "enum", veiculos)
+        if nome == "lancado_por_vigilante":
+            return f("Somente km lançado por vigilante", "bool", padrao=False)
         if nome == "incluir_nomes":
             return f("Incluir nomes de pessoas", "bool", padrao=False)
+        if nome == "incluir_observacao":
+            return f("Incluir observação (texto livre)", "bool", padrao=False)
         return f("Incluir trajeto", "bool", padrao=False)  # incluir_trajeto
 
     def _veiculos_opcoes(self) -> list[dict[str, str]]:
@@ -551,6 +685,18 @@ class ServicoRelatorios:
                 "rotulo": f"{v['placa']} - {v['descricao']}" if v.get("placa") else v["descricao"],
             }
             for v in self._repo.listar_veiculos_admin(ativo=None)
+        ]
+
+    def _colunas_disponiveis(
+        self, rel: Relatorio, perfil: Perfil, cfg: Configuracoes
+    ) -> list[dict[str, Any]]:
+        """Colunas escolhíveis por este perfil (flags e recursos que ele não pode usar somem)."""
+        flags = self._filtros_do_perfil(rel, perfil)
+        return [
+            {"chave": c.chave, "rotulo": COLUNAS[c.chave].rotulo, "exige_flag": c.exige_flag}
+            for c in COLUNAS_SELECIONAVEIS.get(rel.tipo, ())
+            if (c.exige_flag is None or c.exige_flag in flags)
+            and (c.recurso is None or bool(getattr(cfg, c.recurso)))
         ]
 
     def catalogo(self, perfil: Perfil) -> dict[str, Any]:
@@ -567,6 +713,7 @@ class ServicoRelatorios:
                     self._def_filtro(n, r.tipo, hoje, veiculos)
                     for n in self._filtros_do_perfil(r, perfil)
                 ],
+                "colunas_disponiveis": self._colunas_disponiveis(r, perfil, cfg),
             }
             for r in visiveis
         ]
@@ -611,14 +758,54 @@ class ServicoRelatorios:
         if "veiculo" in nomes:
             v = _texto(args, "veiculo")
             ef["veiculo"] = validar_uuid(v, "veiculo") if v else None
-        for flag in ("incluir_nomes", "incluir_trajeto"):
+        for flag in FLAGS_BOOL:
             if flag in nomes:
                 ef[flag] = _bool(args.get(flag), flag)
+        if rel.tipo in COLUNAS_SELECIONAVEIS:
+            selecao = self._validar_colunas(rel, args, ef)
+            if selecao is not None:  # ausente: a chave nem existe (mantém o hash dos envios)
+                ef["colunas"] = selecao
+                if "observacao" not in selecao:
+                    # Normaliza: sem a coluna escolhida, a observação não é buscada, não vai à
+                    # auditoria e não exige destino institucional.
+                    ef["incluir_observacao"] = False
         return ef
+
+    def _validar_colunas(
+        self, rel: Relatorio, args: Mapping[str, Any], ef: dict[str, Any]
+    ) -> list[str] | None:
+        """Lista branca por relatório; coluna que exige flag/recurso desligado => 400. O nome
+        informado pelo cliente nunca é devolvido na mensagem."""
+        pedidas = _lista_colunas(args)
+        if pedidas is None:
+            return None
+        permitidas = {c.chave: c for c in COLUNAS_SELECIONAVEIS[rel.tipo]}
+        cfg: Configuracoes | None = None
+        for chave in pedidas:
+            c = permitidas.get(chave)
+            if c is None:
+                raise RequisicaoInvalida(MSG_COLUNA_INVALIDA)
+            if c.exige_flag and not ef.get(c.exige_flag):
+                raise RequisicaoInvalida(
+                    f"A coluna '{chave}' exige a opção '{c.exige_flag}' ligada."
+                )
+            if c.recurso:
+                cfg = cfg or self._config_recursos()
+                if not getattr(cfg, c.recurso):
+                    raise RequisicaoInvalida(
+                        f"A coluna '{chave}' exige o recurso '{c.recurso}' habilitado."
+                    )
+        return pedidas
 
     # -- consulta -----------------------------------------------------------------------------
     def _consultar(
-        self, rel: Relatorio, perfil: Perfil, ef: dict[str, Any], limite: int | None = None
+        self,
+        rel: Relatorio,
+        perfil: Perfil,
+        ef: dict[str, Any],
+        limite: int | None = None,
+        *,
+        previa: bool = False,
     ) -> Conjunto:
         r = self._repo
         # `limite`: arquivo/e-mail usam o teto do relatório; a prévia pede só PREVIA_MAX.
@@ -636,6 +823,9 @@ class ServicoRelatorios:
         nomes = bool(ef.get("incluir_nomes"))
         tipo = rel.tipo
         if tipo == "movimentacao":
+            # A observação (texto livre, pode ter dado pessoal) nunca é buscada para a prévia.
+            obs = bool(ef.get("incluir_observacao")) and not previa
+            extra = {"incluir_observacao": True} if obs else {}
             bruto = r.rel_movimentacao(
                 **janela,
                 **ent,
@@ -644,6 +834,7 @@ class ServicoRelatorios:
                 incluir_nomes=nomes,
                 incluir_trajeto=bool(ef.get("incluir_trajeto")),
                 limite=pedir,
+                **extra,
             )
         elif tipo == "resumo":
             bruto = r.rel_resumo(**janela, **ent, agrupar=ef["agrupar"], usuario=usuario)
@@ -654,7 +845,7 @@ class ServicoRelatorios:
         elif tipo == "auditoria":
             bruto = r.rel_auditoria(**janela, acao=ef.get("acao"), limite=pedir)
         elif tipo == "opcionais_km":
-            bruto = r.rel_opcionais_km(**janela, **ent, usuario=usuario, limite=pedir)
+            bruto = self._opcionais_km(janela, ent, usuario, ef, pedir)
         else:
             bruto = r.rel_opcionais_avarias(**janela, **ent, usuario=usuario, limite=pedir)
         if bruto.get("habilitado") is False:  # recurso desligado entre a checagem e a consulta
@@ -663,10 +854,62 @@ class ServicoRelatorios:
         linhas = list(bruto.get("linhas") or [])
         truncado = bool(bruto.get("truncado")) or len(linhas) > limite
         linhas = linhas[:limite]
-        return Conjunto(tipo, rel.rotulo, ef, self._colunas(rel, ef, bruto), linhas, truncado)
+        return Conjunto(
+            tipo, rel.rotulo, ef, self._colunas(rel, ef, bruto, previa), linhas, truncado
+        )
+
+    def _opcionais_km(
+        self,
+        janela: dict[str, Any],
+        ent: dict[str, Any],
+        usuario: str | None,
+        ef: dict[str, Any],
+        pedir: int,
+    ) -> dict[str, Any]:
+        """Km por viagem + origem do lançamento (vigilante ou equipe), derivada de quem registrou.
+
+        Com o filtro `lancado_por_vigilante` o banco devolve até o teto do relatório e o corte é
+        feito aqui, para a prévia não perder linhas que um corte anterior esconderia.
+        """
+        filtrar = bool(ef.get("lancado_por_vigilante"))
+        nomes = bool(ef.get("incluir_nomes"))
+        r = self._repo
+        bruto = r.rel_opcionais_km(
+            **janela,
+            **ent,
+            usuario=usuario,
+            limite=self._cfg.relatorio_max_linhas + 1 if filtrar else pedir,
+        )
+        if bruto.get("habilitado") is False:
+            return bruto
+        origem = r.lancamentos_vigilante_km(**janela, **ent, usuario=usuario, incluir_nomes=nomes)
+        linhas = []
+        for linha in bruto.get("linhas") or []:
+            info = _lancamento_da_linha(origem, linha)
+            nova = {**linha, "km_lancado_por_vigilante": info is not None}
+            if info is not None and nomes:
+                nova["lancado_por"] = info.get("lancado_por")
+            linhas.append(nova)
+        resultado = {
+            **bruto,
+            "colunas": [
+                *(bruto.get("colunas") or []),
+                "km_lancado_por_vigilante",
+                *(["lancado_por"] if nomes else []),
+            ],
+        }
+        if filtrar:
+            linhas = [x for x in linhas if x["km_lancado_por_vigilante"]]
+            resultado["totais"] = {
+                "viagens": len(linhas),
+                "km_rodado": sum(int(x.get("km_rodado") or 0) for x in linhas),
+            }
+        return {**resultado, "linhas": linhas, "total_linhas": len(linhas)}
 
     @staticmethod
-    def _colunas(rel: Relatorio, ef: dict[str, Any], bruto: dict[str, Any]) -> list[Coluna]:
+    def _colunas(
+        rel: Relatorio, ef: dict[str, Any], bruto: dict[str, Any], previa: bool = False
+    ) -> list[Coluna]:
         tipo = rel.tipo
         if tipo in {"resumo", "tempos"}:
             rotulo, kind = _ROTULO_GRUPO[ef["agrupar"]]
@@ -679,7 +922,21 @@ class ServicoRelatorios:
             proibidas |= COLUNAS_NOMES
         if not ef.get("incluir_trajeto"):
             proibidas.add("trajeto")
-        return [COLUNAS[k] for k in chaves if k in COLUNAS and k not in proibidas]
+        if previa or not ef.get("incluir_observacao"):
+            proibidas.add("observacao")
+        disponiveis = [k for k in chaves if k in COLUNAS and k not in proibidas]
+        selecao: list[str] | None = ef.get("colunas")
+        if selecao is None:
+            return [COLUNAS[k] for k in disponiveis]
+        escolhidas: list[Coluna] = []
+        for k in selecao:  # a ordem pedida é preservada
+            if k in disponiveis:
+                escolhidas.append(COLUNAS[k])
+            elif not (previa and k == "observacao"):
+                raise RequisicaoInvalida(MSG_COLUNA_INVALIDA)
+        if not escolhidas:
+            raise RequisicaoInvalida("A observação não aparece na prévia; escolha outra coluna.")
+        return escolhidas
 
     # -- prévia, arquivo -----------------------------------------------------------------------
     def previa(self, perfil: Perfil, tipo: str, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -689,7 +946,10 @@ class ServicoRelatorios:
         trazer até 5001 linhas em toda prévia (caro), então não há campo para isso."""
         rel = self._exigir(tipo, perfil)
         ef = self._validar(rel, perfil, args)
-        c = self._consultar(rel, perfil, ef, limite=PREVIA_MAX)
+        c = self._consultar(rel, perfil, ef, limite=PREVIA_MAX, previa=True)
+        omitida = bool(ef.get("incluir_observacao")) and (
+            "colunas" not in ef or "observacao" in ef["colunas"]
+        )
         if ef.get("incluir_nomes") or ef.get("incluir_trajeto") or rel.tipo == "auditoria":
             # Prévia com dado pessoal (ou trilha de auditoria) também deixa rastro. Falha fechada.
             self._repo.registrar_auditoria_relatorio(
@@ -711,6 +971,7 @@ class ServicoRelatorios:
             "linhas": formatar_linhas(c.colunas, c.linhas),
             "total_linhas": c.total,
             "truncado": c.truncado,
+            "colunas_omitidas": ["observacao"] if omitida else [],
         }
 
     def conjunto_para_resumo(
@@ -724,8 +985,10 @@ class ServicoRelatorios:
         rel = self._exigir(tipo, perfil)
         if rel.tipo in SEM_RESUMO:
             raise RequisicaoInvalida("Este relatório não tem resumo automático.")
-        ef = self._validar(rel, perfil, args)
-        for flag in ("incluir_nomes", "incluir_trajeto"):
+        # `colunas` e a observação não entram no resumo: ignorados (nem validados).
+        sem_selecao = {k: v for k, v in args.items() if k not in {"colunas", "incluir_observacao"}}
+        ef = self._validar(rel, perfil, sem_selecao)
+        for flag in ("incluir_nomes", "incluir_trajeto", "incluir_observacao"):
             if flag in ef:
                 ef[flag] = False
         return self._consultar(rel, perfil, ef), ef
@@ -811,8 +1074,18 @@ class ServicoRelatorios:
         filtros = corpo.get("filtros") or {}
         if not isinstance(filtros, dict):
             raise RequisicaoInvalida("O campo 'filtros' deve ser um objeto.")
+        colunas = filtros.get("colunas")
+        if (
+            isinstance(colunas, list)
+            and len(colunas) <= 64
+            and all(isinstance(c, str) for c in colunas)
+        ):
+            filtros = {**filtros, "colunas": ",".join(colunas)}  # lista JSON: mesma validação
         if any(not isinstance(v, str | bool | type(None)) for v in filtros.values()):
-            raise RequisicaoInvalida("Os valores de 'filtros' devem ser texto ou verdadeiro/falso.")
+            raise RequisicaoInvalida(
+                "Os valores de 'filtros' devem ser texto ou verdadeiro/falso "
+                "('colunas' também aceita lista de textos)."
+            )
         return (
             ServicoRelatorios._formato(corpo.get("formato")),
             filtros,
@@ -846,9 +1119,9 @@ class ServicoRelatorios:
     def _exigir_destino_institucional(self, rel: Relatorio, ef: dict[str, Any], email: str) -> None:
         """LGPD: nomes, trajetos e a trilha de auditoria (responsáveis nominais) só por e-mail a
         domínio institucional. Sem domínio configurado, nada disso sai por e-mail."""
-        com_pii = bool(ef.get("incluir_nomes") or ef.get("incluir_trajeto")) or (
-            rel.tipo == "auditoria"
-        )
+        com_pii = bool(
+            ef.get("incluir_nomes") or ef.get("incluir_trajeto") or ef.get("incluir_observacao")
+        ) or (rel.tipo == "auditoria")
         if com_pii and _dominio_do_email(email) not in dominios_institucionais(self._cfg):
             raise ErroApi(MSG_DESTINO_EXTERNO, "destinatario_externo_pii", 422)
 

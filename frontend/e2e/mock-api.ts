@@ -2,7 +2,7 @@ import type { Page, Route } from '@playwright/test';
 
 // API fake que imita o contrato do Flask (backend/app/rotas/api.py). As regras aqui existem
 // só para o teste: o front real nunca as calcula.
-type Papel = 'solicitante' | 'autorizador';
+type Papel = 'solicitante' | 'autorizador' | 'vigilante';
 
 interface Req {
   id: string;
@@ -47,6 +47,17 @@ const PESSOAS: Record<Papel, { id: string; nome: string; permissoes: string[] }>
       'registrar_saida',
       'registrar_chegada',
       'cancelar',
+    ],
+  },
+  // Contrato assumido (docs/plano-motorista-vigilante.md §3): sem autorizar/negar/cancelar.
+  vigilante: {
+    id: '99999999-9999-4999-8999-999999999999',
+    nome: 'Paulo Reis',
+    permissoes: [
+      'criar_requisicao',
+      'ver_proprias_requisicoes',
+      'registrar_saida',
+      'registrar_chegada',
     ],
   },
 };
@@ -120,6 +131,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     const auth = route.request().headers()['authorization'] ?? '';
     if (auth === 'Bearer tok-solicitante') return 'solicitante';
     if (auth === 'Bearer tok-autorizador') return 'autorizador';
+    if (auth === 'Bearer tok-vigilante') return 'vigilante';
     return null;
   };
 
@@ -128,6 +140,9 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     if (papel === 'autorizador') {
       if (r.status === 'solicitada') a.push('autorizar', 'negar', 'cancelar');
       if (r.status === 'autorizada') a.push('registrar_saida', 'cancelar');
+      if (r.status === 'em_uso') a.push('registrar_chegada');
+    } else if (papel === 'vigilante') {
+      if (r.status === 'autorizada') a.push('registrar_saida');
       if (r.status === 'em_uso') a.push('registrar_chegada');
     } else if (r.status === 'solicitada' && r.usuario_id === PESSOAS.solicitante.id) {
       a.push('cancelar');
@@ -305,7 +320,11 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
         json: { error: 'invalid_grant', error_description: 'Invalid login credentials' },
       });
     }
-    const papel: Papel = corpo.email.startsWith('autorizador') ? 'autorizador' : 'solicitante';
+    const papel: Papel = corpo.email.startsWith('autorizador')
+      ? 'autorizador'
+      : corpo.email.startsWith('vigilante')
+        ? 'vigilante'
+        : 'solicitante';
     const p = PESSOAS[papel];
     await route.fulfill({
       json: {
@@ -372,14 +391,22 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
         id: p.id,
         nome: p.nome,
         unidade: 'UEA',
-        rotulo_perfil: papel === 'autorizador' ? 'UEA · Autorizador' : 'UEA · Solicitante',
+        rotulo_perfil: {
+          autorizador: 'UEA · Autorizador',
+          vigilante: 'UEA · Vigilante',
+          solicitante: 'UEA · Solicitante',
+        }[papel],
         unidades: ['PU', 'PF', 'CJU', 'UEA'],
         role: papel,
         permissoes:
           opcoes.comAdmin && papel === 'autorizador'
             ? [...p.permissoes, 'administrar']
             : p.permissoes,
-        recursos: opcoes.checklist ? { checklist: true } : {},
+        recursos: {
+          ...(opcoes.checklist ? { checklist: true } : {}),
+          ...(opcoes.km ? { quilometragem: true } : {}),
+          ...(opcoes.km && papel === 'vigilante' ? { vigilante_km: true } : {}),
+        },
         foto_url: fotoUrl(),
       },
     });
@@ -487,7 +514,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     }
     const status = new URL(route.request().url()).searchParams.get('status');
     const itens = reqs
-      .filter((r) => (papel === 'autorizador' ? true : r.usuario_id === PESSOAS[papel].id))
+      .filter((r) => (papel !== 'solicitante' ? true : r.usuario_id === PESSOAS[papel].id))
       .filter((r) => !status || r.status === status)
       .map((r) => ver(papel, r));
     await route.fulfill({ json: { itens, total: itens.length } });
@@ -675,7 +702,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
   await page.route(/\/api\/requisicoes\/[^/]+\/checklist(\/.*)?$/, async (route) => {
     const papel = papelDoToken(route);
     if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
-    if (papel !== 'autorizador') {
+    if (papel === 'solicitante') {
       return erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.');
     }
     const partes = new URL(route.request().url()).pathname.split('/');

@@ -106,6 +106,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     motorista: false,
     motorista_registra: false,
     motorista_localizacao: false,
+    vigilante_km: false,
   };
   const ia: { mestre: boolean; saudacao: boolean; provedor: unknown; modelo: unknown } = {
     mestre: !!opcoes.saudacaoLigada,
@@ -533,6 +534,15 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
             "'Abastecimento e manutenção' exige 'Quilometragem' ligado.",
           );
         }
+        // Dependência (contrato assumido): 'KM lançado pelo vigilante' exige Quilometragem.
+        if (pedido.vigilante_km && !config.quilometragem && !pedido.quilometragem) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            "'KM lançado pelo vigilante' exige 'Quilometragem' ligado.",
+          );
+        }
         // Dependência: 'Motorista registra' exige o Perfil Motorista ligado.
         if (pedido.motorista_registra && !config.motorista && !pedido.motorista) {
           return erro(
@@ -596,6 +606,17 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
             : 'Ligue antes o motorista registra saída e chegada.',
           acoes_permitidas: config.motorista_registra
             ? [config.motorista_localizacao ? 'desligar' : 'ligar']
+            : [],
+        },
+        {
+          chave: 'vigilante_km',
+          rotulo: 'KM lançado pelo vigilante',
+          descricao: 'O vigilante informa o km de saída e de chegada ao registrar saída e chegada.',
+          habilitado: config.vigilante_km,
+          exige: ['quilometragem'],
+          motivo_indisponibilidade: config.quilometragem ? null : 'Ligue antes a Quilometragem.',
+          acoes_permitidas: config.quilometragem
+            ? [config.vigilante_km ? 'desligar' : 'ligar']
             : [],
         },
         {

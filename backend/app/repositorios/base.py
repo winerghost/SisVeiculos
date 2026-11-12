@@ -40,13 +40,20 @@ class Repositorio(Protocol):
         limite: int,
         offset: int,
         motorista_id: str | None = None,
+        ou_status: tuple[str, ...] | None = None,
     ) -> list[Requisicao]:
         """`usuario_id` não nulo restringe ao dono e `motorista_id` ao motorista atribuído
-        (anti-IDOR aplicado na consulta)."""
+        (anti-IDOR aplicado na consulta). `ou_status` (vigilante) amplia o filtro de dono para
+        "dono OU status na lista"."""
         ...
 
     def contar_requisicoes(
-        self, *, usuario_id: str | None, status: str | None, motorista_id: str | None = None
+        self,
+        *,
+        usuario_id: str | None,
+        status: str | None,
+        motorista_id: str | None = None,
+        ou_status: tuple[str, ...] | None = None,
     ) -> int:
         """Total com os mesmos filtros de `listar_requisicoes` (sem paginação)."""
         ...
@@ -336,6 +343,7 @@ class Repositorio(Protocol):
         incluir_nomes: bool,
         incluir_trajeto: bool,
         limite: int,
+        incluir_observacao: bool = False,
     ) -> dict[str, Any]: ...
 
     def rel_resumo(
@@ -373,6 +381,24 @@ class Repositorio(Protocol):
     def rel_auditoria(
         self, *, inicio: str, fim: str, acao: str | None, limite: int
     ) -> dict[str, Any]: ...
+
+    def lancamentos_vigilante_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        usuario: str | None,
+        incluir_nomes: bool,
+    ) -> dict[str, dict[str, Any]]:
+        """Viagens concluídas na janela (mesmos filtros de `rel_opcionais_km`) cuja saída ou
+        chegada foi registrada por um VIGILANTE: `{id completo: {"veiculo_id", "saida_real_em",
+        "lancado_por": nome | None}}`; conta só o campo (km_saida/km_chegada) não nulo cujo
+        registrador é vigilante. O nome só é lido com `incluir_nomes`.
+        Origem: `saida_registrada_por`/
+        `chegada_registrada_por` + `perfis.role` (sem coluna nova)."""
+        ...
 
     def rel_opcionais_km(
         self,

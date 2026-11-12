@@ -38,4 +38,8 @@ class ServicoMotorista:
         perfis = self._repo.listar_perfis(
             role="motorista", ativo=True, limite=LIMITE_SELETOR, offset=0
         )
-        return {"itens": [{"id": p["id"], "nome": p["nome"]} for p in perfis]}
+        return {
+            "itens": [{"id": p["id"], "nome": p["nome"]} for p in perfis],
+            # Único motorista ativo (designado por padrão ao autorizar); null se houver 0 ou 2+.
+            "padrao": perfis[0]["id"] if len(perfis) == 1 else None,
+        }

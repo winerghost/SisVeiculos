@@ -31,15 +31,19 @@ const TOM_ROLE: Record<string, keyof typeof TONS> = {
   admin: 'admin',
   autorizador: 'info',
   solicitante: 'neutro',
+  motorista: 'sucesso',
+  vigilante: 'aviso',
 };
 const ROTULO_ROLE: Record<string, string> = {
   admin: 'Administrador',
   autorizador: 'Autorizador',
   solicitante: 'Solicitante',
+  motorista: 'Motorista',
+  vigilante: 'Vigilante',
 };
 
 /** Rótulos dos valores de `role` (apresentação; a API valida o valor enviado). */
-export const ROLES = ['solicitante', 'autorizador', 'admin'] as const;
+export const ROLES = ['solicitante', 'autorizador', 'admin', 'motorista', 'vigilante'] as const;
 export const rotuloRole = (role: string) => ROTULO_ROLE[role] ?? role;
 
 export function ChipRole({ role }: { role: string }) {

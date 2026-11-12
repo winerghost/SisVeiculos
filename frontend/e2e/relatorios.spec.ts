@@ -294,3 +294,65 @@ test('exportar painel leva a /relatorios pré-preenchido (só painéis mapeados)
     situacao: 'concluidas',
   });
 });
+
+test('seletor de colunas: ordem, exige flag, restaurar padrão e prévia', async ({ page }) => {
+  const rel = await abrir(page, 'autorizador', { selecaoColunas: true });
+  await expect(page.getByLabel('Colunas aplicadas')).toHaveText('Colunas padrão do relatório.');
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  const gaveta = page.getByRole('dialog');
+  await expect(gaveta.getByRole('checkbox', { name: /^Observação/ })).not.toBeChecked();
+  await expect(gaveta.getByText('Exige: Incluir observação')).toBeVisible();
+  for (const nome of ['Subir Data', 'Descer Data']) {
+    const caixa = await gaveta.getByRole('button', { name: nome }).boundingBox();
+    expect(caixa!.width).toBeGreaterThanOrEqual(44);
+    expect(caixa!.height).toBeGreaterThanOrEqual(44);
+  }
+  await gaveta.getByRole('button', { name: 'Descer Data' }).click();
+  await gaveta.getByRole('checkbox', { name: /^Situação/ }).uncheck();
+  await gaveta.getByRole('button', { name: 'Aplicar' }).click();
+  await expect(page.getByLabel('Colunas aplicadas')).toHaveText('Solicitante · Data');
+
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(page.getByRole('columnheader')).toHaveText(['Solicitante', 'Data']);
+  expect(rel.consultas.at(-1)!.query.colunas).toBe('solicitante,data');
+
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Restaurar padrão' }).click();
+  await expect(page.getByLabel('Colunas aplicadas')).toHaveText('Colunas padrão do relatório.');
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(page.getByRole('columnheader')).toHaveText(['Data', 'Solicitante', 'Situação']);
+  expect(rel.consultas.at(-1)!.query.colunas).toBeUndefined();
+});
+
+test('seletor de colunas: mostra a mensagem 400 da API', async ({ page }) => {
+  await abrir(page, 'autorizador', {
+    selecaoColunas: true,
+    erroColunas: 'A coluna Observação exige "Incluir observação" ligado.',
+  });
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  const gaveta = page.getByRole('dialog');
+  await gaveta.getByRole('checkbox', { name: /^Observação/ }).check();
+  await gaveta.getByRole('button', { name: 'Aplicar' }).click();
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'exige' })).toContainText(
+    'exige "Incluir observação"',
+  );
+});
+
+test('colunas com flag ligada na tela vêm marcadas; prévia avisa o que só vai no arquivo', async ({
+  page,
+}) => {
+  await abrir(page, 'autorizador', { selecaoColunas: true });
+  await page.getByRole('button', { name: 'Filtros' }).click();
+  await page.getByRole('dialog').getByRole('switch', { name: 'Incluir observação' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Aplicar' }).click();
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  await expect(
+    page.getByRole('dialog').getByRole('checkbox', { name: /^Observação/ }),
+  ).toBeChecked();
+  await page.getByRole('dialog').getByRole('button', { name: 'Aplicar' }).click();
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(page.getByRole('note').filter({ hasText: 'só no arquivo' })).toContainText(
+    'observacao'.replace('observacao', 'observacao'),
+  );
+});

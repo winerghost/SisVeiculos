@@ -193,6 +193,7 @@ export function BotoesAcao({
   onAcao,
   aoRegistrarChecklist,
   motoristas,
+  motoristaPadrao,
 }: {
   req: Requisicao;
   ocupado: boolean;
@@ -201,8 +202,12 @@ export function BotoesAcao({
   aoRegistrarChecklist?: () => void | Promise<void>;
   /** Candidatos devolvidos por GET /api/motoristas; vazio/ausente = sem seletor. */
   motoristas?: Motorista[];
+  /** `padrao` devolvido por GET /api/motoristas: vem pré-selecionado até o usuário escolher. */
+  motoristaPadrao?: string | null;
 }) {
-  const [motoristaId, setMotoristaId] = React.useState('');
+  // null = o usuário ainda não mexeu; vale o padrão da API (que pode chegar depois da montagem).
+  const [escolha, setEscolha] = React.useState<string | null>(null);
+  const motoristaId = escolha ?? motoristaPadrao ?? '';
   const acoes = req.acoes_permitidas.filter((a): a is Acao => a in ACOES);
   const podeTrocarMotorista = req.acoes_permitidas.includes('atribuir_motorista');
   if (acoes.length === 0 && !podeTrocarMotorista) return null;
@@ -223,12 +228,14 @@ export function BotoesAcao({
     <div className="mt-4 flex flex-col gap-3">
       {comSeletor ? (
         <div>
-          <Label htmlFor={`${req.id}-motorista`}>Motorista (opcional)</Label>
+          <Label htmlFor={`${req.id}-motorista`}>
+            {motoristaPadrao ? 'Motorista' : 'Motorista (opcional)'}
+          </Label>
           <Select
             id={`${req.id}-motorista`}
             value={motoristaId}
             disabled={ocupado}
-            onChange={(e) => setMotoristaId(e.target.value)}
+            onChange={(e) => setEscolha(e.target.value)}
           >
             <option value="">Sem motorista designado</option>
             {motoristas.map((m) => (
@@ -303,6 +310,7 @@ export function CartaoRequisicao({
   aoRegistrarChecklist,
   mostrarChecklist,
   motoristas,
+  motoristaPadrao,
 }: {
   req: Requisicao;
   mostrarSolicitante?: boolean;
@@ -311,6 +319,7 @@ export function CartaoRequisicao({
   aoRegistrarChecklist?: () => void | Promise<void>;
   mostrarChecklist?: boolean;
   motoristas?: Motorista[];
+  motoristaPadrao?: string | null;
 }) {
   return (
     <li className="rounded-xl border border-borda bg-white p-4">
@@ -359,6 +368,7 @@ export function CartaoRequisicao({
         onAcao={onAcao}
         aoRegistrarChecklist={aoRegistrarChecklist}
         motoristas={motoristas}
+        motoristaPadrao={motoristaPadrao}
       />
     </li>
   );

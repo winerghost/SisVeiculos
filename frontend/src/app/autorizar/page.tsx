@@ -30,12 +30,21 @@ function Painel() {
 
   // Candidatos a motorista vêm da API. Recurso desligado ou recusa: sem seletor, sem erro na tela.
   const [motoristas, setMotoristas] = React.useState<Motorista[]>([]);
+  const [padrao, setPadrao] = React.useState<string | null>(null);
   React.useEffect(() => {
     let ativo = true;
     api
       .motoristas()
-      .then((r) => ativo && setMotoristas(Array.isArray(r?.itens) ? r.itens : []))
-      .catch(() => ativo && setMotoristas([]));
+      .then((r) => {
+        if (!ativo) return;
+        setMotoristas(Array.isArray(r?.itens) ? r.itens : []);
+        setPadrao(r?.padrao ?? null);
+      })
+      .catch(() => {
+        if (!ativo) return;
+        setMotoristas([]);
+        setPadrao(null);
+      });
     return () => {
       ativo = false;
     };
@@ -84,6 +93,7 @@ function Painel() {
                 onAcao={(req, a, c) => void acao.executar(req, a, c)}
                 aoRegistrarChecklist={listas.recarregar}
                 motoristas={motoristas}
+                motoristaPadrao={padrao}
               />
             ))}
           </ul>

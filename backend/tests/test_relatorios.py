@@ -200,7 +200,9 @@ def test_tipo_desconhecido_404_e_recurso_desligado(client, auth, c):  # type: ig
 def test_opcionais_km_ligado(client, auth, c, repo):  # type: ignore[no-untyped-def]
     repo.config = repo.config.__class__(quilometragem=True)
     j = get(client, auth, c.aut, f"{BASE}/opcionais_km/previa").get_json()
-    assert j["linhas"][0]["km_rodado"] == "10" and j["colunas"][-1]["rotulo"] == "Km rodado"
+    assert j["linhas"][0]["km_rodado"] == "10" and "Km rodado" in [
+        x["rotulo"] for x in j["colunas"]
+    ]
 
 
 def test_avarias_nunca_pede_nem_exibe_descricao(client, auth, c, repo):  # type: ignore[no-untyped-def]

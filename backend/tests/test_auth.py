@@ -43,6 +43,7 @@ def test_token_valido_carrega_role_do_banco(client, repo, auth):  # type: ignore
         "motorista": False,
         "motorista_registra": False,
         "motorista_localizacao": False,
+        "vigilante_km": False,
     }
 
 

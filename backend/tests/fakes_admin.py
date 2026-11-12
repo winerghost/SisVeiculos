@@ -387,6 +387,8 @@ class AdminMemoria:
                     raise erro_db("AG010", "O registro pelo motorista exige o Perfil Motorista.")
                 if novo["motorista_localizacao"] and not novo["motorista_registra"]:
                     raise erro_db("AG010", "A localização do motorista exige o registro ligado.")
+                if novo["vigilante_km"] and not novo["quilometragem"]:
+                    raise erro_db("AG010", "O km do vigilante exige a quilometragem ligada.")
                 for k in novo:
                     if novo[k] != antigo[k]:
                         self._audit(

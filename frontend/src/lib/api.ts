@@ -293,7 +293,7 @@ export const api = {
     tipo: string,
     d: {
       formato: FormatoRelatorio;
-      filtros: Record<string, string | boolean>;
+      filtros: Record<string, string | boolean | string[]>;
       destinatario_id: string;
     },
   ) => chamar<EnvioRelatorio>(`/relatorios/${enc(tipo)}/email`, JSON_POST(d)),

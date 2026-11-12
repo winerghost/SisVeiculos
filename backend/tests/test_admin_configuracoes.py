@@ -28,6 +28,7 @@ def test_padrao_tudo_desligado_com_acoes_por_item(client, auth, adm):  # type: i
         "motorista": False,
         "motorista_registra": False,
         "motorista_localizacao": False,
+        "vigilante_km": False,
     }
     assert j["acoes_permitidas"] == ["editar"]
     itens = {i["chave"]: i for i in j["itens"]}
@@ -57,6 +58,7 @@ def test_ligar_audita_e_reflete_em_eu(client, auth, adm, repo):  # type: ignore[
         "motorista": False,
         "motorista_registra": False,
         "motorista_localizacao": False,
+        "vigilante_km": False,
     }
     ev = repo.eventos_de("configuracao_alterada")
     assert sorted((e["detalhes"]["recurso"], e["de"], e["para"], e["ator_id"]) for e in ev) == [

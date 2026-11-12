@@ -12,6 +12,9 @@ from typing import Any
 from app.modelos import ESTADOS_ABERTOS
 from tests.fakes_admin import erro_db
 
+VEICULO_REL = "11111111-1111-4111-8111-111111111111"
+SAIDA_REL = "2026-11-01T10:00:00+00:00"
+
 TRANSICOES = {
     "pendente": {"enviando", "falhou"},
     "enviando": {"enviado", "falhou"},
@@ -26,6 +29,8 @@ class RelatoriosMemoria:
         self.chamadas_rel: list[tuple[str, dict[str, Any]]] = []
         self.envios: dict[str, dict[str, Any]] = {}
         self.marcas: list[tuple[str, str, str | None]] = []  # (id, status, erro_codigo)
+        self.lancamentos_vigilante: dict[str, str] = {}  # codigo -> nome do vigilante
+        self.lancamentos_extra: dict[str, dict[str, Any]] = {}  # id completo -> info
         self.rel_extra_colunas: dict[str, Any] = {}  # injeta colunas "vazadas" pelo banco
         self._lock_envios = threading.Lock()
         self.dedupe_envios = True  # False isola testes de cota de envios idênticos
@@ -73,6 +78,8 @@ class RelatoriosMemoria:
             cols.append("solicitante")
         if p["incluir_trajeto"]:
             cols.append("trajeto")
+        if p.get("incluir_observacao"):
+            cols.append("observacao")
         linhas = []
         for r in self._requisicoes_filtradas(p):
             linha = {
@@ -89,6 +96,8 @@ class RelatoriosMemoria:
                 linha["solicitante"] = r["nome_solicitante"]
             if p["incluir_trajeto"]:
                 linha["trajeto"] = r["trajeto"]
+            if p.get("incluir_observacao"):
+                linha["observacao"] = r.get("observacao")
             linha.update(self.rel_extra_colunas)
             linhas.append(linha)
         return self._lista("movimentacao", p, cols + list(self.rel_extra_colunas), linhas)
@@ -162,6 +171,18 @@ class RelatoriosMemoria:
         cols = ["ocorrido_em", "tabela", "acao", "de", "para", "ator_nome", "registro_id"]
         return self._lista("auditoria", p, cols, linhas)
 
+    def lancamentos_vigilante_km(self, **p: Any) -> dict[str, dict[str, Any]]:
+        self.chamadas_rel.append(("lancamentos_vigilante_km", p))
+        saida = {
+            f"{codigo}-0000-4000-8000-000000000000": {
+                "veiculo_id": VEICULO_REL,
+                "saida_real_em": SAIDA_REL,
+                "lancado_por": nome if p["incluir_nomes"] else None,
+            }
+            for codigo, nome in self.lancamentos_vigilante.items()
+        }
+        return {**saida, **self.lancamentos_extra}
+
     def rel_opcionais_km(self, **p: Any) -> dict[str, Any]:
         self.chamadas_rel.append(("opcionais_km", p))
         if not self.config.quilometragem:
@@ -176,7 +197,9 @@ class RelatoriosMemoria:
                 {
                     "codigo": "abcd1234",
                     "unidade": "PU",
+                    "veiculo_id": VEICULO_REL,
                     "veiculo": "Carro",
+                    "saida_real_em": SAIDA_REL,
                     "km_saida": 100,
                     "km_chegada": 110,
                     "km_rodado": 10,

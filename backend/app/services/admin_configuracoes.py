@@ -72,6 +72,12 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "longitude); sem ela o registro é bloqueado. Apenas administradores veem as coordenadas.",
         ("motorista_registra",),
     ),
+    "vigilante_km": (
+        "KM pelo vigilante",
+        "O vigilante informa o km de saída ao registrar a saída e o km de chegada ao registrar "
+        "a chegada. Desligado, o vigilante registra sem informar km.",
+        ("quilometragem",),
+    ),
 }
 ROTULOS_RECURSOS = {k: v[0] for k, v in CATALOGO.items()}
 

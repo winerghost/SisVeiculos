@@ -2,6 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { mockarAdmin, type OpcoesAdmin } from '../mock-admin';
 
 // Gera os PNGs de docs/mockups (telas do admin) a partir das telas reais com API mockada.
+// Campos de data nativos seguem o idioma do navegador: força pt-BR (dd/mm/aaaa) na captura.
+test.use({ launchOptions: { args: ['--lang=pt-BR'] } });
+
 const ANA_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const saida = (nome: string) => `../docs/mockups/${nome}.png`;
 
@@ -61,6 +64,10 @@ test('10-configuracoes', async ({ page }) => {
   await entrarAdmin(page);
   await page.goto('/admin/configuracoes');
   await expect(page.getByRole('switch', { name: 'Quilometragem' })).toBeVisible();
+  // A barra de abas rola na horizontal; mostra a aba ativa (Configurações) inteira.
+  await page
+    .getByRole('navigation', { name: 'Administração' })
+    .evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
   await foto(page, '10-configuracoes');
 });
 
@@ -184,17 +191,112 @@ test('35-seguranca-mfa', async ({ page }) => {
 });
 
 test('36-detalhe-usuario-foto', async ({ page }) => {
-  // Foto de exemplo (círculo com iniciais) no lugar da URL assinada fictícia.
+  await entrarAdmin(page, { anaComFoto: true });
+  // Foto de exemplo (círculo com iniciais) no lugar da URL assinada fictícia. Registrada depois
+  // do mock da API, pois a rota registrada por último vence.
   await page.route('**/storage/v1/object/sign/avatares/**', (route) =>
     route.fulfill({
       contentType: 'image/svg+xml',
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" fill="#0F3D75"/><text x="48" y="60" font-size="36" font-family="Inter,sans-serif" fill="#fff" text-anchor="middle">AS</text></svg>',
     }),
   );
-  await entrarAdmin(page, { anaComFoto: true });
   await page.goto(`/admin/usuarios/detalhe?id=${ANA_ID}`);
   await expect(page.getByRole('button', { name: 'Remover foto' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Trocar foto de Ana Souza' })).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 100));
   await foto(page, '36-detalhe-usuario-foto');
+});
+
+// ---- Novas capturas (70+) ----
+
+async function abrirSaudacoes(page: Page, status: 'Pendentes' | 'Rejeitadas' = 'Pendentes') {
+  await entrarAdmin(page, { saudacaoLigada: true });
+  await page.goto('/admin/configuracoes');
+  await expect(page.getByRole('heading', { name: 'Saudações', exact: true })).toBeVisible();
+  if (status === 'Rejeitadas') {
+    await page.getByRole('button', { name: 'Rejeitar' }).first().click();
+    await page.getByRole('button', { name: 'Rejeitadas' }).click();
+    await expect(page.getByText('Arraste ou use as setas')).toBeVisible();
+  }
+}
+
+async function rolarAte(page: Page, alvo: ReturnType<Page['locator']>, folga = 24) {
+  await alvo.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  await page.evaluate((f) => window.scrollBy(0, -f), folga);
+}
+
+const itemFrase = (page: Page) =>
+  page
+    .getByRole('listitem')
+    .filter({ hasText: 'Acordado, coruja noturna' })
+    .locator('[tabindex="0"]');
+
+async function arrastarFrase(page: Page, fracao: number, soltar: boolean) {
+  const alvo = itemFrase(page);
+  await alvo.scrollIntoViewIfNeeded();
+  const c = (await alvo.boundingBox())!;
+  const y = c.y + 20; // linha do texto: botões não iniciam o arrasto
+  const x0 = c.x + c.width / 2;
+  await page.mouse.move(x0, y);
+  await page.mouse.down();
+  await page.mouse.move(x0 + (c.width * fracao) / 2, y, { steps: 5 });
+  await page.mouse.move(x0 + c.width * fracao, y, { steps: 5 });
+  if (soltar) await page.mouse.up();
+}
+
+test('70-saudacoes-rejeitadas-gesto', async ({ page }) => {
+  await abrirSaudacoes(page, 'Rejeitadas');
+  await rolarAte(page, page.getByRole('heading', { name: 'Saudações', exact: true }));
+  await foto(page, '70-saudacoes-rejeitadas-gesto');
+});
+
+test('71-saudacoes-arrastando', async ({ page }) => {
+  await abrirSaudacoes(page, 'Rejeitadas');
+  await rolarAte(page, page.getByRole('heading', { name: 'Saudações', exact: true }));
+  await arrastarFrase(page, -0.3, false);
+  await foto(page, '71-saudacoes-arrastando');
+  await page.mouse.up();
+});
+
+test('72-saudacoes-excluir-confirmar', async ({ page }) => {
+  await abrirSaudacoes(page, 'Rejeitadas');
+  await rolarAte(page, page.getByRole('heading', { name: 'Saudações', exact: true }));
+  await arrastarFrase(page, 0.6, true);
+  await expect(page.getByText('Excluir definitivamente?')).toBeVisible();
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await foto(page, '72-saudacoes-excluir-confirmar');
+});
+
+test('73-saudacoes-adicionar-gerar', async ({ page }) => {
+  await abrirSaudacoes(page);
+  await rolarAte(page, page.getByRole('heading', { name: 'Adicionar frase' }));
+  await foto(page, '73-saudacoes-adicionar-gerar');
+});
+
+test('74-configuracoes-motorista-vigilante', async ({ page }) => {
+  await entrarAdmin(page);
+  await page.goto('/admin/configuracoes');
+  const alvo = page.getByRole('heading', { name: 'Perfil Motorista' });
+  await expect(alvo).toBeVisible();
+  await rolarAte(page, alvo);
+  await foto(page, '74-configuracoes-motorista-vigilante');
+});
+
+test('75-configuracoes-dependencias-ligadas', async ({ page }) => {
+  await entrarAdmin(page);
+  await page.goto('/admin/configuracoes');
+  for (const nome of ['Quilometragem', 'Perfil Motorista']) {
+    await page.getByRole('switch', { name: nome }).click();
+    await expect(page.getByRole('switch', { name: nome })).toHaveAttribute('aria-checked', 'true');
+  }
+  for (const nome of [
+    'Motorista registra saída e chegada',
+    'Localização no registro do motorista',
+    'KM lançado pelo vigilante',
+  ]) {
+    await page.getByRole('switch', { name: nome }).click();
+    await expect(page.getByRole('switch', { name: nome })).toHaveAttribute('aria-checked', 'true');
+  }
+  await rolarAte(page, page.getByRole('heading', { name: 'Perfil Motorista' }));
+  await foto(page, '75-configuracoes-dependencias-ligadas');
 });

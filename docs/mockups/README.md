@@ -9,15 +9,15 @@ Servem como referência de **layout e visual**. Regras de negócio, validações
 |---|---|---|
 | `01-login.png` | Login (e-mail e senha) | Todos |
 | `02-minhas-requisicoes.png` | Lista de requisições com status e botão "Nova requisição" | Solicitante |
-| `03-nova-requisicao.png` | Formulário no estilo shadcn/ui (referência final), com erro de horário vindo do servidor, campo com erro e campo com foco | Solicitante |
-| `04-painel-autorizador.png` | Pendentes (Autorizar/Negar) e autorizadas (Registrar saída) | Autorizador |
+| `03-nova-requisicao.png` | Formulário no estilo shadcn/ui (referência final), com horário preenchido pela sugestão do servidor, erro de horário vindo do servidor, campo com erro e campo com foco | Solicitante |
+| `04-painel-autorizador.png` | Pendentes (Autorizar/Negar) e autorizadas (Registrar saída), com a data e hora na cor da situação | Autorizador |
 | `05-registrar-chegada.png` | Viagem em uso, histórico e botão "Registrar chegada" | Autorizador |
 | `06-veiculos.png` | Gestão de veículos, com interruptor de disponibilidade | Admin |
 | `07-usuarios.png` | Lista de usuários, busca, filtros e "Convidar usuário" | Admin |
 | `08-convidar-usuario.png` | Convite por e-mail (institucional ou Gmail), nome, unidade e perfil | Admin |
 | `09-detalhe-usuario.png` | Alterar perfil e unidade, desativar conta | Admin |
 | `10-configuracoes.png` | Recursos opcionais: Quilometragem, Abastecimento e manutenção, Checklist, MFA | Admin |
-| `11-seletor-data-hora.png` | Seletor de data e hora em gaveta (Drawer) com calendário e hora/minuto | Solicitante |
+| `11-seletor-data-hora.png` | Seletor de data e hora em gaveta (Drawer) com calendário e hora/minuto, já aberto na sugestão do servidor (`horario-referencia`) | Solicitante |
 
 ## Telas capturadas das rotas reais (novas)
 
@@ -38,6 +38,30 @@ Servem como referência de **layout e visual**. Regras de negócio, validações
 | `57-menu-inferior-autorizador`, `58-menu-admin` | Menus |
 
 Regerar: `cd frontend && npx serve out -l 3100` e `npx playwright test -c playwright.capturas.config.ts`.
+
+## Telas novas (recaptura de 13/11/2026)
+
+| Arquivo | Tela |
+|---|---|
+| `59-requisicoes-arquivar-desfazer` | Requisição arquivada, com aviso e "Desfazer" |
+| `60-requisicoes-arquivadas` | Aba Arquivadas |
+| `61-requisicoes-gesto-arrastando` | Cartão em gesto de arrastar (organizar) |
+| `62-dialogo-negar-ou-cancelar` | Diálogo de confirmação para negar ou cancelar |
+| `63-autorizar-escolher-motorista` | Autorizar com escolha de motorista |
+| `64-checklist-registrado-viagem` | Checklist registrado na viagem |
+| `65-motorista-aviso-localizacao`, `66-motorista-localizacao-negada` | Motorista: aviso e permissão de localização negada |
+| `67-detalhe-localizacao-registro` | Detalhe com localização registrada |
+| `68-motorista-arquivadas` | Motorista: viagens arquivadas |
+| `69-vigilante-arquivar` | Vigilante arquivando concluída |
+| `70-saudacoes-rejeitadas-gesto`, `71-saudacoes-arrastando`, `72-saudacoes-excluir-confirmar`, `73-saudacoes-adicionar-gerar` | Saudações (IA): rejeitadas, gesto Aprovar, confirmação de exclusão, adicionar e gerar |
+| `74-configuracoes-motorista-vigilante`, `75-configuracoes-dependencias-ligadas` | Configurações: Motorista, Localização e KM do vigilante (desligados e ligados) |
+| `76-requisicoes-fim-da-lista` | Lista rolada ao fim, último cartão livre do botão fixo |
+| `77-seletor-sugestao-servidor` | Seletor de hora de saída abrindo na sugestão do servidor (dia, hora e minuto já preenchidos; não abre em 08:00) |
+| `78-erro-horario-passado` | Erro `hora_saida_passada` devolvido pelo servidor, com a mensagem e o horário mínimo sugerido |
+| `79-lista-situacao-horario` | Lista com os três estados de cor da data e hora: verde (no prazo), amarelo (em breve) e vermelho (vencido), sempre com texto legível |
+| `80-detalhe-horario-vencido` | Detalhe com a saída prevista vencida (vermelho, "· vencido") |
+
+As telas do Motorista, da localização e das Saudações agora têm mockup (59–76); a observação "sem mockup" abaixo vale só para o banner sazonal e o "Resumir com IA", que seguem como estavam.
 
 ## Como usar
 

@@ -28,6 +28,8 @@ interface Req {
   km_chegada: number | null;
   /** Perfil Motorista: designado na autorização. */
   motorista?: { id: string; nome: string } | null;
+  /** Situação do horário que a API calcula (o mock só repete o que a semente informa). */
+  situacao_horario?: 'no_prazo' | 'proximo' | 'atrasado' | null;
 }
 
 const VEICULO_ID = '11111111-1111-4111-8111-111111111111';
@@ -103,6 +105,12 @@ export interface Opcoes {
   motoristaPadrao?: string;
   /** Marca a requisição como arquivada para o papel (ex.: sementes já arquivadas). */
   arquivadas?: { papel: Papel; indice: number }[];
+  /** Sugestão que GET /api/requisicoes/horario-referencia devolve (padrão: agora + 5 min). */
+  horarioReferencia?: { data: string; hora: number; minuto: number };
+  /** A consulta de horário de referência falha (500): o seletor usa o relógio do aparelho. */
+  erroHorarioReferencia?: boolean;
+  /** A criação responde com este erro da API (ex.: hora_saida_passada). */
+  erroCriacao?: { status: number; codigo: string; mensagem: string };
 }
 
 export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
@@ -173,7 +181,9 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     // Só concluída/negada/cancelada se arquivam: autorizador qualquer, solicitante a própria.
     const terminal = ['concluida', 'negada', 'cancelada'].includes(r.status);
     const dono = papel === 'solicitante' && r.usuario_id === PESSOAS.solicitante.id;
-    if (terminal && (papel === 'autorizador' || dono)) {
+    // Vigilante: só as concluídas que ele registrou (no mock, qualquer concluída serve de exemplo).
+    const registrada = papel === 'vigilante' && r.status === 'concluida';
+    if (terminal && (papel === 'autorizador' || dono || registrada)) {
       a.push(arquivadasPor[papel].has(r.id) ? 'desarquivar' : 'arquivar');
     }
     return a;
@@ -343,8 +353,16 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
   const pedidosFotoPerfil: unknown[] = [];
   const confirmacoesFoto: unknown[] = [];
   const uploadsAvatar: string[] = [];
+  // Imita a API: só solicitada/autorizada têm situação; sem valor na semente, deriva do horário.
+  const situacaoDe = (r: Req): Req['situacao_horario'] => {
+    if (r.situacao_horario !== undefined) return r.situacao_horario;
+    if (r.status !== 'solicitada' && r.status !== 'autorizada') return null;
+    const falta = Date.parse(r.hora_saida) - Date.now();
+    return falta < 0 ? 'atrasado' : falta <= 600_000 ? 'proximo' : 'no_prazo';
+  };
   const ver = (papel: Papel, r: Req) => ({
     ...r,
+    situacao_horario: situacaoDe(r),
     solicitante_foto_url: fotoUrl(),
     autorizado_por_foto_url: r.autorizado_por_nome ? fotoUrl() : null,
     saida_registrada_por_foto_url: r.saida_registrada_por_nome ? fotoUrl() : null,
@@ -527,6 +545,10 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
     if (route.request().method() === 'POST') {
       corpos.push(route.request().postDataJSON());
+      if (opcoes.erroCriacao) {
+        const e = opcoes.erroCriacao;
+        return erro(route, e.status, e.codigo, e.mensagem);
+      }
       if (opcoes.veiculoOcupado || ocupado()) {
         return erro(
           route,
@@ -934,7 +956,32 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     await route.fulfill({ json: ver(papel, r) });
   });
 
+  // Registrada por último: tem prioridade sobre a rota genérica /requisicoes/<id>.
+  let consultasReferencia = 0;
+  await page.route('**/api/requisicoes/horario-referencia', async (route) => {
+    consultasReferencia += 1;
+    if (opcoes.erroHorarioReferencia) {
+      return erro(route, 500, 'erro_interno', 'Erro inesperado.');
+    }
+    const t = new Date(Math.ceil((Date.now() + 1) / 300_000) * 300_000);
+    const dois = (n: number) => String(n).padStart(2, '0');
+    const padrao = {
+      data: `${t.getFullYear()}-${dois(t.getMonth() + 1)}-${dois(t.getDate())}`,
+      hora: t.getHours(),
+      minuto: t.getMinutes(),
+    };
+    await route.fulfill({
+      headers: { 'Cache-Control': 'no-store' },
+      json: {
+        fuso: 'America/Sao_Paulo',
+        agora: new Date().toISOString(),
+        sugestao: opcoes.horarioReferencia ?? padrao,
+      },
+    });
+  });
+
   return {
+    consultasReferencia: () => consultasReferencia,
     reqs,
     organizacoes,
     consultasPainel,

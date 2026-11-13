@@ -42,3 +42,9 @@ Deploy: as mudanças desta entrega (specs e PNGs) não exigem `--build`; as corr
 
 ## 5. Limitações das capturas
 Dados e textos são de mocks (ex.: "Texto do aviso 1."); QR da tela 35 e foto da 36 são ilustrativos; hora do motorista (15, 16) usa a hora atual; `/tela-mfa` (MFA no login) não foi capturada; recursos Checklist/MFA ligados na 33 foram simulados na captura.
+
+## 6. Atualização de 13/11/2026
+- Mockups regerados (01–58) e criados 59–76; ver README.
+- Correções de UI já aplicadas durante a recaptura (não commitadas): espaçador no fim da lista de requisições (item 3), título menor para nomes longos no `AppShell`, ajustes em `admin-shell`, `bloco-saudacoes` (botão Excluir), `cadastro-totp` e `item-arrastavel`. Revisar o `git diff` antes do commit.
+- Ainda abertos: itens 1, 4, 5, 6–12 e 14 da seção 2 (data nativa em Acessos usa `type="date"`, permitido pelo CLAUDE.md).
+- Deploy: mudou `frontend/src`, então o servidor precisa de `docker compose up -d --build`.

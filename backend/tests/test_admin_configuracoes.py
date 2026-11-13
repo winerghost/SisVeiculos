@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.modelos import Configuracoes
+from tests.horarios import hora_saida_futura
 
 
 def _cod(r) -> str:  # type: ignore[no-untyped-def]
@@ -120,7 +121,7 @@ def test_desligar_nao_apaga_dados(client, auth, adm, repo):  # type: ignore[no-u
         json={
             "nome_solicitante": "F",
             "unidade": "PU",
-            "hora_saida": "2026-11-10T08:30:00-03:00",
+            "hora_saida": hora_saida_futura(),
             "trajeto": "A -> B",
             "veiculo_id": v,
         },

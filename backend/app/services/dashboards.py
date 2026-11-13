@@ -9,19 +9,17 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from app.errors import NaoEncontrado, RecursoDesligado, RequisicaoInvalida, SemPermissao
+from app.fuso import FUSO, FUSO_NOME  # noqa: F401
 from app.modelos import UNIDADES, Perfil
 from app.repositorios.base import Repositorio
 from app.services.requisicoes import STAFF, ServicoRequisicoes
 from app.services.validacao import validar_uuid
 
-FUSO_NOME = "America/Sao_Paulo"
-# Brasil sem horário de verão desde 2019: deslocamento fixo -03:00. O banco continua agrupando
-# por America/Sao_Paulo, equivalente para datas >= 2019. Único ponto de definição do fuso.
-FUSO = timezone(timedelta(hours=-3))
+# FUSO e FUSO_NOME vivem em app/fuso.py (único ponto de definição); reexportados aqui.
 DIAS_PADRAO = 30
 DIAS_MAXIMOS = 366  # espelha dash_validar_janela
 GRANULARIDADES = ("dia", "semana", "mes")

@@ -20,6 +20,7 @@ from app.repositorios.auth_admin import SupabaseAuthAdmin
 from app.repositorios.supabase_repo import SupabaseRepositorio, _exec, traduzir_erro_banco
 from app.services.admin_usuarios import ServicoUsuarios
 from app.services.requisicoes import ServicoRequisicoes
+from tests.horarios import hora_saida_futura
 from tests.test_requisicoes import acao, criar
 
 
@@ -454,7 +455,7 @@ def test_escrita_administrativa_nunca_mistura_com_escrita_de_requisicao(repo, au
         {
             "nome_solicitante": "F",
             "unidade": "PU",
-            "hora_saida": "2026-11-10T08:30:00-03:00",
+            "hora_saida": hora_saida_futura(),
             "trajeto": "A -> B",
             "veiculo_id": repo.novo_veiculo(),
         },

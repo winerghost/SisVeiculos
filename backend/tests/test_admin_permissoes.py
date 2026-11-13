@@ -9,6 +9,7 @@ import pytest
 
 from app.modelos import Configuracoes
 from tests.conftest import emitir_token
+from tests.horarios import hora_saida_futura
 
 
 def _rotas_admin(app):  # type: ignore[no-untyped-def]
@@ -73,7 +74,7 @@ def test_rotas_nao_admin_recusam_campo_de_papel(client, auth, repo):  # type: ig
     base = {
         "nome_solicitante": "Fulano",
         "unidade": "PU",
-        "hora_saida": "2026-11-10T08:30:00-03:00",
+        "hora_saida": hora_saida_futura(),
         "trajeto": "AGU -> Fórum",
         "veiculo_id": v,
     }

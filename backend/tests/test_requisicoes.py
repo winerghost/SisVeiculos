@@ -2,21 +2,29 @@ from __future__ import annotations
 
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from app.errors import SemPermissao, TransicaoInvalida, VeiculoOcupado
+from app.errors import RequisicaoInvalida, SemPermissao, TransicaoInvalida, VeiculoOcupado
 from app.modelos import Configuracoes
+from app.services.horario_saida import (
+    TOLERANCIA_PASSADO,
+    situacao_do_horario,
+    sugestao,
+    validar_hora_saida_nao_passada,
+)
 from app.services.requisicoes import ServicoRequisicoes
 from tests.fakes import RepoMemoria
+from tests.horarios import hora_saida_futura
 
 
 def corpo(veiculo_id: str, /, **extra: Any) -> dict[str, Any]:
     base = {
         "nome_solicitante": "Fulano de Tal",
         "unidade": "PU",
-        "hora_saida": "2026-11-10T08:30:00-03:00",
+        "hora_saida": hora_saida_futura(),
         "trajeto": "AGU -> Fórum",
         "veiculo_id": veiculo_id,
     }
@@ -279,3 +287,124 @@ def test_conta_inativa_nao_age(client, auth, cenario, repo):  # type: ignore[no-
         cenario.aut.id, cenario.aut.nome, "PU", "autorizador", False
     )
     assert acao(client, auth, cenario.aut, rid, "autorizar").status_code == 403
+
+
+# ------------------------------------------------------------ hora de saída: passado e cor
+def _agora() -> datetime:
+    return datetime(2026, 11, 13, 17, 32, 7, tzinfo=UTC)  # 14:32:07 em Brasília
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(UTC).isoformat()
+
+
+@pytest.mark.parametrize(
+    ("delta", "aceita"),
+    [
+        (timedelta(days=-1), False),
+        (timedelta(hours=-1), False),
+        (-TOLERANCIA_PASSADO - timedelta(seconds=1), False),
+        (-TOLERANCIA_PASSADO, True),
+        (timedelta(0), True),
+        (timedelta(days=3), True),
+    ],
+)
+def test_hora_saida_passada_limite_da_tolerancia(delta, aceita):  # type: ignore[no-untyped-def]
+    if aceita:
+        validar_hora_saida_nao_passada(_iso(_agora() + delta), _agora())
+        return
+    with pytest.raises(RequisicaoInvalida) as e:
+        validar_hora_saida_nao_passada(_iso(_agora() + delta), _agora())
+    assert e.value.codigo == "hora_saida_passada"
+    assert "14:32" in e.value.mensagem and "a partir das 14:22" in e.value.mensagem
+
+
+def test_hora_saida_mesmo_instante_em_fusos_diferentes():  # type: ignore[no-untyped-def]
+    for texto in (
+        "2026-11-13T14:00:00-03:00",
+        "2026-11-13T17:00:00+00:00",
+        "2026-11-13T13:00:00-04:00",
+    ):
+        with pytest.raises(RequisicaoInvalida):
+            validar_hora_saida_nao_passada(_iso(datetime.fromisoformat(texto)), _agora())
+
+
+def test_criar_recusa_passado_sem_tocar_no_banco(client, auth, cenario, repo):  # type: ignore[no-untyped-def]
+    r = criar(client, auth, cenario.sol, cenario.veiculo, hora_saida="2020-01-01T08:00:00-03:00")
+    assert r.status_code == 400
+    erro = r.get_json()["erro"]
+    assert erro["codigo"] == "hora_saida_passada" and "horário de Brasília" in erro["mensagem"]
+    assert not repo.requisicoes
+
+
+def test_requisicao_antiga_continua_autorizavel(repo):  # type: ignore[no-untyped-def]
+    # A regra vale só na criação: a fila pode autorizar depois do horário previsto.
+    aut = repo.novo_perfil("autorizador")
+    sol = repo.novo_perfil("solicitante")
+    veic = repo.novo_veiculo()
+    futuro = ServicoRequisicoes(repo, relogio=_agora)
+    criada = futuro.criar(sol, corpo(veic, hora_saida=_iso(_agora() + timedelta(minutes=5))))
+    depois = ServicoRequisicoes(repo, relogio=lambda: _agora() + timedelta(days=2))
+    assert depois.executar("autorizar", aut, criada["id"])["status"] == "autorizada"
+
+
+@pytest.mark.parametrize(
+    ("segundos", "esperado"),
+    [
+        (0, (14, 30)),  # 14:30:00 exato
+        (7, (14, 35)),  # 14:32:07
+        (-1, (14, 30)),  # 14:29:59 -> 14:30
+        (150, (14, 35)),  # 14:32:30 -> 14:35
+    ],
+)
+def test_sugestao_arredonda_para_cima_de_5_em_5(segundos, esperado):  # type: ignore[no-untyped-def]
+    base = datetime(2026, 11, 13, 17, 30, 0, tzinfo=UTC) + timedelta(seconds=segundos)
+    s = sugestao(base)
+    assert (s["hora"], s["minuto"]) == esperado and s["data"] == "2026-11-13"
+
+
+def test_sugestao_vira_hora_e_dia_em_brasilia():  # type: ignore[no-untyped-def]
+    # 23:58 em Brasília (02:58Z do dia seguinte) -> 00:00 do dia 14 em Brasília.
+    s = sugestao(datetime(2026, 11, 14, 2, 58, tzinfo=UTC))
+    assert s == {"data": "2026-11-14", "hora": 0, "minuto": 0}
+    assert sugestao(datetime(2026, 11, 13, 17, 55, 30, tzinfo=UTC)) == {
+        "data": "2026-11-13",
+        "hora": 15,
+        "minuto": 0,
+    }
+    # 01:00Z de 14/11 = 22:00 de 13/11 em Brasília: a data é a local.
+    assert sugestao(datetime(2026, 11, 14, 1, 0, tzinfo=UTC))["data"] == "2026-11-13"
+
+
+def test_horario_referencia_rota(client, auth, cenario):  # type: ignore[no-untyped-def]
+    assert client.get("/api/requisicoes/horario-referencia").status_code == 401
+    r = client.get("/api/requisicoes/horario-referencia", headers=auth(cenario.sol.id))
+    assert r.status_code == 200 and r.headers["Cache-Control"] == "no-store"
+    j = r.get_json()
+    assert j["fuso"] == "America/Sao_Paulo" and set(j["sugestao"]) == {"data", "hora", "minuto"}
+    assert j["agora"].endswith("-03:00")
+    # A sugestão devolvida é sempre aceita na criação.
+    s = j["sugestao"]
+    hora = f"{s['data']}T{s['hora']:02d}:{s['minuto']:02d}:00-03:00"
+    assert criar(client, auth, cenario.sol, cenario.veiculo, hora_saida=hora).status_code == 201
+
+
+@pytest.mark.parametrize(
+    ("status", "delta", "esperado"),
+    [
+        ("solicitada", timedelta(hours=2), "no_prazo"),
+        ("solicitada", timedelta(minutes=10, seconds=1), "no_prazo"),
+        ("solicitada", timedelta(minutes=10), "proximo"),
+        ("autorizada", timedelta(minutes=1), "proximo"),
+        ("autorizada", timedelta(0), "proximo"),
+        ("solicitada", timedelta(seconds=-1), "atrasado"),
+        ("autorizada", timedelta(days=-1), "atrasado"),
+        ("em_uso", timedelta(days=-1), None),
+        ("concluida", timedelta(days=-1), None),
+        ("negada", timedelta(minutes=1), None),
+        ("cancelada", timedelta(days=-1), None),
+    ],
+)
+def test_situacao_do_horario(status, delta, esperado):  # type: ignore[no-untyped-def]
+    prevista = _iso(_agora() + delta)
+    assert situacao_do_horario(status, prevista, _agora()) == esperado

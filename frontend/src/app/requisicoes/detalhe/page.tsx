@@ -14,6 +14,7 @@ import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
 import { LocalizacaoRegistroSecao } from '@/components/localizacao-registro';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { Alerta } from '@/components/ui/alert';
+import { HoraSaida } from '@/components/ui/hora-saida';
 import { StatusChip } from '@/components/ui/status-chip';
 
 function Detalhe({ id }: { id: string }) {
@@ -50,7 +51,9 @@ function Detalhe({ id }: { id: string }) {
           </span>
         </p>
         {r.motorista ? <p className="mt-1 text-texto-2">Motorista: {r.motorista.nome}</p> : null}
-        <p className="mt-1 text-texto-2">Saída prevista: {dataHora(r.hora_saida)}</p>
+        <p className="mt-1 text-texto-2">
+          Saída prevista: <HoraSaida texto={dataHora(r.hora_saida)} situacao={r.situacao_horario} />
+        </p>
         {r.saida_real_em ? (
           <p className="mt-1 text-texto-2">Saída registrada: {dataHora(r.saida_real_em)}</p>
         ) : null}

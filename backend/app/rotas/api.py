@@ -140,6 +140,14 @@ def listar_requisicoes() -> Any:
     return jsonify(resultado)
 
 
+@api.get("/requisicoes/horario-referencia")
+@requer_auth("solicitante", "autorizador", "admin", "vigilante")
+def horario_referencia() -> Any:
+    resposta = jsonify(_req().horario_referencia())
+    resposta.headers["Cache-Control"] = "no-store"  # service worker é network-first para a API
+    return resposta
+
+
 @api.post("/requisicoes/<requisicao_id>/arquivar")
 @requer_auth()  # o service decide por papel, dono/atribuição e estado
 @limiter.limit(_limite_escrita)

@@ -65,6 +65,22 @@ export const numero = (n: number): string => fmtNumero.format(n);
 
 const dois = (n: number) => String(n).padStart(2, '0');
 
+/** "aaaa-mm-dd" da API como dia local do calendário (sem converter fuso). */
+export function diaDoCalendario(data: string): Date | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(data);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : undefined;
+}
+
+/**
+ * Sugestão de reserva quando a API de referência falha: relógio do aparelho arredondado para
+ * cima de 5 em 5 minutos. Só facilita a escolha; quem valida é o servidor.
+ */
+export function sugestaoLocal(): { data: Date; hora: number; minuto: number } {
+  const passo = 5 * 60_000;
+  const alvo = new Date(Math.ceil(Date.now() / passo) * passo);
+  return { data: alvo, hora: alvo.getHours(), minuto: alvo.getMinutes() };
+}
+
 /** Monta "2026-11-10T08:30:00-03:00" a partir do dia escolhido no calendário e hora/minuto. */
 export function montarHoraSaida(dia: Date, hora: number, minuto: number): string {
   return `${dia.getFullYear()}-${dois(dia.getMonth() + 1)}-${dois(dia.getDate())}T${dois(hora)}:${dois(minuto)}:00${OFFSET}`;

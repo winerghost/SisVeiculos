@@ -69,6 +69,15 @@ export interface ListaMotoristas {
   padrao?: string | null;
 }
 
+export type SituacaoHorario = 'no_prazo' | 'proximo' | 'atrasado';
+
+/** GET /api/requisicoes/horario-referencia: "agora" do servidor e sugestão já arredondada. */
+export interface HorarioReferencia {
+  fuso: string;
+  agora: string;
+  sugestao: { data: string; hora: number; minuto: number };
+}
+
 export interface Requisicao {
   id: string;
   usuario_id: string;
@@ -94,6 +103,12 @@ export interface Requisicao {
   grupos_acao?: Partial<Record<GrupoAcao, string[]>>;
   /** Preferência pessoal de quem consulta: arquivada na sua lista (false para quem não arquiva). */
   arquivada?: boolean;
+  /**
+   * Situação do horário previsto, calculada pela API: no_prazo (verde), proximo (amarelo, faltam
+   * 10 min ou menos) e atrasado (vermelho, passou). null fora de solicitada/autorizada. O cliente
+   * só mapeia para a cor.
+   */
+  situacao_horario?: SituacaoHorario | null;
   /** Mantido por compatibilidade; a tela usa `linha_do_tempo`. */
   historico: EventoHistorico[];
   /** Linha do tempo já pronta da API (estado, etapas e durações). O cliente só a exibe. */

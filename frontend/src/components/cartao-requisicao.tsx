@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Dialogo } from '@/components/ui/dialogo';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { HoraSaida } from '@/components/ui/hora-saida';
 import { StatusChip } from '@/components/ui/status-chip';
 
 type OnAcao = (req: Requisicao, acao: Acao, corpo?: CorpoAcao) => void;
@@ -630,13 +631,16 @@ export function CartaoRequisicao({
               <span className="min-w-0 break-words">{req.nome_solicitante}</span>
             </p>
           ) : (
-            <p className="text-lg font-semibold">{dataCurta(req.hora_saida)}</p>
+            <p className="text-lg font-semibold">
+              <HoraSaida texto={dataCurta(req.hora_saida)} situacao={req.situacao_horario} />
+            </p>
           )}
           <StatusChip status={req.status} />
         </div>
         {mostrarSolicitante ? (
           <p className="mt-1 text-texto-2">
-            {req.unidade} · {dataCurta(req.hora_saida)}
+            {req.unidade} ·{' '}
+            <HoraSaida texto={dataCurta(req.hora_saida)} situacao={req.situacao_horario} />
           </p>
         ) : null}
         <p className="mt-2 text-base break-words">{req.trajeto}</p>

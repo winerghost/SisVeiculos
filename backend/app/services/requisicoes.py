@@ -6,6 +6,7 @@ elas são aplicadas antes, para devolver mensagens claras e `acoes_permitidas`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -24,6 +25,11 @@ from app.modelos import Configuracoes, Perfil, Requisicao
 from app.notificacoes import Notificador, NotificadorNulo
 from app.repositorios.base import Repositorio
 from app.services.fotos_exibicao import FotosExibicao
+from app.services.horario_saida import (
+    horario_referencia,
+    situacao_do_horario,
+    validar_hora_saida_nao_passada,
+)
 from app.services.localizacao import validar_localizacao
 from app.services.validacao import validar_criacao, validar_km, validar_uuid
 
@@ -294,8 +300,10 @@ class ServicoRequisicoes:
         *,
         notificador: Notificador | None = None,
         fotos: FotosExibicao | None = None,
+        relogio: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = repo
+        self._relogio: Callable[[], datetime] = relogio or (lambda: datetime.now(UTC))
         self._fotos = fotos
         self._notificador: Notificador = notificador or NotificadorNulo()
 
@@ -483,7 +491,7 @@ class ServicoRequisicoes:
         # falha do Storage resultam em null, nunca em erro.
         fotos = self._fotos.urls(ids_perfis) if self._fotos is not None else {}
         config = self._repo.ler_configuracoes()
-        agora = datetime.now(UTC)
+        agora = self._relogio()
         checklists = (
             self._repo.momentos_checklist({r["id"] for r in reqs}) if config.checklist else {}
         )
@@ -499,6 +507,8 @@ class ServicoRequisicoes:
                 **self._acoes(perfil, r, config, arquivadas),
                 # Preferência pessoal de quem consulta (false para quem não pode arquivar).
                 "arquivada": r["id"] in arquivadas,
+                # no_prazo | proximo (<= 10 min) | atrasado; null fora de solicitada/autorizada.
+                "situacao_horario": situacao_do_horario(r["status"], r.get("hora_saida"), agora),
                 # Só id e nome (nunca e-mail nem unidade); null enquanto não atribuído.
                 "motorista": self._motorista(r, nomes_motoristas),
                 "campos_acao": self.campos_acao(perfil, r, config, checklists, seletor),
@@ -713,11 +723,16 @@ class ServicoRequisicoes:
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
         return self.apresentar(perfil, atualizada)
 
+    def horario_referencia(self) -> dict[str, Any]:
+        """Agora do servidor (Brasília) e sugestão arredondada para o seletor de hora de saída."""
+        return horario_referencia(self._relogio())
+
     # -- escrita --------------------------------------------------------------------
     def criar(self, perfil: Perfil, corpo: Any) -> dict[str, Any]:
         if perfil.role == "motorista":
             raise SemPermissao("Você não tem permissão para esta ação.")
         dados = validar_criacao(corpo)
+        validar_hora_saida_nao_passada(dados["hora_saida"], self._relogio())  # antes do banco
         veiculo = self._repo.obter_veiculo(dados["veiculo_id"])
         if veiculo is None or not veiculo.get("ativo", True):
             raise VeiculoIndisponivel("Veículo inexistente ou inativo.")

@@ -22,11 +22,11 @@ test('login -> solicitar -> autorizar -> saída -> chegada', async ({ page }) =>
   await page.getByLabel('Veículo', { exact: true }).selectOption({ index: 1 });
   await page.getByRole('button', { name: /Escolha o dia e o horário/ }).click();
   const gaveta = page.getByRole('dialog');
-  await gaveta.getByRole('button', { name: /, 28 de / }).click();
+  // O seletor já abre no dia sugerido pela API; só ajusta hora e minuto.
   await gaveta.getByLabel('Hora').selectOption('14');
   await gaveta.getByLabel('Minuto').selectOption('30');
   await gaveta.getByRole('button', { name: 'Confirmar' }).click();
-  await expect(page.getByRole('button', { name: /28\/\d{2}\/\d{4} às 14:30/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /\d{2}\/\d{2}\/\d{4} às 14:30/ })).toBeVisible();
   await page.getByLabel('Trajeto').fill('Sede -> Fórum Federal, Palmas');
   await page.getByRole('button', { name: 'Enviar requisição' }).click();
 

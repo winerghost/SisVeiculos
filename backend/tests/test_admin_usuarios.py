@@ -9,6 +9,7 @@ import uuid
 import pytest
 
 from tests.fakes_admin import erro_db
+from tests.horarios import hora_saida_futura
 
 
 def _cod(r) -> str:  # type: ignore[no-untyped-def]
@@ -222,7 +223,7 @@ def test_desativar_bloqueia_login_mantem_historico_e_audita(client, auth, auth_a
         json={
             "nome_solicitante": "Fulano",
             "unidade": "PU",
-            "hora_saida": "2026-11-10T08:30:00-03:00",
+            "hora_saida": hora_saida_futura(),
             "trajeto": "A -> B",
             "veiculo_id": v,
         },

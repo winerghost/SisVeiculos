@@ -6,7 +6,7 @@ import { CalendarDays } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useCarga } from '@/lib/use-carga';
-import { montarHoraSaida, rotuloHoraSaida } from '@/lib/formato';
+import { diaDoCalendario, montarHoraSaida, rotuloHoraSaida, sugestaoLocal } from '@/lib/formato';
 import { AppShell } from '@/components/app-shell';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -46,11 +46,32 @@ function Formulario() {
   const [rDia, setRDia] = React.useState<Date | undefined>();
   const [rHora, setRHora] = React.useState(8);
   const [rMinuto, setRMinuto] = React.useState(0);
+  const [abrindo, setAbrindo] = React.useState(false);
 
-  function abrir() {
-    setRDia(dia ?? new Date());
-    setRHora(hora);
-    setRMinuto(minuto);
+  async function abrir() {
+    if (dia) {
+      // Já confirmado: reabre com o valor escolhido (o servidor revalida no envio).
+      setRDia(dia);
+      setRHora(hora);
+      setRMinuto(minuto);
+      setAberto(true);
+      return;
+    }
+    // Primeira abertura: começa na sugestão da API (agora do servidor, arredondado para cima).
+    // Se a consulta falhar, usa o relógio do aparelho só como sugestão.
+    setAbrindo(true);
+    let s = sugestaoLocal();
+    try {
+      const ref = await api.horarioReferencia();
+      const d = diaDoCalendario(ref.sugestao.data);
+      if (d) s = { data: d, hora: ref.sugestao.hora, minuto: ref.sugestao.minuto };
+    } catch {
+      /* mantém a sugestão local */
+    }
+    setRDia(s.data);
+    setRHora(s.hora);
+    setRMinuto(s.minuto);
+    setAbrindo(false);
     setAberto(true);
   }
 
@@ -143,7 +164,8 @@ function Formulario() {
         <Label id="rotulo-hora-saida">Hora de saída</Label>
         <button
           type="button"
-          onClick={abrir}
+          onClick={() => void abrir()}
+          disabled={abrindo}
           aria-haspopup="dialog"
           aria-labelledby="rotulo-hora-saida valor-hora-saida"
           className={cn(campoBase, 'flex h-12 items-center gap-3 text-left')}

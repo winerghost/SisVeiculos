@@ -6,6 +6,8 @@ import uuid
 
 import pytest
 
+from tests.horarios import hora_saida_futura
+
 
 def _cod(r) -> str:  # type: ignore[no-untyped-def]
     return r.get_json()["erro"]["codigo"]
@@ -106,7 +108,7 @@ def test_desativar_ativar_sem_apagar(client, auth, adm, repo):  # type: ignore[n
     corpo = {
         "nome_solicitante": "Fulano",
         "unidade": "PU",
-        "hora_saida": "2026-11-10T08:30:00-03:00",
+        "hora_saida": hora_saida_futura(),
         "trajeto": "A -> B",
         "veiculo_id": vid,
     }
@@ -137,7 +139,7 @@ def test_listar_mostra_requisicao_aberta(client, auth, adm, repo):  # type: igno
         json={
             "nome_solicitante": "F",
             "unidade": "PU",
-            "hora_saida": "2026-11-10T08:30:00-03:00",
+            "hora_saida": hora_saida_futura(),
             "trajeto": "A -> B",
             "veiculo_id": vid,
         },

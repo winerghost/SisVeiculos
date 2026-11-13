@@ -29,6 +29,7 @@ import type {
   MomentoChecklist,
   ListaUsuarios,
   ListaVeiculosAdmin,
+  HorarioReferencia,
   NovaRequisicao,
   NovoConvite,
   PainelId,
@@ -250,6 +251,8 @@ export const api = {
       `/requisicoes?limite=100${status ? `&status=${status}` : ''}${arquivadas ? '&arquivadas=true' : ''}`,
     ),
   requisicao: (id: string) => chamar<Requisicao>(`/requisicoes/${encodeURIComponent(id)}`),
+  /** Agora do servidor (Brasília) e sugestão de hora de saída; o cliente só exibe. */
+  horarioReferencia: () => chamar<HorarioReferencia>('/requisicoes/horario-referencia'),
   criar: (dados: NovaRequisicao) =>
     chamar<Requisicao>('/requisicoes', { method: 'POST', body: JSON.stringify(dados) }),
   /** Seletor de motorista da autorização (staff). Recurso desligado: a API recusa. */

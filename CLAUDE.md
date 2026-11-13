@@ -30,6 +30,8 @@ Dados de servidores e deslocamentos oficiais: tratar como sensíveis (LGPD). Idi
 - `hora_saida` é a saída **prevista**. A saída e a chegada reais ficam em colunas da própria requisição: `saida_real_em`, `chegada_real_em` (nulas até ocorrerem), `saida_registrada_por`, `chegada_registrada_por`. O autorizador registra ambas.
 - `observacao` opcional e limitada; `veiculo_id`; `autorizado_por`, `autorizado_em`. Placa fica em `veiculos`; km e motorista só via recurso opcional.
 - `status`: solicitada → autorizada → em_uso → concluida; também negada e cancelada. CHECK `chegada_real_em > saida_real_em`; `em_uso` exige saída real e chegada nula; `concluida` exige as duas. Sem DELETE físico. Sem prazo máximo nem antecedência mínima na v1.
+- `hora_saida` não pode ser anterior ao horário atual do servidor (tolerância de 10 min, fuso America/Sao_Paulo); só vale na criação (autorizar, saída e chegada não revalidam). O seletor abre na sugestão do servidor (`GET /api/requisicoes/horario-referencia`, agora arredondado para cima de 5 em 5 min); o calendário não desabilita dias, quem recusa é a API.
+- Cor da data e hora: a API devolve `situacao_horario` (`no_prazo` verde, `proximo` amarelo quando faltam 10 min ou menos, `atrasado` vermelho após o horário; `null` fora de solicitada/autorizada). O front só mapeia para a cor, com texto sempre legível.
 
 ## Regra central: veículo ocupado
 Só abre requisição se o veículo estiver livre. Decisão: uma requisição aberta por veículo (sem reserva futura, funciona como fila). O veículo só aceita novo pedido após a conclusão, negativa ou cancelamento da anterior.

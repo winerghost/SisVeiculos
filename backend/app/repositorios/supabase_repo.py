@@ -75,14 +75,27 @@ COLUNAS_CONFIG = (
 )
 
 
-def _filtro_dono(q: Any, usuario_id: str | None, ou_status: tuple[str, ...] | None) -> Any:
-    """Dono; com `ou_status` (vigilante): dono OU status na lista. Os valores são UUID/enum
-    gerados no servidor (nunca texto livre do cliente)."""
+def _filtro_dono(
+    q: Any,
+    usuario_id: str | None,
+    ou_status: tuple[str, ...] | None,
+    ou_registrada_por: str | None = None,
+) -> Any:
+    """Dono; com `ou_status` (vigilante): dono OU status na lista, e com `ou_registrada_por`
+    também as concluídas em que esse usuário registrou saída ou chegada. Os valores são
+    UUID/enum gerados no servidor (nunca texto livre do cliente)."""
     if usuario_id is None:
         return q
     if not ou_status:
         return q.eq("usuario_id", usuario_id)
-    return q.or_(f"usuario_id.eq.{usuario_id},status.in.({','.join(ou_status)})")
+    partes = [f"usuario_id.eq.{usuario_id}", f"status.in.({','.join(ou_status)})"]
+    if ou_registrada_por:
+        partes.append(
+            "and(status.eq.concluida,or("
+            f"saida_registrada_por.eq.{ou_registrada_por},"
+            f"chegada_registrada_por.eq.{ou_registrada_por}))"
+        )
+    return q.or_(",".join(partes))
 
 
 TABELA_ARQUIVADAS = "requisicoes_arquivadas"
@@ -512,6 +525,7 @@ class SupabaseRepositorio:
         offset: int,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
     ) -> list[Requisicao]:
@@ -520,7 +534,7 @@ class SupabaseRepositorio:
                 _colunas_arquivadas(COLUNAS_REQ, arquivador_id, arquivadas)
             )
             q = _filtro_arquivadas(q, arquivador_id, arquivadas)
-            q = _filtro_dono(q, usuario_id, ou_status)
+            q = _filtro_dono(q, usuario_id, ou_status, ou_registrada_por)
             if motorista_id is not None:
                 q = q.eq("motorista_id", motorista_id)
             if status is not None:
@@ -536,6 +550,7 @@ class SupabaseRepositorio:
         status: str | None,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
     ) -> int:
@@ -546,7 +561,7 @@ class SupabaseRepositorio:
                 .limit(1)
             )
             q = _filtro_arquivadas(q, arquivador_id, arquivadas)
-            q = _filtro_dono(q, usuario_id, ou_status)
+            q = _filtro_dono(q, usuario_id, ou_status, ou_registrada_por)
             if motorista_id is not None:
                 q = q.eq("motorista_id", motorista_id)
             if status is not None:

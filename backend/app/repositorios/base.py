@@ -41,12 +41,15 @@ class Repositorio(Protocol):
         offset: int,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
     ) -> list[Requisicao]:
         """`usuario_id` não nulo restringe ao dono e `motorista_id` ao motorista atribuído
         (anti-IDOR aplicado na consulta). `ou_status` (vigilante) amplia o filtro de dono para
-        "dono OU status na lista". `arquivadas` (com `arquivador_id`, o usuário do JWT): False
+        "dono OU status na lista"; `ou_registrada_por` (vigilante) soma as CONCLUÍDAS cuja saída
+        ou chegada foi registrada por esse usuário. `arquivadas` (com `arquivador_id`, o usuário
+        do JWT): False
         exclui as arquivadas por ele, True devolve só elas, None não filtra."""
         ...
 
@@ -57,6 +60,7 @@ class Repositorio(Protocol):
         status: str | None,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
     ) -> int:

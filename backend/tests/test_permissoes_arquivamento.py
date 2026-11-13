@@ -377,17 +377,50 @@ def test_equipe_arquiva_qualquer_requisicao_encerrada(client, auth, repo, c, pap
     assert post(client, auth, quem, f"/api/requisicoes/{rid}/arquivar").status_code == 200
 
 
-def test_vigilante_nunca_arquiva(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
+def test_vigilante_arquiva_a_propria_encerrada(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
     j = criar(client, auth, v.vig, c.veiculo).get_json()  # própria
     assert acao(client, auth, c.aut, j["id"], "cancelar").status_code == 200  # encerrada
-    r = post(client, auth, v.vig, f"/api/requisicoes/{j['id']}/arquivar")
-    assert r.status_code == 403 and cod(r) == "sem_permissao"
     assert (
         "arquivar"
-        not in get(client, auth, v.vig, f"/api/requisicoes/{j['id']}").get_json()[
-            "acoes_permitidas"
-        ]
+        in get(client, auth, v.vig, f"/api/requisicoes/{j['id']}").get_json()["acoes_permitidas"]
     )
+    assert post(client, auth, v.vig, f"/api/requisicoes/{j['id']}/arquivar").status_code == 200
+    assert repo.arquivadas.keys() == {(v.vig.id, j["id"])}
+
+
+def test_vigilante_arquiva_so_concluida_que_ele_registrou(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
+    ve2 = repo.novo_veiculo()
+    registrada = levar_a(client, auth, repo, c, "autorizada")
+    assert acao(client, auth, v.vig, registrada, "saida").status_code == 200
+    assert acao(client, auth, v.vig, registrada, "chegada").status_code == 200
+    alheia = levar_a(client, auth, repo, c, "concluida", veiculo=ve2)  # registrada pela equipe
+
+    j = get(client, auth, v.vig, f"/api/requisicoes/{registrada}").get_json()
+    assert "arquivar" in j["acoes_permitidas"]
+    assert post(client, auth, v.vig, f"/api/requisicoes/{registrada}/arquivar").status_code == 200
+    # Concluída que ele não registrou: invisível (404), nunca 403 que revelaria existência.
+    assert get(client, auth, v.vig, f"/api/requisicoes/{alheia}").status_code == 404
+    r = post(client, auth, v.vig, f"/api/requisicoes/{alheia}/arquivar")
+    assert r.status_code == 404
+    assert repo.arquivadas.keys() == {(v.vig.id, registrada)}
+
+
+def test_outro_vigilante_nao_ve_nem_arquiva_a_registrada_pelo_primeiro(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
+    outro = repo.novo_perfil("vigilante")
+    rid = levar_a(client, auth, repo, c, "autorizada")
+    acao(client, auth, v.vig, rid, "saida")
+    acao(client, auth, v.vig, rid, "chegada")
+    assert get(client, auth, outro, f"/api/requisicoes/{rid}").status_code == 404
+    assert post(client, auth, outro, f"/api/requisicoes/{rid}/arquivar").status_code == 404
+    assert ids(get(client, auth, outro, "/api/requisicoes")) == []
+
+
+def test_vigilante_nao_arquiva_requisicao_aberta(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
+    rid = levar_a(client, auth, repo, c, "autorizada")
+    j = get(client, auth, v.vig, f"/api/requisicoes/{rid}").get_json()
+    assert "arquivar" not in j["acoes_permitidas"]
+    r = post(client, auth, v.vig, f"/api/requisicoes/{rid}/arquivar")
+    assert r.status_code == 409 and cod(r) == "transicao_invalida"
     assert repo.arquivadas == {}
 
 
@@ -508,12 +541,18 @@ def test_viagens_do_motorista_filtram_arquivadas(client, auth, repo, c, m):  # t
     assert get(client, auth, c.aut, "/api/requisicoes").get_json()["total"] == 2  # equipe intacta
 
 
-def test_vigilante_lista_sem_juncao_de_arquivo(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
-    rid = levar_a(client, auth, repo, c, "autorizada")
-    assert ids(get(client, auth, v.vig, "/api/requisicoes")) == [rid]
-    assert ids(get(client, auth, v.vig, "/api/requisicoes?arquivadas=true")) == [
-        rid
-    ]  # nunca arquiva
+def test_vigilante_lista_ativas_e_arquivadas_pessoais(client, auth, repo, c, v):  # type: ignore[no-untyped-def]
+    aberta = levar_a(client, auth, repo, c, "autorizada")
+    ve2 = repo.novo_veiculo()
+    feita = levar_a(client, auth, repo, c, "autorizada", veiculo=ve2)
+    acao(client, auth, v.vig, feita, "saida")
+    acao(client, auth, v.vig, feita, "chegada")
+    assert set(ids(get(client, auth, v.vig, "/api/requisicoes"))) == {aberta, feita}
+    assert ids(get(client, auth, v.vig, "/api/requisicoes?arquivadas=true")) == []
+    post(client, auth, v.vig, f"/api/requisicoes/{feita}/arquivar")
+    assert ids(get(client, auth, v.vig, "/api/requisicoes")) == [aberta]
+    arq = get(client, auth, v.vig, "/api/requisicoes?arquivadas=true")
+    assert ids(arq) == [feita] and arq.get_json()["total"] == 1
 
 
 # ===================================================================== concorrência

@@ -153,13 +153,23 @@ class RepoMemoria(
         offset: int,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
     ) -> list[Requisicao]:
         itens = [
             dict(r)
             for r in self.requisicoes.values()
-            if self._casa(r, usuario_id, status, motorista_id, ou_status, arquivador_id, arquivadas)
+            if self._casa(
+                r,
+                usuario_id,
+                status,
+                motorista_id,
+                ou_status,
+                arquivador_id,
+                arquivadas,
+                ou_registrada_por,
+            )
         ]
         return itens[offset : offset + limite]
 
@@ -172,6 +182,7 @@ class RepoMemoria(
         ou_status: tuple[str, ...] | None,
         arquivador_id: str | None,
         arquivadas: bool | None,
+        ou_registrada_por: str | None = None,
     ) -> bool:
         arquivada = (arquivador_id, r["id"]) in self.arquivadas
         if arquivadas is not None and arquivador_id is not None and arquivada != arquivadas:
@@ -181,6 +192,12 @@ class RepoMemoria(
                 usuario_id is None
                 or r["usuario_id"] == usuario_id
                 or r["status"] in (ou_status or ())
+                or (
+                    ou_registrada_por is not None
+                    and r["status"] == "concluida"
+                    and ou_registrada_por
+                    in (r.get("saida_registrada_por"), r.get("chegada_registrada_por"))
+                )
             )
             and (motorista_id is None or r.get("motorista_id") == motorista_id)
             and (status is None or r["status"] == status)
@@ -193,13 +210,23 @@ class RepoMemoria(
         status: str | None,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
     ) -> int:
         return sum(
             1
             for r in self.requisicoes.values()
-            if self._casa(r, usuario_id, status, motorista_id, ou_status, arquivador_id, arquivadas)
+            if self._casa(
+                r,
+                usuario_id,
+                status,
+                motorista_id,
+                ou_status,
+                arquivador_id,
+                arquivadas,
+                ou_registrada_por,
+            )
         )
 
     # -- arquivamento pessoal (emula a tabela e o gatilho AG041) -------------------------------

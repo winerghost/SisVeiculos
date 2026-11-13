@@ -361,9 +361,16 @@ class ServicoRequisicoes:
     @staticmethod
     def _pode_arquivar(perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
         """Concluída/negada/cancelada, nunca aberta. Solicitante: a própria; equipe: qualquer;
-        motorista: só as atribuídas a ele, com o recurso ligado; vigilante: nunca."""
+        motorista: só as atribuídas a ele, com o recurso ligado; vigilante: as próprias e as
+        concluídas em que ele registrou a saída ou a chegada."""
         if req["status"] not in ESTADOS_ARQUIVAVEIS:
             return False
+        if perfil.role == "vigilante":
+            return perfil.id in (
+                req["usuario_id"],
+                req.get("saida_registrada_por"),
+                req.get("chegada_registrada_por"),
+            )
         if perfil.role in STAFF:
             return True
         if perfil.role == "solicitante":
@@ -587,8 +594,14 @@ class ServicoRequisicoes:
             if req is None or req.get("motorista_id") != perfil.id:
                 raise NaoEncontrado("Viagem não encontrada.")
             return req
-        if perfil.role == "vigilante" and req is not None and req["status"] in ESTADOS_VIGILANTE:
-            return req  # vê para registrar saída/chegada (só autorizada/em_uso)
+        if perfil.role == "vigilante" and req is not None:
+            if req["status"] in ESTADOS_VIGILANTE:
+                return req  # vê para registrar saída/chegada (só autorizada/em_uso)
+            if req["status"] == "concluida" and perfil.id in (
+                req.get("saida_registrada_por"),
+                req.get("chegada_registrada_por"),
+            ):
+                return req  # a viagem que ele mesmo registrou (para arquivar/consultar)
         # 404 (e não 403) para não revelar a existência de requisição alheia.
         if req is None or (perfil.role not in STAFF and req["usuario_id"] != perfil.id):
             raise NaoEncontrado("Requisição não encontrada.")
@@ -620,12 +633,9 @@ class ServicoRequisicoes:
             # O motorista nunca é dono: enxerga só as viagens atribuídas (filtro na consulta).
             self.exigir_motorista_ligado()
             dono, motorista = None, perfil.id
-        # O vigilante não arquiva: sem junção (a lista dele nunca tem arquivadas).
-        filtro_arquivo: dict[str, Any] = (
-            {}
-            if perfil.role == "vigilante"
-            else {"arquivador_id": perfil.id, "arquivadas": arquivadas}
-        )
+        # Vigilante: soma as concluídas que ele registrou (a arquivada é preferência pessoal).
+        ou_registrada_por = perfil.id if perfil.role == "vigilante" else None
+        filtro_arquivo: dict[str, Any] = {"arquivador_id": perfil.id, "arquivadas": arquivadas}
         itens = self._repo.listar_requisicoes(
             usuario_id=dono,
             status=status,
@@ -633,6 +643,7 @@ class ServicoRequisicoes:
             offset=offset,
             motorista_id=motorista,
             ou_status=ou_status,
+            ou_registrada_por=ou_registrada_por,
             **filtro_arquivo,
         )
         total = self._repo.contar_requisicoes(
@@ -640,6 +651,7 @@ class ServicoRequisicoes:
             status=status,
             motorista_id=motorista,
             ou_status=ou_status,
+            ou_registrada_por=ou_registrada_por,
             **filtro_arquivo,
         )
         return {"itens": self.apresentar_lote(perfil, itens), "total": total}
@@ -658,8 +670,6 @@ class ServicoRequisicoes:
         Só mexe em `requisicoes_arquivadas` do PRÓPRIO usuário do JWT."""
         req = self.obter(perfil, requisicao_id)
         config = self._repo.ler_configuracoes()
-        if perfil.role == "vigilante":
-            raise SemPermissao("Você não tem permissão para esta ação.")
         if req["status"] not in ESTADOS_ARQUIVAVEIS:
             raise TransicaoInvalida(MSG_NAO_ARQUIVAVEL)
         if not self._pode_arquivar(perfil, req, config):

@@ -10,7 +10,7 @@ import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ItemArrastavel } from '@/components/item-arrastavel';
+import { ItemArrastavel, type ControleGesto } from '@/components/item-arrastavel';
 
 const ABAS: { status: StatusSaudacao; rotulo: string }[] = [
   { status: 'pendente', rotulo: 'Pendentes' },
@@ -117,14 +117,16 @@ export function BlocoSaudacoes() {
       ) : (
         <ul aria-labelledby="saudacoes-titulo" className="flex flex-col gap-3">
           {lista.dados?.itens.map((f) => {
-            const conteudo = (
+            const conteudo = (controle?: ControleGesto) => (
               <>
                 <p className="text-base">{f.texto}</p>
                 <p className="text-sm text-texto-2">
                   {f.ocasiao} · {f.origem === 'ia' ? 'Gerada por IA' : 'Manual'}
                 </p>
-                {f.acoes_permitidas.includes('aprovar') ||
-                f.acoes_permitidas.includes('rejeitar') ? (
+                {!controle?.confirmando &&
+                (f.acoes_permitidas.includes('aprovar') ||
+                  f.acoes_permitidas.includes('rejeitar') ||
+                  (controle && f.acoes_permitidas.includes('excluir'))) ? (
                   <div className="flex flex-wrap gap-2">
                     {f.acoes_permitidas.includes('aprovar') ? (
                       <Button
@@ -145,6 +147,16 @@ export function BlocoSaudacoes() {
                         Rejeitar
                       </Button>
                     ) : null}
+                    {controle && f.acoes_permitidas.includes('excluir') ? (
+                      <Button
+                        type="button"
+                        variante="contorno"
+                        disabled={envio.ocupado}
+                        onClick={() => controle.acionar('direita')}
+                      >
+                        Excluir
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
               </>
@@ -153,7 +165,7 @@ export function BlocoSaudacoes() {
             if (status !== 'rejeitada') {
               return (
                 <li key={f.id} className={classe}>
-                  {conteudo}
+                  {conteudo()}
                 </li>
               );
             }
@@ -187,7 +199,7 @@ export function BlocoSaudacoes() {
                     : undefined
                 }
               >
-                {conteudo}
+                {(controle) => conteudo(controle)}
               </ItemArrastavel>
             );
           })}

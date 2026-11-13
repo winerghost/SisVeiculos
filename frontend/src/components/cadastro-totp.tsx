@@ -85,8 +85,10 @@ export function CadastroTotp({ aoConcluir }: { aoConcluir: () => void | Promise<
             className="mx-auto size-48 rounded-padrao border border-borda bg-white p-2"
           />
           <p className="text-sm text-texto-2">
-            Sem câmera? Digite esta chave no aplicativo:{' '}
-            <code className="font-semibold break-all text-texto">{cadastro.segredo}</code>
+            Sem câmera? Digite esta chave no aplicativo:
+            <code className="mt-1 block font-semibold break-all text-texto">
+              {cadastro.segredo}
+            </code>
           </p>
           <div>
             <Label htmlFor="codigo-totp">Código do autenticador</Label>

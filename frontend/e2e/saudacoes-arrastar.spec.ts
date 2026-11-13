@@ -16,7 +16,8 @@ async function abrirRejeitadas(page: Page) {
 async function arrastar(page: Page, alvo: Locator, fracao: number) {
   await alvo.scrollIntoViewIfNeeded();
   const caixa = (await alvo.boundingBox())!;
-  const y = caixa.y + caixa.height / 2;
+  // Começa na linha do texto: botões do cartão não iniciam o arrasto.
+  const y = caixa.y + 20;
   const x0 = caixa.x + caixa.width / 2;
   await page.mouse.move(x0, y);
   await page.mouse.down();

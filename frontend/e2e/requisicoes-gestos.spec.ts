@@ -262,3 +262,21 @@ test('teclado: Tab alcança o link e os botões do cartão, sem parada extra', a
   await page.keyboard.press('Tab');
   await expect(cartao.getByRole('button', { name: 'Autorizar' })).toBeFocused();
 });
+
+test('vigilante: concluída arquiva por gesto e botão quando a API libera, com Desfazer', async ({
+  page,
+}) => {
+  const mock = await entrar(page, 'vigilante@exemplo.com', {
+    sementes: [{ status: 'concluida' }],
+  });
+  const cartao = page.locator(CARTAO).first();
+  await expect(cartao.getByRole('button', { name: 'Arquivar' })).toBeVisible();
+  await arrastar(page, cartao, 0.6);
+  await expect(page.getByRole('status').getByText('Requisição arquivada.')).toBeVisible();
+  await page.getByRole('button', { name: 'Desfazer' }).click();
+  await expect(page.locator(CARTAO)).toHaveCount(1);
+  expect(mock.organizacoes.map((o) => [o.papel, o.acao])).toEqual([
+    ['vigilante', 'arquivar'],
+    ['vigilante', 'desarquivar'],
+  ]);
+});

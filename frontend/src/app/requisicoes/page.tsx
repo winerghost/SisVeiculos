@@ -126,6 +126,7 @@ function Conteudo() {
         </ul>
       )}
 
+      {podeCriar ? <div aria-hidden className="h-24" /> : null}
       {podeCriar ? (
         <div className="fixed inset-x-0 bottom-16 z-20 mx-auto max-w-md bg-gradient-to-t from-fundo via-fundo to-transparent px-5 pt-4 pb-3">
           <Button asChild tamanho="cheio">

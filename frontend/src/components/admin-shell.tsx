@@ -19,6 +19,14 @@ const ABA_ACESSOS = { href: '/admin/acessos', rotulo: 'Acessos' };
 function Corpo({ comAbas, children }: { comAbas: boolean; children: React.ReactNode }) {
   const { eu } = useAuth();
   const caminho = usePathname();
+  const navRef = React.useRef<HTMLElement>(null);
+  // Com a barra rolável, traz a aba ativa para a área visível (só rola a barra, não a página).
+  React.useEffect(() => {
+    const nav = navRef.current;
+    const ativa = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !ativa) return;
+    nav.scrollLeft = ativa.offsetLeft - (nav.clientWidth - ativa.offsetWidth) / 2;
+  }, [caminho, eu]);
   // A permissão `administrar` vem de /api/eu (calculada no servidor); a API revalida cada chamada.
   if (!eu?.permissoes.includes('administrar')) {
     return <Alerta>Você não tem permissão para acessar a administração.</Alerta>;
@@ -28,7 +36,11 @@ function Corpo({ comAbas, children }: { comAbas: boolean; children: React.ReactN
   return (
     <>
       {comAbas ? (
-        <nav aria-label="Administração" className="-mx-5 mb-5 flex gap-2 overflow-x-auto px-5">
+        <nav
+          ref={navRef}
+          aria-label="Administração"
+          className="-mx-5 mb-5 flex gap-2 overflow-x-auto px-5"
+        >
           {abas.map((a) => {
             const ativa = caminho === a.href || caminho.startsWith(`${a.href}/`);
             return (

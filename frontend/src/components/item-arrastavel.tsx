@@ -29,8 +29,16 @@ export interface PapelGesto {
   confirmar?: { pergunta: string; rotulo: string; rotuloAria: string };
 }
 
+/** Entregue ao conteúdo quando `children` é função: botões próprios podem acionar os gestos. */
+export interface ControleGesto {
+  /** Aciona o papel do lado (com `confirmar`, abre a confirmação inline). */
+  acionar: (lado: 'direita' | 'esquerda') => void;
+  /** Confirmação de ação destrutiva aberta: o conteúdo pode esconder suas outras ações. */
+  confirmando: boolean;
+}
+
 interface Props {
-  children: React.ReactNode;
+  children: React.ReactNode | ((controle: ControleGesto) => React.ReactNode);
   /** Arrastar para a direita (ou ArrowRight, se `focavel`). Ausente: gesto desabilitado. */
   direita?: PapelGesto;
   /** Arrastar para a esquerda (ou ArrowLeft, se `focavel`). Ausente: gesto desabilitado. */
@@ -146,10 +154,19 @@ export function ItemArrastavel({
     }
   }
 
+  const controle: ControleGesto = {
+    acionar: (lado) => {
+      const papel = lado === 'direita' ? direita : esquerda;
+      if (papel && !ocupado) acionar(papel);
+    },
+    confirmando: confirmando !== null,
+  };
+  const conteudo = typeof children === 'function' ? children(controle) : children;
+
   if (!direita && !esquerda) {
     return (
       <li className={cn('rounded-padrao', className)}>
-        <div className={cn('flex flex-col gap-2 p-3', classeInterna)}>{children}</div>
+        <div className={cn('flex flex-col gap-2 p-3', classeInterna)}>{conteudo}</div>
       </li>
     );
   }
@@ -193,8 +210,8 @@ export function ItemArrastavel({
           classeInterna,
         )}
       >
-        {children}
-        {focavel ? (
+        {conteudo}
+        {focavel && !confirmando ? (
           <p id={dicaId} className="text-xs text-texto-2">
             Arraste ou use as setas
             <span className="sr-only">: {dica}</span>

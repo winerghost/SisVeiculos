@@ -130,7 +130,15 @@ export function AppShell({
               {sobretitulo}
             </p>
           ) : null}
-          <h1 className="mt-1 text-3xl font-semibold">{titulo}</h1>
+          <h1
+            className={cn(
+              'mt-1 font-semibold',
+              // Títulos longos ficam numa linha só ao lado dos ícones do cabeçalho.
+              titulo.length > 12 ? 'text-2xl' : 'text-3xl',
+            )}
+          >
+            {titulo}
+          </h1>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <SinoNotificacoes />

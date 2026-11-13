@@ -389,14 +389,13 @@ def test_falha_na_transicao_desfaz_a_localizacao(cena: Cena) -> None:
     assert _localizacoes(rid) == [] and h.status_de(rid) == "autorizada"
 
 
-def test_km_obrigatorio_tambem_desfaz_a_localizacao(cena: Cena) -> None:
+def test_motorista_nunca_e_obrigado_a_lancar_km(cena: Cena) -> None:
+    # Migration 20261119120200: motorista nunca exige KM (AG012 nao vale para ele), mesmo com Quilometragem ligada.
     cena.ligar()
     _cfg({"quilometragem": True}, cena.admin)
     rid = cena.autorizada()
-    _erro(rid, "saida", cena.motorista, "AG012")
-    assert _localizacoes(rid) == []
-    _rpc(rid, "saida", cena.motorista, km_saida=100)
-    _rpc(rid, "chegada", cena.motorista, km_chegada=150)
+    _rpc(rid, "saida", cena.motorista)
+    _rpc(rid, "chegada", cena.motorista)
     assert h.status_de(rid) == "concluida"
 
 

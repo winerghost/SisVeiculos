@@ -13,7 +13,7 @@ from app.repositorios.supabase_repo import traduzir_erro_banco
 from tests.fakes import RepoMemoria
 from tests.test_requisicoes import acao, criar
 
-LIGADO = Configuracoes(quilometragem=True)
+LIGADO = Configuracoes(quilometragem=True, autorizador_km=True)
 
 
 @pytest.fixture

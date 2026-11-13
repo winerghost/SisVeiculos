@@ -343,7 +343,7 @@ def test_com_motorista_registra_ciclo_completo_so_nas_proprias(client, auth, c, 
     r = acao(client, auth, m.a, rid, "chegada")
     assert r.status_code == 200 and r.get_json()["status"] == "concluida"
     assert repo.requisicoes[rid]["chegada_registrada_por"] == m.a.id
-    assert r.get_json()["acoes_permitidas"] == []
+    assert r.get_json()["acoes_permitidas"] == ["arquivar"]  # concluída: só organizar a lista
 
 
 def test_motorista_sem_atribuicao_nao_registra(client, auth, c, m, repo):  # type: ignore[no-untyped-def]
@@ -362,19 +362,19 @@ def test_troca_de_motorista_tira_o_poder_do_anterior(client, auth, c, m, repo): 
     assert acao(client, auth, m.b, rid, "saida").status_code == 200
 
 
-def test_km_continua_obrigatorio_para_o_motorista(client, auth, c, m, repo):  # type: ignore[no-untyped-def]
-    repo.config = Configuracoes(motorista=True, motorista_registra=True, quilometragem=True)
+def test_motorista_nunca_lanca_km(client, auth, c, m, repo):  # type: ignore[no-untyped-def]
+    repo.config = Configuracoes(
+        motorista=True, motorista_registra=True, quilometragem=True, autorizador_km=True
+    )
     rid = viagem_autorizada(client, auth, repo, c, motorista=m.a)
     j = get(client, auth, m.a, f"/api/motorista/viagens/{rid}").get_json()
-    assert j["campos_acao"]["registrar_saida"]["campos_obrigatorios"] == ["km_saida"]
-    assert acao(client, auth, m.a, rid, "saida").status_code == 400
+    assert "registrar_saida" not in j["campos_acao"]  # nenhum campo de km é pedido
     h = auth(m.a.id)
+    # km enviado por engano é descartado (sem erro), e o banco também não o exige.
     r = client.post(f"/api/requisicoes/{rid}/saida", headers=h, json={"km_saida": 100})
-    assert r.status_code == 200
-    r = client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json={"km_chegada": 90})
-    assert r.status_code == 400
+    assert r.status_code == 200 and repo.requisicoes[rid]["km_saida"] is None
     r = client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json={"km_chegada": 150})
-    assert r.status_code == 200
+    assert r.status_code == 200 and repo.requisicoes[rid]["km_chegada"] is None
 
 
 def test_checklist_continua_obrigatorio_e_motorista_registra_o_proprio(client, auth, c, m, repo):  # type: ignore[no-untyped-def]

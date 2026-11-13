@@ -162,13 +162,29 @@ export function BlocoSaudacoes() {
                 key={f.id}
                 className="border border-borda"
                 ocupado={envio.ocupado}
-                onAprovar={
+                focavel
+                esquerda={
                   f.acoes_permitidas.includes('aprovar')
-                    ? () => void decidir(f.id, 'aprovar')
+                    ? {
+                        rotulo: 'Aprovar',
+                        cor: 'primaria',
+                        onAcionar: () => void decidir(f.id, 'aprovar'),
+                      }
                     : undefined
                 }
-                onExcluir={
-                  f.acoes_permitidas.includes('excluir') ? () => void excluir(f.id) : undefined
+                direita={
+                  f.acoes_permitidas.includes('excluir')
+                    ? {
+                        rotulo: 'Excluir',
+                        cor: 'erro',
+                        onAcionar: () => void excluir(f.id),
+                        confirmar: {
+                          pergunta: 'Excluir definitivamente?',
+                          rotulo: 'Confirmar',
+                          rotuloAria: 'Confirmar exclusão',
+                        },
+                      }
+                    : undefined
                 }
               >
                 {conteudo}

@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type {
   Acao,
+  AcaoOrganizar,
   ConfiguracaoIA,
   FraseSaudacao,
   ListaSaudacoes,
@@ -243,16 +244,25 @@ export const api = {
   aceitarConvite: (token: string, nome?: string) =>
     chamar<Eu>('/convites/aceitar', JSON_POST(nome ? { token, nome } : { token })),
   veiculos: () => chamar<{ itens: Veiculo[] }>('/veiculos').then((r) => r.itens),
-  requisicoes: (status?: Status) =>
-    chamar<ListaRequisicoes>(`/requisicoes?limite=100${status ? `&status=${status}` : ''}`),
+  /** `arquivadas: true` lista só as arquivadas do usuário; o padrão da API (false) as oculta. */
+  requisicoes: (status?: Status, arquivadas?: boolean) =>
+    chamar<ListaRequisicoes>(
+      `/requisicoes?limite=100${status ? `&status=${status}` : ''}${arquivadas ? '&arquivadas=true' : ''}`,
+    ),
   requisicao: (id: string) => chamar<Requisicao>(`/requisicoes/${encodeURIComponent(id)}`),
   criar: (dados: NovaRequisicao) =>
     chamar<Requisicao>('/requisicoes', { method: 'POST', body: JSON.stringify(dados) }),
   /** Seletor de motorista da autorização (staff). Recurso desligado: a API recusa. */
   motoristas: () => chamar<ListaMotoristas>('/motoristas'),
   /** Viagens atribuídas ao próprio motorista (Perfil Motorista). */
-  viagensMotorista: () => chamar<ListaRequisicoes>('/motorista/viagens'),
+  viagensMotorista: (arquivadas?: boolean) =>
+    chamar<ListaRequisicoes>(`/motorista/viagens${arquivadas ? '?arquivadas=true' : ''}`),
   viagemMotorista: (id: string) => chamar<Requisicao>(`/motorista/viagens/${enc(id)}`),
+  /** Arquivar é pessoal e só com `arquivar`/`desarquivar` em acoes_permitidas; sem corpo. */
+  organizar: (id: string, acao: AcaoOrganizar) =>
+    chamar<Requisicao>(`/requisicoes/${enc(id)}/${acao}`, JSON_POST()),
+  organizarViagem: (id: string, acao: AcaoOrganizar) =>
+    chamar<Requisicao>(`/motorista/viagens/${enc(id)}/${acao}`, JSON_POST()),
   /** Troca o motorista (só com `atribuir_motorista` em acoes_permitidas); a API valida. */
   atribuirMotorista: (id: string, motoristaId: string) =>
     chamar<Requisicao>(

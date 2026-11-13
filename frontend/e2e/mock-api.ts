@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import { gruposAcao, recursos } from './recursos';
 
 // API fake que imita o contrato do Flask (backend/app/rotas/api.py). As regras aqui existem
 // só para o teste: o front real nunca as calcula.
@@ -94,6 +95,14 @@ export interface Opcoes {
   atrasoPainelMs?: number;
   /** POST .../resumo responde com este erro da API. */
   erroResumo?: { status: number; codigo: string; mensagem: string };
+  /**
+   * Recurso Motorista ligado: `campos_acao.autorizar` traz estes candidatos (e `motorista_padrao`
+   * se informado). Sem isto a autorização não oferece motorista.
+   */
+  motoristas?: { id: string; nome: string }[];
+  motoristaPadrao?: string;
+  /** Marca a requisição como arquivada para o papel (ex.: sementes já arquivadas). */
+  arquivadas?: { papel: Papel; indice: number }[];
 }
 
 export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
@@ -135,17 +144,37 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     return null;
   };
 
+  // Arquivar é pessoal: um conjunto de ids por papel (a regra real vive no backend).
+  const arquivadasPor: Record<Papel, Set<string>> = {
+    solicitante: new Set(),
+    autorizador: new Set(),
+    vigilante: new Set(),
+  };
+  for (const x of opcoes.arquivadas ?? []) {
+    const r = reqs[x.indice];
+    if (r) arquivadasPor[x.papel].add(r.id);
+  }
+  const organizacoes: { acao: string; id: string; papel: Papel }[] = [];
   const acoes = (papel: Papel, r: Req): string[] => {
     const a: string[] = [];
     if (papel === 'autorizador') {
       if (r.status === 'solicitada') a.push('autorizar', 'negar', 'cancelar');
       if (r.status === 'autorizada') a.push('registrar_saida', 'cancelar');
       if (r.status === 'em_uso') a.push('registrar_chegada');
+      if (opcoes.checklist && ['autorizada', 'em_uso', 'concluida'].includes(r.status)) {
+        a.push('ver_checklist');
+      }
     } else if (papel === 'vigilante') {
       if (r.status === 'autorizada') a.push('registrar_saida');
       if (r.status === 'em_uso') a.push('registrar_chegada');
     } else if (r.status === 'solicitada' && r.usuario_id === PESSOAS.solicitante.id) {
       a.push('cancelar');
+    }
+    // Só concluída/negada/cancelada se arquivam: autorizador qualquer, solicitante a própria.
+    const terminal = ['concluida', 'negada', 'cancelada'].includes(r.status);
+    const dono = papel === 'solicitante' && r.usuario_id === PESSOAS.solicitante.id;
+    if (terminal && (papel === 'autorizador' || dono)) {
+      a.push(arquivadasPor[papel].has(r.id) ? 'desarquivar' : 'arquivar');
     }
     return a;
   };
@@ -158,9 +187,26 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
   let pendenteVisivel = !opcoes.pendenteSoApos409;
   const feito = (id: string, m: string) => !!checklists.get(id)?.[m];
   const camposAcao = (papel: Papel, r: Req) => {
-    if (!opcoes.km && !opcoes.checklist) return {};
     const a = acoes(papel, r);
-    const o: Record<string, { campos_obrigatorios: string[]; checklist_pendente?: string }> = {};
+    const o: Record<
+      string,
+      {
+        campos_obrigatorios: string[];
+        campos_opcionais?: string[];
+        checklist_pendente?: string;
+        motoristas?: { id: string; nome: string }[];
+        motorista_padrao?: string | null;
+      }
+    > = {};
+    if (opcoes.motoristas && a.includes('autorizar')) {
+      o.autorizar = {
+        campos_obrigatorios: [],
+        campos_opcionais: ['motorista_id'],
+        motoristas: opcoes.motoristas,
+        motorista_padrao: opcoes.motoristaPadrao ?? null,
+      };
+    }
+    if (!opcoes.km && !opcoes.checklist) return o;
     if (a.includes('registrar_saida')) {
       o.registrar_saida = { campos_obrigatorios: opcoes.km ? ['km_saida'] : [] };
       if (opcoes.checklist && pendenteVisivel && !feito(r.id, 'saida')) {
@@ -307,6 +353,9 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     historico: historico(r),
     linha_do_tempo: linhaDoTempo(r),
     acoes_permitidas: acoes(papel, r),
+    // Cancelar é da categoria "solicitar" para o solicitante e "decidir" para a equipe.
+    grupos_acao: gruposAcao(acoes(papel, r), papel === 'solicitante' ? 'solicitar' : 'decidir'),
+    arquivada: arquivadasPor[papel].has(r.id),
     campos_acao: camposAcao(papel, r),
   });
   const ocupado = () => reqs.some((r) => ['solicitada', 'autorizada', 'em_uso'].includes(r.status));
@@ -402,11 +451,12 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
           opcoes.comAdmin && papel === 'autorizador'
             ? [...p.permissoes, 'administrar']
             : p.permissoes,
-        recursos: {
-          ...(opcoes.checklist ? { checklist: true } : {}),
-          ...(opcoes.km ? { quilometragem: true } : {}),
-          ...(opcoes.km && papel === 'vigilante' ? { vigilante_km: true } : {}),
-        },
+        recursos: recursos({
+          checklist: !!opcoes.checklist,
+          quilometragem: !!opcoes.km,
+          vigilante_km: !!opcoes.km && papel === 'vigilante',
+          motorista: !!opcoes.motoristas,
+        }),
         foto_url: fotoUrl(),
       },
     });
@@ -512,10 +562,14 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
       reqs.push(nova);
       return route.fulfill({ status: 201, json: ver(papel, nova) });
     }
-    const status = new URL(route.request().url()).searchParams.get('status');
+    const params = new URL(route.request().url()).searchParams;
+    const status = params.get('status');
+    // Padrão da API: arquivadas=false (as arquivadas do usuário somem); true = só as arquivadas.
+    const soArquivadas = params.get('arquivadas') === 'true';
     const itens = reqs
       .filter((r) => (papel !== 'solicitante' ? true : r.usuario_id === PESSOAS[papel].id))
       .filter((r) => !status || r.status === status)
+      .filter((r) => arquivadasPor[papel].has(r.id) === soArquivadas)
       .map((r) => ver(papel, r));
     await route.fulfill({ json: { itens, total: itens.length } });
   });
@@ -791,6 +845,25 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     if (!r) return erro(route, 404, 'nao_encontrado', 'Requisição não encontrada.');
     if (!acao) return route.fulfill({ json: ver(papel, r) });
 
+    if (acao === 'arquivar' || acao === 'desarquivar') {
+      if (!acoes(papel, r).includes(acao)) {
+        // Idempotente na API real; aqui só a recusa por estado/permissão interessa ao teste.
+        const ja = arquivadasPor[papel].has(r.id) === (acao === 'arquivar');
+        if (!ja) {
+          return erro(
+            route,
+            409,
+            'transicao_invalida',
+            'Só é possível arquivar ou desarquivar uma requisição concluída, negada ou cancelada.',
+          );
+        }
+      }
+      organizacoes.push({ acao, id: r.id, papel });
+      if (acao === 'arquivar') arquivadasPor[papel].add(r.id);
+      else arquivadasPor[papel].delete(r.id);
+      return route.fulfill({ json: ver(papel, r) });
+    }
+
     const mapa: Record<string, [string, Req['status']]> = {
       autorizar: ['autorizar', 'autorizada'],
       negar: ['negar', 'negada'],
@@ -863,6 +936,7 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
 
   return {
     reqs,
+    organizacoes,
     consultasPainel,
     resumosPainel,
     corpos,

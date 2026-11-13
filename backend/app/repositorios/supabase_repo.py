@@ -47,6 +47,11 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 INDICE_VEICULO_ABERTO = "ux_requisicoes_veiculo_aberta"
+MSG_DECIDIR_PROPRIA = "Você não pode decidir sobre a sua própria requisição."
+MSG_ARQUIVAR_ABERTA = (
+    "Só é possível arquivar uma requisição concluída, negada ou cancelada. "
+    "Requisições em aberto não podem ser arquivadas."
+)
 
 COLUNAS_REQ = (
     "id,usuario_id,nome_solicitante,unidade,hora_saida,trajeto,observacao,veiculo_id,status,"
@@ -66,7 +71,7 @@ MSG_VEICULO_OCUPADO = (
 COLUNAS_CONFIG = (
     "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
     "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao,"
-    "vigilante_km"
+    "vigilante_km,autorizador_decide_propria,autorizador_km"
 )
 
 
@@ -78,6 +83,25 @@ def _filtro_dono(q: Any, usuario_id: str | None, ou_status: tuple[str, ...] | No
     if not ou_status:
         return q.eq("usuario_id", usuario_id)
     return q.or_(f"usuario_id.eq.{usuario_id},status.in.({','.join(ou_status)})")
+
+
+TABELA_ARQUIVADAS = "requisicoes_arquivadas"
+
+
+def _filtro_arquivadas(q: Any, arquivador_id: str | None, arquivadas: bool | None) -> Any:
+    """Arquivamento é por usuário: junção com `requisicoes_arquivadas` restrita às linhas do
+    próprio usuário. True = só as arquivadas (inner); False = anti-junção (nenhuma linha dele)."""
+    if arquivadas is None or arquivador_id is None:
+        return q
+    q = q.eq(f"{TABELA_ARQUIVADAS}.usuario_id", arquivador_id)
+    return q if arquivadas else q.is_(TABELA_ARQUIVADAS, "null")
+
+
+def _colunas_arquivadas(base: str, arquivador_id: str | None, arquivadas: bool | None) -> str:
+    if arquivadas is None or arquivador_id is None:
+        return base
+    juncao = "!inner" if arquivadas else ""
+    return f"{base},{TABELA_ARQUIVADAS}{juncao}(usuario_id)"
 
 
 def _configuracoes(r: dict[str, Any]) -> Configuracoes:
@@ -93,6 +117,8 @@ def _configuracoes(r: dict[str, Any]) -> Configuracoes:
         motorista_registra=bool(r.get("motorista_registra")),
         motorista_localizacao=bool(r.get("motorista_localizacao")),
         vigilante_km=bool(r.get("vigilante_km")),
+        autorizador_decide_propria=bool(r.get("autorizador_decide_propria")),
+        autorizador_km=bool(r.get("autorizador_km")),
     )
 
 
@@ -163,6 +189,10 @@ MSG_DEP_MOTORISTA_REGISTRA = "'Motorista registra' exige o perfil Motorista liga
 MSG_DEP_LOCALIZACAO = "'Localização do motorista' exige 'Motorista registra' ligado."
 MSG_DEP_VIGILANTE_KM = "'KM pelo vigilante' exige a Quilometragem ligada."
 MSG_DEP_VIGILANTE_KM_DESLIGAR = "Desligue 'KM pelo vigilante' antes de desligar a Quilometragem."
+MSG_DEP_AUTORIZADOR_KM = "'KM pelo autorizador' exige a Quilometragem ligada."
+MSG_DEP_AUTORIZADOR_KM_DESLIGAR = (
+    "Desligue 'KM pelo autorizador' antes de desligar a Quilometragem."
+)
 
 MSG_CHECKLIST_SAIDA = "O checklist de saída é obrigatório antes de registrar a saída."
 MSG_CHECKLIST_CHEGADA = "O checklist de chegada é obrigatório antes de registrar a chegada."
@@ -317,10 +347,21 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return RequisicaoInvalida(MSG_LOCALIZACAO_OBRIGATORIA, "localizacao_obrigatoria")
     if codigo == "AG037":
         return RequisicaoInvalida(MSG_REGISTRO_INVALIDO, "registro_invalido")
+    if codigo == "AG040":  # autodecisão com `autorizador_decide_propria` desligada
+        return SemPermissao(MSG_DECIDIR_PROPRIA)
+    if codigo == "AG041":  # arquivar requisição ainda aberta (mensagem fixa)
+        return TransicaoInvalida(MSG_ARQUIVAR_ABERTA)
     if codigo == "23514" and "ck_configuracoes_vigilante" in texto:
         return DependenciaRecurso(MSG_DEP_VIGILANTE_KM_DESLIGAR)
     if codigo == "AG010" and "vigilante" in texto.lower():
         return DependenciaRecurso(MSG_DEP_VIGILANTE_KM)
+    if codigo == "23514" and "ck_configuracoes_autorizador_km" in texto:
+        return DependenciaRecurso(MSG_DEP_AUTORIZADOR_KM_DESLIGAR)
+    if codigo == "AG010" and "autorizador" in texto.lower():
+        desligar = "desligue" in texto.lower()
+        return DependenciaRecurso(
+            MSG_DEP_AUTORIZADOR_KM_DESLIGAR if desligar else MSG_DEP_AUTORIZADOR_KM
+        )
     if codigo == "23514" and "ck_configuracoes_localizacao" in texto:
         return DependenciaRecurso(MSG_DEP_LOCALIZACAO)
     if codigo == "23514" and "ck_configuracoes_motorista" in texto:
@@ -471,9 +512,14 @@ class SupabaseRepositorio:
         offset: int,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        arquivador_id: str | None = None,
+        arquivadas: bool | None = None,
     ) -> list[Requisicao]:
         def consulta() -> Any:
-            q = self._c.table("requisicoes").select(COLUNAS_REQ)
+            q = self._c.table("requisicoes").select(
+                _colunas_arquivadas(COLUNAS_REQ, arquivador_id, arquivadas)
+            )
+            q = _filtro_arquivadas(q, arquivador_id, arquivadas)
             q = _filtro_dono(q, usuario_id, ou_status)
             if motorista_id is not None:
                 q = q.eq("motorista_id", motorista_id)
@@ -481,7 +527,7 @@ class SupabaseRepositorio:
                 q = q.eq("status", status)
             return q.order("criado_em", desc=True).range(offset, offset + limite - 1).execute()
 
-        return list(_exec(consulta).data)
+        return [filtrar_colunas(r) for r in _exec(consulta).data]
 
     def contar_requisicoes(
         self,
@@ -490,9 +536,16 @@ class SupabaseRepositorio:
         status: str | None,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        arquivador_id: str | None = None,
+        arquivadas: bool | None = None,
     ) -> int:
         def consulta() -> Any:
-            q = self._c.table("requisicoes").select("id", count="exact").limit(1)  # type: ignore[arg-type]
+            q = (
+                self._c.table("requisicoes")
+                .select(_colunas_arquivadas("id", arquivador_id, arquivadas), count="exact")  # type: ignore[arg-type]
+                .limit(1)
+            )
+            q = _filtro_arquivadas(q, arquivador_id, arquivadas)
             q = _filtro_dono(q, usuario_id, ou_status)
             if motorista_id is not None:
                 q = q.eq("motorista_id", motorista_id)
@@ -501,6 +554,47 @@ class SupabaseRepositorio:
             return q.execute()
 
         return int(_exec(consulta).count or 0)
+
+    def arquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
+        # INSERT ... ON CONFLICT DO NOTHING: toque duplo ou corrida entre duas chamadas não
+        # gera erro (a PK composta garante uma só linha). O gatilho recusa requisição aberta.
+        _exec(
+            lambda: self._c.table(TABELA_ARQUIVADAS)
+            .upsert(
+                {"usuario_id": usuario_id, "requisicao_id": requisicao_id},
+                on_conflict="usuario_id,requisicao_id",
+                ignore_duplicates=True,
+            )
+            .execute(),
+            repetir_lock=True,
+        )
+
+    def desarquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
+        _exec(
+            lambda: self._c.table(TABELA_ARQUIVADAS)
+            .delete()
+            .eq("usuario_id", usuario_id)
+            .eq("requisicao_id", requisicao_id)
+            .execute(),
+            repetir_lock=True,
+        )
+
+    def ids_arquivados(self, usuario_id: str, ids: set[str]) -> set[str]:
+        if not ids:
+            return set()
+        achados: set[str] = set()
+        lista = sorted(ids)
+        for i in range(0, len(lista), LOTE_IN):  # URL curta: ids em blocos
+            bloco = lista[i : i + LOTE_IN]
+            res = _exec(
+                lambda b=bloco: self._c.table(TABELA_ARQUIVADAS)  # type: ignore[misc]
+                .select("requisicao_id")
+                .eq("usuario_id", usuario_id)
+                .in_("requisicao_id", b)
+                .execute()
+            )
+            achados.update(r["requisicao_id"] for r in res.data)
+        return achados
 
     def nomes_perfis(self, ids: set[str]) -> dict[str, str]:
         if not ids:

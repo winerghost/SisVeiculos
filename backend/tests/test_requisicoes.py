@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from app.errors import SemPermissao, TransicaoInvalida, VeiculoOcupado
+from app.modelos import Configuracoes
 from app.services.requisicoes import ServicoRequisicoes
 from tests.fakes import RepoMemoria
 
@@ -154,7 +155,8 @@ def test_fluxo_completo_e_auditoria(client, auth, cenario, repo):  # type: ignor
     assert j["status"] == "em_uso" and j["saida_registrada_por"] == cenario.aut.id
     assert j["acoes_permitidas"] == ["registrar_chegada"]
     j = acao(client, auth, cenario.adm, rid, "chegada").get_json()
-    assert j["status"] == "concluida" and j["acoes_permitidas"] == []
+    assert j["status"] == "concluida"
+    assert j["acoes_permitidas"] == ["ver_localizacao", "arquivar"]  # admin: sem transições
     assert [(a, b) for _, a, b in repo.auditoria] == [
         (None, "solicitada"), ("solicitada", "autorizada"),
         ("autorizada", "em_uso"), ("em_uso", "concluida"),
@@ -225,7 +227,8 @@ def test_autoautorizacao_bloqueada_por_padrao(client, auth, cenario):  # type: i
 
 
 def test_autoautorizacao_quando_permitida(repo, cenario):  # type: ignore[no-untyped-def]
-    svc = ServicoRequisicoes(repo, permitir_autoautorizacao=True)
+    repo.config = Configuracoes(autorizador_decide_propria=True)
+    svc = ServicoRequisicoes(repo)
     req = svc.criar(cenario.aut, corpo(cenario.veiculo))
     assert svc.executar("autorizar", cenario.aut, req["id"])["status"] == "autorizada"
 

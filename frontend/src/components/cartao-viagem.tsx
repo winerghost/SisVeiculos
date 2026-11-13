@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { dataCurta, dataHora, numero } from '@/lib/formato';
 import type { Acao, CorpoAcao, Requisicao } from '@/lib/tipos';
-import { BotoesAcao } from '@/components/cartao-requisicao';
+import { BotoesAcao, type OnOrganizar } from '@/components/cartao-requisicao';
+import { ItemArrastavel, type PapelGesto } from '@/components/item-arrastavel';
 import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { StatusChip } from '@/components/ui/status-chip';
 
@@ -48,15 +49,37 @@ export function CartaoViagem({
   viagem,
   ocupado,
   onAcao,
+  onOrganizar,
   aoRegistrarChecklist,
 }: {
   viagem: Requisicao;
   ocupado: boolean;
   onAcao: (req: Requisicao, acao: Acao, corpo?: CorpoAcao) => void;
+  /** Arquivar/desarquivar (gesto e botão), só com a ação em `acoes_permitidas`. */
+  onOrganizar?: OnOrganizar;
   aoRegistrarChecklist?: () => void | Promise<void>;
 }) {
+  // Direita arquiva e esquerda desarquiva, só se a API liberou a ação para esta viagem.
+  const direita: PapelGesto | undefined =
+    onOrganizar && viagem.acoes_permitidas.includes('arquivar')
+      ? { rotulo: 'Arquivar', cor: 'neutra', onAcionar: () => onOrganizar(viagem, 'arquivar') }
+      : undefined;
+  const esquerda: PapelGesto | undefined =
+    onOrganizar && viagem.acoes_permitidas.includes('desarquivar')
+      ? {
+          rotulo: 'Desarquivar',
+          cor: 'neutra',
+          onAcionar: () => onOrganizar(viagem, 'desarquivar'),
+        }
+      : undefined;
   return (
-    <li className="rounded-xl border border-borda bg-white p-4">
+    <ItemArrastavel
+      className="rounded-xl border border-borda bg-white"
+      classeInterna="gap-0 p-4"
+      ocupado={ocupado}
+      direita={direita}
+      esquerda={esquerda}
+    >
       <Link
         href={`/motorista/detalhe?id=${encodeURIComponent(viagem.id)}`}
         className="block rounded-padrao"
@@ -73,8 +96,9 @@ export function CartaoViagem({
         req={viagem}
         ocupado={ocupado}
         onAcao={onAcao}
+        onOrganizar={onOrganizar}
         aoRegistrarChecklist={aoRegistrarChecklist}
       />
-    </li>
+    </ItemArrastavel>
   );
 }

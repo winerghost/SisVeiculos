@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import { recursos } from './recursos';
 
 // API fake da administração e do aceite de convite (contrato em backend/app/rotas/admin.py e
 // convites.py). As regras daqui existem só para o teste: o front real nunca as calcula.
@@ -100,14 +101,8 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         },
       ]
     : [];
-  const config = {
-    quilometragem: false,
-    abastecimento_manutencao: false,
-    motorista: false,
-    motorista_registra: false,
-    motorista_localizacao: false,
-    vigilante_km: false,
-  };
+  // As 13 chaves de recursos da API (todas desligadas no início).
+  const config: Record<string, boolean> = { ...recursos() };
   const ia: { mestre: boolean; saudacao: boolean; provedor: unknown; modelo: unknown } = {
     mestre: !!opcoes.saudacaoLigada,
     saudacao: !!opcoes.saudacaoLigada,
@@ -189,6 +184,17 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     corpos.uploadsStorage.push(completo.replace(/^.*\/object\/upload\/sign\/avatares\//, ''));
     return route.fulfill({ json: { Key: 'avatares/x' } });
   });
+
+  // A foto assinada é cross-origin: sem este mock o teste dependeria da rede real.
+  await page.route('**/storage/v1/object/sign/avatares/**', (route) =>
+    route.fulfill({
+      contentType: 'image/png',
+      body: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    }),
+  );
 
   let anaFoto = !!opcoes.anaComFoto;
   const FOTO_URL = 'https://exemplo.supabase.co/storage/v1/object/sign/avatares/ana.jpg?token=t';
@@ -292,7 +298,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           unidades: ['PU', 'PF', 'CJU', 'UEA'],
           role: 'solicitante',
           permissoes: ['criar_requisicao', 'ver_proprias_requisicoes'],
-          recursos: {},
+          recursos: recursos(),
         },
       });
     }
@@ -315,7 +321,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           'administrar',
           ...(opcoes.semVerAcessos ? [] : ['ver_acessos']),
         ],
-        recursos: {},
+        recursos: recursos(),
       },
     });
   });
@@ -617,6 +623,28 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           motivo_indisponibilidade: config.quilometragem ? null : 'Ligue antes a Quilometragem.',
           acoes_permitidas: config.quilometragem
             ? [config.vigilante_km ? 'desligar' : 'ligar']
+            : [],
+        },
+        {
+          chave: 'autorizador_decide_propria',
+          rotulo: 'Autorizador decide a própria requisição',
+          descricao: 'Permite que autorizador e admin autorizem ou neguem a própria requisição.',
+          habilitado: config.autorizador_decide_propria,
+          exige: [],
+          motivo_indisponibilidade: null,
+          acoes_permitidas: [config.autorizador_decide_propria ? 'desligar' : 'ligar'],
+        },
+        {
+          chave: 'autorizador_km',
+          rotulo: 'KM pelo autorizador',
+          descricao: 'Autorizador e admin informam o km de saída e de chegada.',
+          habilitado: config.autorizador_km,
+          exige: ['quilometragem'],
+          motivo_indisponibilidade: config.quilometragem
+            ? null
+            : 'Ligue antes a Quilometragem para o autorizador lançar km.',
+          acoes_permitidas: config.quilometragem
+            ? [config.autorizador_km ? 'desligar' : 'ligar']
             : [],
         },
         {

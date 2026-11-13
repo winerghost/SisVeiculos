@@ -27,7 +27,6 @@ def _limite_escrita() -> str:
 def _req() -> ServicoRequisicoes:
     return ServicoRequisicoes(
         deps().repo,
-        permitir_autoautorizacao=deps().config.permitir_autoautorizacao,
         notificador=deps().notificador,
         fotos=_exibicao(),
     )
@@ -63,6 +62,17 @@ def _inteiro(nome: str, padrao: int) -> int:
         return int(bruto)
     except ValueError:
         raise RequisicaoInvalida(f"O parâmetro '{nome}' deve ser um número inteiro.") from None
+
+
+def _booleano(nome: str, padrao: bool) -> bool:
+    """Parâmetro de consulta `true`/`false` (qualquer outro valor é 400)."""
+    bruto = request.args.get(nome)
+    if bruto is None:
+        return padrao
+    valor = bruto.strip().lower()
+    if valor not in {"true", "false"}:
+        raise RequisicaoInvalida(f"O parâmetro '{nome}' deve ser 'true' ou 'false'.")
+    return valor == "true"
 
 
 @api.get("/saude")
@@ -125,8 +135,23 @@ def listar_requisicoes() -> Any:
         status=request.args.get("status"),
         limite=_inteiro("limite", 50),
         offset=_inteiro("offset", 0),
+        arquivadas=_booleano("arquivadas", False),
     )
     return jsonify(resultado)
+
+
+@api.post("/requisicoes/<requisicao_id>/arquivar")
+@requer_auth()  # o service decide por papel, dono/atribuição e estado
+@limiter.limit(_limite_escrita)
+def arquivar(requisicao_id: str) -> Any:
+    return jsonify(_req().arquivar(g.perfil, requisicao_id))
+
+
+@api.post("/requisicoes/<requisicao_id>/desarquivar")
+@requer_auth()
+@limiter.limit(_limite_escrita)
+def desarquivar(requisicao_id: str) -> Any:
+    return jsonify(_req().desarquivar(g.perfil, requisicao_id))
 
 
 @api.post("/requisicoes")
@@ -199,8 +224,23 @@ def listar_viagens_motorista() -> Any:
         status=request.args.get("status"),
         limite=_inteiro("limite", 50),
         offset=_inteiro("offset", 0),
+        arquivadas=_booleano("arquivadas", False),
     )
     return jsonify(resultado)
+
+
+@api.post("/motorista/viagens/<requisicao_id>/arquivar")
+@requer_auth("motorista")
+@limiter.limit(_limite_escrita)
+def arquivar_viagem_motorista(requisicao_id: str) -> Any:
+    return jsonify(_req().arquivar(g.perfil, requisicao_id))
+
+
+@api.post("/motorista/viagens/<requisicao_id>/desarquivar")
+@requer_auth("motorista")
+@limiter.limit(_limite_escrita)
+def desarquivar_viagem_motorista(requisicao_id: str) -> Any:
+    return jsonify(_req().desarquivar(g.perfil, requisicao_id))
 
 
 @api.get("/motorista/viagens/<requisicao_id>")

@@ -4,42 +4,95 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
-const LIMIAR = 0.4;
+const LIMIAR_PADRAO = 0.4;
 const INICIO_PX = 6;
+// Toques que começam na borda da tela costumam ser o "voltar" do sistema (iOS/Android/PWA).
+const BORDA_PX = 16;
+
+export type CorGesto = 'primaria' | 'erro' | 'neutra';
+
+const COR_FUNDO: Record<CorGesto, string> = {
+  primaria: 'bg-primaria',
+  erro: 'bg-erro',
+  // Cinza-azulado escuro (texto do chip "concluída"): contraste alto com o texto branco.
+  neutra: 'bg-[#3b4658]',
+};
+
+/** O que acontece quando o item é arrastado para um dos lados. */
+export interface PapelGesto {
+  /** Texto do fundo revelado (não depende só de cor, WCAG 1.4.1). */
+  rotulo: string;
+  cor: CorGesto;
+  /** Chamado ao passar do limiar (ou, com `confirmar`, ao confirmar). */
+  onAcionar: () => void;
+  /** Com isto, o gesto só pede a confirmação inline; a ação roda no botão de confirmar. */
+  confirmar?: { pergunta: string; rotulo: string; rotuloAria: string };
+}
 
 interface Props {
   children: React.ReactNode;
-  /** Arrastar para a esquerda (ou ArrowLeft). Ausente: gesto desabilitado. */
-  onAprovar?: () => void;
-  /** Confirmado após arrastar para a direita (ou ArrowRight). Ausente: gesto desabilitado. */
-  onExcluir?: () => void;
+  /** Arrastar para a direita (ou ArrowRight, se `focavel`). Ausente: gesto desabilitado. */
+  direita?: PapelGesto;
+  /** Arrastar para a esquerda (ou ArrowLeft, se `focavel`). Ausente: gesto desabilitado. */
+  esquerda?: PapelGesto;
   ocupado?: boolean;
+  /** Classes do `<li>` (borda, raio, fundo). */
   className?: string;
+  /** Classes da caixa interna que desliza (espaçamento). */
+  classeInterna?: string;
+  /**
+   * Torna o contêiner uma parada de foco com atalho de setas e dica. Fora disso (padrão) não há
+   * parada de foco extra: a alternativa ao gesto são os botões do próprio conteúdo (WCAG 2.5.7).
+   */
+  focavel?: boolean;
+  /** Fração da largura que o arrasto precisa percorrer. */
+  limiar?: number;
 }
 
 /**
- * Item de lista com gesto de arrastar (toque e mouse) e alternativa por teclado (WCAG 2.5.1).
- * Só dispara o que a API liberou (o pai passa os callbacks conforme `acoes_permitidas`).
- * A exclusão, irreversível, pede confirmação inline.
+ * Item de lista com gesto de arrastar (toque e mouse). Os papéis de cada lado são configurados
+ * pelo pai, que só os passa conforme `acoes_permitidas` da API. O gesto também funciona sobre
+ * links; depois de um arrasto o clique que o navegador gera em seguida é descartado para não
+ * navegar. Respeita `prefers-reduced-motion` (a regra global zera a transição de retorno).
  */
-export function ItemArrastavel({ children, onAprovar, onExcluir, ocupado, className }: Props) {
+export function ItemArrastavel({
+  children,
+  direita,
+  esquerda,
+  ocupado,
+  className,
+  classeInterna,
+  focavel = false,
+  limiar = LIMIAR_PADRAO,
+}: Props) {
   const dicaId = React.useId();
-  const caixa = React.useRef<HTMLDivElement>(null);
   const inicio = React.useRef<{ x: number; id: number; ativo: boolean } | null>(null);
+  const suprimirClique = React.useRef(false);
   const [dx, setDx] = React.useState(0);
   const [arrastando, setArrastando] = React.useState(false);
-  const [confirmando, setConfirmando] = React.useState(false);
+  const [confirmando, setConfirmando] = React.useState<PapelGesto | null>(null);
 
   function limitar(v: number, largura: number) {
-    const max = onExcluir ? largura : 0;
-    const min = onAprovar ? -largura : 0;
+    const max = direita ? largura : 0;
+    const min = esquerda ? -largura : 0;
     return Math.max(min, Math.min(max, v));
+  }
+
+  function acionar(papel: PapelGesto) {
+    if (papel.confirmar) setConfirmando(papel);
+    else papel.onAcionar();
   }
 
   function aoPressionar(e: React.PointerEvent<HTMLDivElement>) {
     if (ocupado || confirmando) return;
-    if ((e.target as HTMLElement).closest('button, a, input, select, textarea')) return;
+    // Links são permitidos (o cartão é quase todo um link); controles de formulário não.
+    if ((e.target as HTMLElement).closest('button, input, select, textarea, label')) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (
+      e.pointerType !== 'mouse' &&
+      (e.clientX < BORDA_PX || e.clientX > window.innerWidth - BORDA_PX)
+    )
+      return;
     inicio.current = { x: e.clientX, id: e.pointerId, ativo: false };
   }
 
@@ -60,35 +113,54 @@ export function ItemArrastavel({ children, onAprovar, onExcluir, ocupado, classN
     const i = inicio.current;
     if (!i || i.id !== e.pointerId) return;
     inicio.current = null;
-    const passou = i.ativo && Math.abs(dx) >= e.currentTarget.offsetWidth * LIMIAR;
-    const esquerda = dx < 0;
+    if (i.ativo) {
+      // O navegador ainda dispara `click` depois do arrasto; descarta-o (e limpa a flag logo).
+      suprimirClique.current = true;
+      window.setTimeout(() => {
+        suprimirClique.current = false;
+      }, 150);
+    }
+    const passou = i.ativo && Math.abs(dx) >= e.currentTarget.offsetWidth * limiar;
+    const papel = dx < 0 ? esquerda : direita;
     setArrastando(false);
     setDx(0);
-    if (!passou || e.type === 'pointercancel') return;
-    if (esquerda) onAprovar?.();
-    else if (onExcluir) setConfirmando(true);
+    if (!passou || e.type === 'pointercancel' || !papel) return;
+    acionar(papel);
+  }
+
+  function aoClicarCaptura(e: React.MouseEvent<HTMLDivElement>) {
+    if (!suprimirClique.current) return;
+    suprimirClique.current = false;
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   function aoTeclar(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.target !== e.currentTarget || ocupado) return;
-    if (e.key === 'ArrowLeft' && onAprovar) {
+    if (!focavel || e.target !== e.currentTarget || ocupado) return;
+    if (e.key === 'ArrowLeft' && esquerda) {
       e.preventDefault();
-      onAprovar();
-    } else if (e.key === 'ArrowRight' && onExcluir) {
+      acionar(esquerda);
+    } else if (e.key === 'ArrowRight' && direita) {
       e.preventDefault();
-      setConfirmando(true);
+      acionar(direita);
     }
   }
 
-  const habilitado = Boolean(onAprovar || onExcluir);
-  if (!habilitado) return <li className={cn('flex flex-col gap-2 p-3', className)}>{children}</li>;
+  if (!direita && !esquerda) {
+    return (
+      <li className={cn('rounded-padrao', className)}>
+        <div className={cn('flex flex-col gap-2 p-3', classeInterna)}>{children}</div>
+      </li>
+    );
+  }
 
   const dica = [
-    onAprovar ? 'seta para a esquerda aprova' : '',
-    onExcluir ? 'seta para a direita exclui' : '',
+    esquerda ? `seta para a esquerda: ${esquerda.rotulo}` : '',
+    direita ? `seta para a direita: ${direita.rotulo}` : '',
   ]
     .filter(Boolean)
     .join('; ');
+  const lado = dx < 0 ? esquerda : dx > 0 ? direita : undefined;
 
   return (
     <li className={cn('relative overflow-hidden rounded-padrao', className)}>
@@ -96,61 +168,66 @@ export function ItemArrastavel({ children, onAprovar, onExcluir, ocupado, classN
         aria-hidden="true"
         className={cn(
           'absolute inset-0 flex items-center px-4 text-base font-semibold text-white',
-          dx < 0 ? 'justify-end bg-primaria' : 'justify-start bg-erro',
+          dx < 0 ? 'justify-end' : 'justify-start',
+          lado ? COR_FUNDO[lado.cor] : 'bg-primaria',
           dx === 0 && 'invisible',
         )}
       >
-        {dx < 0 ? 'Aprovar' : 'Excluir'}
+        {lado?.rotulo}
       </div>
       <div
-        ref={caixa}
-        tabIndex={0}
-        aria-describedby={dicaId}
+        {...(focavel ? { tabIndex: 0, 'aria-describedby': dicaId } : {})}
         onPointerDown={aoPressionar}
         onPointerMove={aoMover}
         onPointerUp={aoSoltar}
         onPointerCancel={aoSoltar}
         onKeyDown={aoTeclar}
+        onClickCapture={aoClicarCaptura}
+        onDragStart={(e) => e.preventDefault()}
         style={{ transform: `translateX(${dx}px)`, touchAction: 'pan-y' }}
         className={cn(
           'relative flex flex-col gap-2 bg-white p-3',
           arrastando
             ? 'cursor-grabbing select-none'
             : 'cursor-grab motion-safe:transition-transform',
+          classeInterna,
         )}
       >
         {children}
-        <p id={dicaId} className="text-xs text-texto-2">
-          Arraste ou use as setas
-          <span className="sr-only">: {dica}</span>
-        </p>
-        {confirmando ? (
+        {focavel ? (
+          <p id={dicaId} className="text-xs text-texto-2">
+            Arraste ou use as setas
+            <span className="sr-only">: {dica}</span>
+          </p>
+        ) : null}
+        {confirmando?.confirmar ? (
           <div
             role="alertdialog"
-            aria-label="Confirmar exclusão"
+            aria-label={confirmando.confirmar.rotuloAria}
             className="flex flex-wrap items-center gap-2"
             onKeyDown={(e) => {
-              if (e.key === 'Escape') setConfirmando(false);
+              if (e.key === 'Escape') setConfirmando(null);
             }}
           >
-            <span className="text-base font-medium">Excluir definitivamente?</span>
+            <span className="text-base font-medium">{confirmando.confirmar.pergunta}</span>
             <Button
               type="button"
               variante="perigo"
               autoFocus
               disabled={ocupado}
               onClick={() => {
-                setConfirmando(false);
-                onExcluir?.();
+                const papel = confirmando;
+                setConfirmando(null);
+                papel.onAcionar();
               }}
             >
-              Confirmar
+              {confirmando.confirmar.rotulo}
             </Button>
             <Button
               type="button"
               variante="contorno"
               disabled={ocupado}
-              onClick={() => setConfirmando(false)}
+              onClick={() => setConfirmando(null)}
             >
               Cancelar
             </Button>

@@ -1,15 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { api, ApiErro } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { rotuloCombustivel, rotuloMomento } from '@/lib/checklist';
 import { dataHora } from '@/lib/formato';
 import type { ChecklistRegistrado as Registro, MomentoChecklist } from '@/lib/tipos';
 import { Alerta } from '@/components/ui/alert';
-
-// A API recusa quem não pode ver (sem_permissao) ou o recurso desligado: nada é exibido.
-const SILENCIOSOS = new Set(['sem_permissao', 'recurso_desligado', 'nao_encontrado']);
 
 function Bloco({ c }: { c: Registro }) {
   return (
@@ -54,7 +51,8 @@ function Bloco({ c }: { c: Registro }) {
 
 /**
  * Checklists já registrados (GET). As URLs assinadas expiram em ~300 s: ficam só em memória e são
- * buscadas de novo ao abrir ou quando `versao` muda. Exibe só se a API informar o recurso ligado.
+ * buscadas de novo ao abrir ou quando `versao` muda. Quem monta a seção só o faz com
+ * `ver_checklist` em acoes_permitidas; erros são exibidos como vieram.
  */
 export function ChecklistRegistrado({
   requisicaoId,
@@ -81,7 +79,7 @@ export function ChecklistRegistrado({
       .catch((e: unknown) => {
         if (!ativo) return;
         setDados(null);
-        setErro(e instanceof ApiErro && SILENCIOSOS.has(e.codigo) ? null : tratarErro(e));
+        setErro(tratarErro(e));
       });
     return () => {
       ativo = false;

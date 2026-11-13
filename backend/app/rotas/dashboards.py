@@ -24,7 +24,6 @@ def _servico() -> ServicoDashboards:
     d = deps()
     requisicoes = ServicoRequisicoes(
         d.repo,
-        permitir_autoautorizacao=d.config.permitir_autoautorizacao,
         notificador=d.notificador,
         fotos=FotosExibicao(d.repo, d.armazenamento_avatares),
     )

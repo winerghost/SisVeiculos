@@ -101,8 +101,6 @@ class Config:
     max_emissoes_foto_perfil: int = 10
     limite_dashboards: str = "60 per minute"  # GET /api/dashboards*: RPCs agregadas, por usuário
     limite_busca_usuarios: str = "30 per minute"  # GET /api/admin/usuarios com `q` (varredura)
-    # Decisão pendente do usuário: autorizador pode autorizar a própria requisição?
-    permitir_autoautorizacao: bool = False
     # Relatórios: teto de linhas por relatório (o banco aceita até 5001 por consulta: limite + 1).
     relatorio_max_linhas: int = 5000
     limite_relatorios: str = "60 per minute"  # prévia/catálogo/destinatários/consulta de envio
@@ -151,7 +149,6 @@ class Config:
             jwt_issuer=os.environ.get("SUPABASE_JWT_ISSUER", ""),
             jwt_audience=os.environ.get("SUPABASE_JWT_AUDIENCE") or "authenticated",
             cors_origins=_lista(os.environ.get("CORS_ORIGINS")),
-            permitir_autoautorizacao=_bool(os.environ.get("PERMITIR_AUTOAUTORIZACAO")),
             url_aceite_convite=os.environ.get("URL_ACEITE_CONVITE", "").strip(),
             n8n_webhook_url=os.environ.get("N8N_WEBHOOK_URL", "").strip(),
             n8n_webhook_token=os.environ.get("N8N_WEBHOOK_TOKEN", "").strip(),

@@ -270,3 +270,87 @@ test('configurações: interruptor de localização depende de "Motorista regist
   await expect(loc).toHaveAttribute('aria-checked', 'true');
   expect(mock.corpos.config.at(-1)).toEqual({ motorista_localizacao: true });
 });
+
+test('motorista: arquivar viagem concluída por gesto e botão, com aba Arquivadas e Desfazer', async ({
+  page,
+}) => {
+  const mock = await entrarMotorista(page);
+  const cartao = page.locator('ul.lista-animada > li').filter({ hasText: 'Procuradoria Regional' });
+  // A viagem autorizada (ainda não concluída) não oferece arquivar.
+  await expect(
+    page.locator('ul.lista-animada > li').filter({ hasText: 'Fórum Federal' }).getByRole('button', {
+      name: 'Arquivar',
+    }),
+  ).toHaveCount(0);
+
+  const li = (await cartao.boundingBox())!;
+  const link = (await cartao.getByRole('link').boundingBox())!;
+  const y = link.y + 20;
+  const x0 = link.x + link.width / 2;
+  await page.mouse.move(x0, y);
+  await page.mouse.down();
+  await page.mouse.move(x0 + li.width * 0.3, y, { steps: 5 });
+  await page.mouse.move(x0 + li.width * 0.6, y, { steps: 5 });
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\/motorista$/);
+  await expect(page.getByText('Viagem arquivada.')).toBeVisible();
+  expect(mock.organizacoes).toEqual([
+    { acao: 'arquivar', id: '44444444-4444-4444-8444-444444444442' },
+  ]);
+
+  await page.getByRole('button', { name: 'Arquivadas' }).click();
+  await expect(page.getByRole('button', { name: 'Arquivadas · 1' })).toBeVisible();
+  const arquivada = page.locator('ul.lista-animada > li').first();
+  await expect(arquivada).toContainText('Procuradoria Regional');
+  await arquivada.getByRole('button', { name: 'Desarquivar' }).click();
+  await expect(page.getByText('Nenhuma viagem arquivada.')).toBeVisible();
+  await expect(page.getByText('Viagem desarquivada.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Viagens', exact: true }).click();
+  await page.getByRole('button', { name: 'Arquivar' }).click();
+  await page.getByRole('button', { name: 'Desfazer' }).click();
+  await expect(page.getByRole('heading', { name: /Concluídas · 1/ })).toBeVisible();
+  expect(mock.organizacoes.map((o) => o.acao)).toEqual([
+    'arquivar',
+    'desarquivar',
+    'arquivar',
+    'desarquivar',
+  ]);
+});
+
+test('motorista: viagem já arquivada some da lista e aparece em Arquivadas (esquerda desarquiva)', async ({
+  page,
+}) => {
+  const mock = await entrarMotorista(page, {
+    arquivadasIds: ['44444444-4444-4444-8444-444444444442'],
+  });
+  await expect(page.getByRole('heading', { name: /Concluídas · 0/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Arquivadas' }).click();
+  const cartao = page.locator('ul.lista-animada > li').first();
+  const li = (await cartao.boundingBox())!;
+  const link = (await cartao.getByRole('link').boundingBox())!;
+  const y = link.y + 20;
+  const x0 = link.x + link.width / 2;
+  await page.mouse.move(x0, y);
+  await page.mouse.down();
+  await page.mouse.move(x0 - li.width * 0.3, y, { steps: 5 });
+  await page.mouse.move(x0 - li.width * 0.6, y, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByText('Nenhuma viagem arquivada.')).toBeVisible();
+  expect(mock.organizacoes).toEqual([
+    { acao: 'desarquivar', id: '44444444-4444-4444-8444-444444444442' },
+  ]);
+});
+
+test('ver_localizacao: sem a ação na lista o detalhe nem consulta as coordenadas', async ({
+  page,
+}) => {
+  const consultas: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/localizacoes')) consultas.push(r.url());
+  });
+  await entrarMotorista(page);
+  await page.goto(`/requisicoes/detalhe?id=${ID_CONCLUIDA}`);
+  await expect(page.getByRole('heading', { name: 'Linha do tempo' })).toBeVisible();
+  expect(consultas).toEqual([]);
+});

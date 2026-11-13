@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import { gruposAcao, recursos } from './recursos';
 
 // API fake do Perfil Motorista (contrato provisório: GET /api/motorista/viagens[/<id>]). As regras
 // daqui existem só para o teste: o front real nunca as calcula.
@@ -29,6 +30,8 @@ export interface OpcoesMotorista {
   localizacoesAdmin?: Record<string, unknown>[];
   /** GET /api/motoristas devolve `padrao` (contrato assumido: id do único motorista ativo). */
   motoristaPadrao?: boolean;
+  /** Ids de viagens já arquivadas pelo motorista (a viagem concluída tem o id ...442). */
+  arquivadasIds?: string[];
 }
 
 const OUTRO = { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', nome: 'Rita Alves' };
@@ -61,12 +64,17 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
   const motoristasAtribuidos: unknown[] = [];
   let motorista = MOTORISTA;
 
+  // Arquivar é pessoal do motorista; só viagens concluídas (a regra real vive no backend).
+  const arquivadas = new Set<string>(opcoes.arquivadasIds ?? []);
+  const organizacoes: { acao: string; id: string }[] = [];
   const acoes = (v: Viagem): string[] => {
     if (opcoes.semAcoes) return [];
     const troca = opcoes.trocarMotorista ? ['atribuir_motorista'] : [];
+    // Só para o teste da seção de localização: a API real só devolve `ver_localizacao` ao admin.
+    const local = opcoes.localizacoesAdmin && v.saida_real_em ? ['ver_localizacao'] : [];
     if (v.status === 'autorizada') return ['registrar_saida', ...troca];
-    if (v.status === 'em_uso') return ['registrar_chegada', ...troca];
-    return [];
+    if (v.status === 'em_uso') return ['registrar_chegada', ...troca, ...local];
+    return [...local, arquivadas.has(v.id) ? 'desarquivar' : 'arquivar'];
   };
   const camposAcao = (v: Viagem) => {
     if (!opcoes.localizacao) return {};
@@ -123,6 +131,9 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
       historico: [],
       motorista,
       acoes_permitidas: acoes(v),
+      // O motorista não tem ações de "decidir"/"solicitar"; só operar, designar, consultar, organizar.
+      grupos_acao: gruposAcao(acoes(v), 'decidir'),
+      arquivada: arquivadas.has(v.id),
       campos_acao: camposAcao(v),
       linha_do_tempo: {
         desfecho: v.status === 'concluida' ? 'concluida' : 'em_andamento',
@@ -173,9 +184,11 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
             unidades: ['PU', 'PF', 'CJU', 'UEA'],
             role: 'motorista',
             permissoes: ['ver_viagens_atribuidas'],
-            recursos: opcoes.localizacao
-              ? { motorista: true, motorista_registra: true, motorista_localizacao: true }
-              : { motorista: true },
+            recursos: recursos(
+              opcoes.localizacao
+                ? { motorista: true, motorista_registra: true, motorista_localizacao: true }
+                : { motorista: true },
+            ),
             foto_url: null,
           },
         })
@@ -188,15 +201,37 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
     erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.'),
   );
 
-  await page.route(/\/api\/motorista\/viagens(\/[^/?]+)?(\?.*)?$/, async (route) => {
+  await page.route(/\/api\/motorista\/viagens(\/[^/?]+){0,2}(\?.*)?$/, async (route) => {
     if (!autenticado(route)) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
     if (opcoes.recursoDesligado) {
       return erro(route, 403, 'recurso_desabilitado', 'O Perfil Motorista está desligado.');
     }
-    const id = new URL(route.request().url()).pathname.split('/')[4];
+    const url = new URL(route.request().url());
+    const id = url.pathname.split('/')[4];
+    const organizar = url.pathname.split('/')[5];
     if (!id) {
-      const itens = viagens.map(ver);
+      // Padrão da API: arquivadas=false; true = só as arquivadas do motorista.
+      const soArquivadas = url.searchParams.get('arquivadas') === 'true';
+      const itens = viagens.filter((x) => arquivadas.has(x.id) === soArquivadas).map(ver);
       return route.fulfill({ json: { itens, total: itens.length } });
+    }
+    if (organizar === 'arquivar' || organizar === 'desarquivar') {
+      const alvo = viagens.find((x) => x.id === id);
+      if (!alvo) return erro(route, 404, 'nao_encontrado', 'Viagem não encontrada.');
+      if (!acoes(alvo).includes(organizar) && arquivadas.has(id) === (organizar === 'arquivar')) {
+        // idempotente
+      } else if (!acoes(alvo).includes(organizar)) {
+        return erro(
+          route,
+          409,
+          'transicao_invalida',
+          'Só é possível arquivar ou desarquivar uma requisição concluída, negada ou cancelada.',
+        );
+      }
+      organizacoes.push({ acao: organizar, id });
+      if (organizar === 'arquivar') arquivadas.add(id);
+      else arquivadas.delete(id);
+      return route.fulfill({ json: ver(alvo) });
     }
     const v = viagens.find((x) => x.id === id);
     return v
@@ -261,5 +296,5 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
       : erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.'),
   );
 
-  return { viagens, acoesRecebidas, corposAcao, motoristasAtribuidos };
+  return { viagens, acoesRecebidas, corposAcao, motoristasAtribuidos, organizacoes };
 }

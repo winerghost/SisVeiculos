@@ -41,6 +41,8 @@ class Configuracoes:
     motorista_registra: bool = False  # exige `motorista`
     motorista_localizacao: bool = False  # exige `motorista_registra`
     vigilante_km: bool = False  # exige `quilometragem`
+    autorizador_decide_propria: bool = False  # staff decide a própria requisição
+    autorizador_km: bool = False  # exige `quilometragem`; staff lança km
 
     def como_dict(self) -> dict[str, bool]:
         return {
@@ -55,4 +57,6 @@ class Configuracoes:
             "motorista_registra": self.motorista_registra,
             "motorista_localizacao": self.motorista_localizacao,
             "vigilante_km": self.vigilante_km,
+            "autorizador_decide_propria": self.autorizador_decide_propria,
+            "autorizador_km": self.autorizador_km,
         }

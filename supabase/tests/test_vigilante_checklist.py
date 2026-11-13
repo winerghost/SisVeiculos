@@ -31,6 +31,7 @@ pytestmark = [
 
 # Dependentes primeiro (desligar nesta ordem; religar na ordem inversa).
 FLAGS = (
+    "autorizador_km",
     "vigilante_km",
     "abastecimento_manutencao",
     "quilometragem",

@@ -41,10 +41,13 @@ class Repositorio(Protocol):
         offset: int,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        arquivador_id: str | None = None,
+        arquivadas: bool | None = None,
     ) -> list[Requisicao]:
         """`usuario_id` não nulo restringe ao dono e `motorista_id` ao motorista atribuído
         (anti-IDOR aplicado na consulta). `ou_status` (vigilante) amplia o filtro de dono para
-        "dono OU status na lista"."""
+        "dono OU status na lista". `arquivadas` (com `arquivador_id`, o usuário do JWT): False
+        exclui as arquivadas por ele, True devolve só elas, None não filtra."""
         ...
 
     def contar_requisicoes(
@@ -54,8 +57,23 @@ class Repositorio(Protocol):
         status: str | None,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        arquivador_id: str | None = None,
+        arquivadas: bool | None = None,
     ) -> int:
         """Total com os mesmos filtros de `listar_requisicoes` (sem paginação)."""
+        ...
+
+    def arquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
+        """Arquivamento PESSOAL (`requisicoes_arquivadas`), idempotente e sem tocar em
+        `requisicoes`. O banco recusa requisição aberta (AG041 -> TransicaoInvalida)."""
+        ...
+
+    def desarquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
+        """Remove só o vínculo do próprio usuário; idempotente."""
+        ...
+
+    def ids_arquivados(self, usuario_id: str, ids: set[str]) -> set[str]:
+        """Dos `ids`, os que o usuário arquivou."""
         ...
 
     def nomes_perfis(self, ids: set[str]) -> dict[str, str]:

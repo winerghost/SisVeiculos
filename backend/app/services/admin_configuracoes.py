@@ -78,6 +78,18 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "a chegada. Desligado, o vigilante registra sem informar km.",
         ("quilometragem",),
     ),
+    "autorizador_decide_propria": (
+        "Autorizador decide a própria requisição",
+        "Permite que autorizadores e administradores autorizem ou neguem as requisições que "
+        "eles mesmos criaram. Desligado, outra pessoa precisa decidir.",
+        (),
+    ),
+    "autorizador_km": (
+        "KM pelo autorizador",
+        "Autorizadores e administradores informam o km de saída e o de chegada ao registrar a "
+        "saída e a chegada. Desligado, registram sem informar km.",
+        ("quilometragem",),
+    ),
 }
 ROTULOS_RECURSOS = {k: v[0] for k, v in CATALOGO.items()}
 

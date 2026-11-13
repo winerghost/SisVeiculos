@@ -6,18 +6,53 @@ import { ACOES, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { obterPosicao } from '@/lib/geolocalizacao';
 import { dataCurta, numero } from '@/lib/formato';
-import type { Acao, CampoAcao, CampoKm, CorpoAcao, Motorista, Requisicao } from '@/lib/tipos';
+import {
+  ORDEM_GRUPOS,
+  type Acao,
+  type AcaoOrganizar,
+  type CampoAcao,
+  type CampoKm,
+  type CorpoAcao,
+  type GrupoAcao,
+  type Motorista,
+  type Requisicao,
+} from '@/lib/tipos';
 import { Avatar } from '@/components/avatar';
 import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { FormularioChecklist } from '@/components/formulario-checklist';
+import { ItemArrastavel, type PapelGesto } from '@/components/item-arrastavel';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Dialogo } from '@/components/ui/dialogo';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StatusChip } from '@/components/ui/status-chip';
 
 type OnAcao = (req: Requisicao, acao: Acao, corpo?: CorpoAcao) => void;
+export type OnOrganizar = (req: Requisicao, acao: AcaoOrganizar) => void;
+
+// Só apresentação: rótulo (para leitor de tela) de cada categoria de `grupos_acao`.
+const ROTULO_GRUPO: Record<GrupoAcao, string> = {
+  solicitar: 'Solicitação',
+  decidir: 'Decisão',
+  operar: 'Registro da viagem',
+  designar: 'Motorista',
+  consultar: 'Consulta',
+  organizar: 'Organizar a lista',
+};
+
+const ROTULO_ORGANIZAR: Record<AcaoOrganizar, string> = {
+  arquivar: 'Arquivar',
+  desarquivar: 'Desarquivar',
+};
+
+export const ehOrganizar = (a: string): a is AcaoOrganizar =>
+  a === 'arquivar' || a === 'desarquivar';
+
+// Negar e cancelar sempre passam por diálogo de confirmação.
+type Decisao = Extract<Acao, 'negar' | 'cancelar'>;
+const ehDecisao = (a: string): a is Decisao => a === 'negar' || a === 'cancelar';
 
 const ROTULO_CAMPO: Record<CampoKm, string> = {
   km_saida: 'Km de saída',
@@ -186,11 +221,142 @@ function TrocarMotorista({
   );
 }
 
-/** Botões de ação: um por item de acoes_permitidas devolvido pela API (nada além disso). */
+/** Confirmação de negar/cancelar: só as ações que a API liberou, mais "Voltar". */
+function DialogoDecidir({
+  acoes,
+  ocupado,
+  onEscolher,
+  onFechar,
+}: {
+  acoes: Decisao[] | null;
+  ocupado: boolean;
+  onEscolher: (a: Decisao) => void;
+  onFechar: () => void;
+}) {
+  const lista = acoes ?? [];
+  const titulo =
+    lista.length === 1
+      ? lista[0] === 'negar'
+        ? 'Negar esta requisição?'
+        : 'Cancelar esta requisição?'
+      : 'Negar ou cancelar esta requisição?';
+  return (
+    <Dialogo
+      aberto={lista.length > 0}
+      titulo={titulo}
+      descricao="Esta ação não pode ser desfeita."
+      onFechar={onFechar}
+    >
+      <div className="flex flex-col gap-3">
+        {lista.map((a) => (
+          <Button
+            key={a}
+            type="button"
+            tamanho="cheio"
+            variante={ACOES[a].variante}
+            disabled={ocupado}
+            onClick={() => onEscolher(a)}
+          >
+            {ACOES[a].rotulo}
+          </Button>
+        ))}
+        <Button type="button" tamanho="cheio" variante="contorno" data-autofocus onClick={onFechar}>
+          Voltar
+        </Button>
+      </div>
+    </Dialogo>
+  );
+}
+
+function EscolhaMotorista({
+  motoristas,
+  padrao,
+  ocupado,
+  onConfirmar,
+  onFechar,
+}: {
+  motoristas: Motorista[];
+  padrao: string | null;
+  ocupado: boolean;
+  onConfirmar: (motoristaId: string) => void;
+  onFechar: () => void;
+}) {
+  const [valor, setValor] = React.useState(padrao ?? '');
+  const id = React.useId();
+  return (
+    <form
+      className="flex flex-col gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onConfirmar(valor);
+      }}
+    >
+      <div>
+        <Label htmlFor={id}>Motorista</Label>
+        <Select id={id} value={valor} onChange={(e) => setValor(e.target.value)}>
+          <option value="">Sem motorista designado</option>
+          {motoristas.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.nome}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <Button type="submit" tamanho="cheio" disabled={ocupado}>
+        {ACOES.autorizar.rotulo}
+      </Button>
+      <Button type="button" tamanho="cheio" variante="contorno" onClick={onFechar}>
+        Voltar
+      </Button>
+    </form>
+  );
+}
+
+/** Seleção do motorista ao autorizar por gesto (a API informou mais de um candidato). */
+function DialogoAutorizar({
+  aberto,
+  motoristas,
+  padrao,
+  ocupado,
+  onConfirmar,
+  onFechar,
+}: {
+  aberto: boolean;
+  motoristas: Motorista[];
+  padrao: string | null;
+  ocupado: boolean;
+  onConfirmar: (motoristaId: string) => void;
+  onFechar: () => void;
+}) {
+  return (
+    <Dialogo
+      aberto={aberto}
+      role="dialog"
+      titulo="Autorizar requisição"
+      descricao="Escolha o motorista desta viagem."
+      onFechar={onFechar}
+    >
+      <EscolhaMotorista
+        motoristas={motoristas}
+        padrao={padrao}
+        ocupado={ocupado}
+        onConfirmar={onConfirmar}
+        onFechar={onFechar}
+      />
+    </Dialogo>
+  );
+}
+
+/**
+ * Botões de ação: um por item de acoes_permitidas devolvido pela API (nada além disso),
+ * agrupados por `grupos_acao` na ordem fixa solicitar, decidir, operar, designar, consultar e
+ * organizar. Sem `grupos_acao` (API antiga), tudo num bloco só.
+ */
 export function BotoesAcao({
   req,
   ocupado,
   onAcao,
+  onOrganizar,
   aoRegistrarChecklist,
   motoristas,
   motoristaPadrao,
@@ -198,38 +364,53 @@ export function BotoesAcao({
   req: Requisicao;
   ocupado: boolean;
   onAcao: OnAcao;
+  /** Arquivar/desarquivar; sem isto (ex.: telas de detalhe) esses botões não são exibidos. */
+  onOrganizar?: OnOrganizar;
   /** Recarrega a requisição após o checklist (o botão volta) ou a troca de motorista. */
   aoRegistrarChecklist?: () => void | Promise<void>;
-  /** Candidatos devolvidos por GET /api/motoristas; vazio/ausente = sem seletor. */
+  /** Candidatos devolvidos por GET /api/motoristas; sem isto vale `campos_acao.autorizar`. */
   motoristas?: Motorista[];
-  /** `padrao` devolvido por GET /api/motoristas: vem pré-selecionado até o usuário escolher. */
+  /** `padrao` de GET /api/motoristas: vem pré-selecionado até o usuário escolher. */
   motoristaPadrao?: string | null;
 }) {
   // null = o usuário ainda não mexeu; vale o padrão da API (que pode chegar depois da montagem).
   const [escolha, setEscolha] = React.useState<string | null>(null);
-  const motoristaId = escolha ?? motoristaPadrao ?? '';
-  const acoes = req.acoes_permitidas.filter((a): a is Acao => a in ACOES);
-  const podeTrocarMotorista = req.acoes_permitidas.includes('atribuir_motorista');
-  if (acoes.length === 0 && !podeTrocarMotorista) return null;
+  const [pedido, setPedido] = React.useState<Decisao[] | null>(null);
+  const campoAutorizar = req.campos_acao?.autorizar;
+  const candidatos =
+    motoristas && motoristas.length > 0 ? motoristas : (campoAutorizar?.motoristas ?? []);
+  const padrao = motoristaPadrao ?? campoAutorizar?.motorista_padrao ?? null;
+  const motoristaId = escolha ?? padrao ?? '';
+  const permitidas = req.acoes_permitidas;
+  const temOrganizar = !!onOrganizar && permitidas.some(ehOrganizar);
+  const podeTrocarMotorista = permitidas.includes('atribuir_motorista');
+  if (!permitidas.some((a) => a in ACOES) && !podeTrocarMotorista && !temOrganizar) return null;
+
   const camposDe = (a: Acao) => req.campos_acao?.[a]?.campos_obrigatorios ?? [];
   // Ação com checklist pendente: o formulário vem antes e o botão só reaparece depois dele.
   const pendente = (a: Acao) => req.campos_acao?.[a]?.checklist_pendente;
-  const comChecklist = acoes.filter((a) => pendente(a));
-  const liberadas = acoes.filter((a) => !pendente(a));
-  const comCampos = liberadas.filter((a) => camposDe(a).length > 0);
-  const simples = liberadas.filter((a) => camposDe(a).length === 0);
-  const unica = simples.length === 1;
-  // O seletor só acompanha a ação autorizar (que a API liberou); a escolha é opcional e o
-  // servidor valida o motorista.
-  const comSeletor = simples.includes('autorizar') && !!motoristas && motoristas.length > 0;
   const enviar: OnAcao = (rq, a, c) =>
     onAcao(rq, a, a === 'autorizar' && motoristaId ? { ...c, motorista_id: motoristaId } : c);
-  return (
-    <div className="mt-4 flex flex-col gap-3">
-      {comSeletor ? (
-        <div>
+
+  function bloco(lista: string[]): React.ReactNode[] {
+    const acoes = lista.filter((a): a is Acao => a in ACOES);
+    const comChecklist = acoes.filter((a) => pendente(a));
+    const liberadas = acoes.filter((a) => !pendente(a));
+    const comCampos = liberadas.filter((a) => camposDe(a).length > 0);
+    // Negar vem antes de Autorizar no DOM: a ordem de foco é a visual (mockup 04), sem CSS order.
+    const simples = liberadas
+      .filter((a) => camposDe(a).length === 0)
+      .sort((x, y) => Number(y === 'negar') - Number(x === 'negar'));
+    const unica = simples.length === 1;
+    // O seletor só acompanha a ação autorizar (que a API liberou); a escolha é opcional e o
+    // servidor valida o motorista.
+    const comSeletor = simples.includes('autorizar') && candidatos.length > 0;
+    const nos: React.ReactNode[] = [];
+    if (comSeletor) {
+      nos.push(
+        <div key="seletor">
           <Label htmlFor={`${req.id}-motorista`}>
-            {motoristaPadrao ? 'Motorista' : 'Motorista (opcional)'}
+            {padrao ? 'Motorista' : 'Motorista (opcional)'}
           </Label>
           <Select
             id={`${req.id}-motorista`}
@@ -238,34 +419,39 @@ export function BotoesAcao({
             onChange={(e) => setEscolha(e.target.value)}
           >
             <option value="">Sem motorista designado</option>
-            {motoristas.map((m) => (
+            {candidatos.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.nome}
               </option>
             ))}
           </Select>
-        </div>
-      ) : null}
-      {podeTrocarMotorista ? (
+        </div>,
+      );
+    }
+    if (lista.includes('atribuir_motorista')) {
+      nos.push(
         <TrocarMotorista
-          key={`${req.id}:${req.motorista?.id ?? '-'}`}
+          key={`troca:${req.id}:${req.motorista?.id ?? '-'}`}
           req={req}
           ocupado={ocupado}
           aoAtualizar={aoRegistrarChecklist}
-        />
-      ) : null}
-      {comChecklist.map((a) => {
-        const m = pendente(a);
-        return m ? (
-          <FormularioChecklist
-            key={`${req.id}:${m}`}
-            requisicaoId={req.id}
-            momento={m}
-            aoRegistrar={() => aoRegistrarChecklist?.()}
-          />
-        ) : null;
-      })}
-      {comCampos.map((a) => (
+        />,
+      );
+    }
+    for (const a of comChecklist) {
+      const m = pendente(a);
+      if (!m) continue;
+      nos.push(
+        <FormularioChecklist
+          key={`${req.id}:${m}`}
+          requisicaoId={req.id}
+          momento={m}
+          aoRegistrar={() => aoRegistrarChecklist?.()}
+        />,
+      );
+    }
+    for (const a of comCampos) {
+      nos.push(
         <AcaoComCampos
           key={`${a}:${camposDe(a).join(',')}`}
           req={req}
@@ -273,10 +459,12 @@ export function BotoesAcao({
           campos={camposDe(a)}
           ocupado={ocupado}
           onAcao={onAcao}
-        />
-      ))}
-      {simples.length > 0 ? (
-        <div className={unica ? '' : 'grid grid-cols-2 gap-3'}>
+        />,
+      );
+    }
+    if (simples.length > 0) {
+      nos.push(
+        <div key="simples" className={unica ? '' : 'grid grid-cols-2 gap-3'}>
           {simples.map((a) => (
             <Button
               key={a}
@@ -284,14 +472,67 @@ export function BotoesAcao({
               tamanho="cheio"
               variante={ACOES[a].variante}
               disabled={ocupado}
-              onClick={() => enviar(req, a)}
-              className={unica ? '' : a === 'negar' ? 'order-1' : 'order-2'}
+              onClick={() => (ehDecisao(a) ? setPedido([a]) : enviar(req, a))}
             >
               {ACOES[a].rotulo}
             </Button>
           ))}
-        </div>
-      ) : null}
+        </div>,
+      );
+    }
+    const organizar = onOrganizar ? lista.filter(ehOrganizar) : [];
+    for (const a of organizar) {
+      nos.push(
+        <Button
+          key={a}
+          type="button"
+          tamanho="cheio"
+          variante="contorno"
+          disabled={ocupado}
+          onClick={() => onOrganizar?.(req, a)}
+        >
+          {ROTULO_ORGANIZAR[a]}
+        </Button>,
+      );
+    }
+    return nos;
+  }
+
+  const grupos = req.grupos_acao;
+  const blocos = grupos
+    ? ORDEM_GRUPOS.map((g) => {
+        const lista = (grupos[g] ?? []).filter((a) => permitidas.includes(a));
+        const nos = bloco(lista);
+        return nos.length === 0 ? null : (
+          <div
+            key={g}
+            role="group"
+            aria-label={ROTULO_GRUPO[g]}
+            data-grupo={g}
+            className={
+              g === 'organizar'
+                ? 'flex flex-col gap-3 border-t border-borda pt-3'
+                : 'flex flex-col gap-3'
+            }
+          >
+            {nos}
+          </div>
+        );
+      })
+    : bloco(permitidas);
+
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      {blocos}
+      <DialogoDecidir
+        acoes={pedido}
+        ocupado={ocupado}
+        onFechar={() => setPedido(null)}
+        onEscolher={(a) => {
+          setPedido(null);
+          onAcao(req, a);
+        }}
+      />
     </div>
   );
 }
@@ -307,6 +548,8 @@ export function CartaoRequisicao({
   mostrarSolicitante,
   ocupado,
   onAcao,
+  onOrganizar,
+  gestos,
   aoRegistrarChecklist,
   mostrarChecklist,
   motoristas,
@@ -316,13 +559,66 @@ export function CartaoRequisicao({
   mostrarSolicitante?: boolean;
   ocupado: boolean;
   onAcao: OnAcao;
+  onOrganizar?: OnOrganizar;
+  /** Liga os gestos de arrastar (só dos lados cuja ação a API liberou em acoes_permitidas). */
+  gestos?: boolean;
   aoRegistrarChecklist?: () => void | Promise<void>;
   mostrarChecklist?: boolean;
   motoristas?: Motorista[];
   motoristaPadrao?: string | null;
 }) {
+  const [dialogo, setDialogo] = React.useState<'decidir' | 'autorizar' | null>(null);
+  const permitidas = req.acoes_permitidas;
+  const decisoes = permitidas.filter(ehDecisao);
+  const campoAutorizar = req.campos_acao?.autorizar;
+  const candidatos =
+    motoristas && motoristas.length > 0 ? motoristas : (campoAutorizar?.motoristas ?? []);
+  const padrao = motoristaPadrao ?? campoAutorizar?.motorista_padrao ?? null;
+  const autorizar = (motoristaId: string) =>
+    onAcao(req, 'autorizar', motoristaId ? { motorista_id: motoristaId } : undefined);
+
+  let direita: PapelGesto | undefined;
+  let esquerda: PapelGesto | undefined;
+  if (gestos) {
+    if (permitidas.includes('autorizar')) {
+      direita = {
+        rotulo: ACOES.autorizar.rotulo,
+        cor: 'primaria',
+        // Mais de um candidato: o usuário escolhe no diálogo; com um só, ele já vai pré-selecionado.
+        onAcionar: () =>
+          candidatos.length > 1 ? setDialogo('autorizar') : autorizar(padrao ?? ''),
+      };
+    } else if (onOrganizar && permitidas.includes('arquivar')) {
+      direita = {
+        rotulo: ROTULO_ORGANIZAR.arquivar,
+        cor: 'neutra',
+        onAcionar: () => onOrganizar(req, 'arquivar'),
+      };
+    }
+    if (onOrganizar && permitidas.includes('desarquivar')) {
+      esquerda = {
+        rotulo: ROTULO_ORGANIZAR.desarquivar,
+        cor: 'neutra',
+        onAcionar: () => onOrganizar(req, 'desarquivar'),
+      };
+    } else if (decisoes.length > 0) {
+      esquerda = {
+        rotulo: decisoes.length === 1 ? ACOES[decisoes[0]!].rotulo : 'Negar ou cancelar',
+        cor: 'erro',
+        onAcionar: () => setDialogo('decidir'),
+      };
+    }
+  }
+
   return (
-    <li className="rounded-xl border border-borda bg-white p-4">
+    <ItemArrastavel
+      className="rounded-xl border border-borda bg-white"
+      classeInterna="gap-0 p-4"
+      ocupado={ocupado}
+      direita={direita}
+      esquerda={esquerda}
+      limiar={permitidas.includes('autorizar') ? 0.5 : undefined}
+    >
       <Link
         href={`/requisicoes/detalhe?id=${encodeURIComponent(req.id)}`}
         className="block rounded-padrao"
@@ -359,17 +655,38 @@ export function CartaoRequisicao({
         ) : null}
         <LinhaDoTempo linhaDoTempo={req.linha_do_tempo} variante="compacta" className="mt-3" />
       </Link>
-      {mostrarChecklist ? (
+      {mostrarChecklist && permitidas.includes('ver_checklist') ? (
         <ChecklistRegistrado requisicaoId={req.id} versao={versaoChecklist(req)} />
       ) : null}
       <BotoesAcao
         req={req}
         ocupado={ocupado}
         onAcao={onAcao}
+        onOrganizar={onOrganizar}
         aoRegistrarChecklist={aoRegistrarChecklist}
         motoristas={motoristas}
         motoristaPadrao={motoristaPadrao}
       />
-    </li>
+      <DialogoDecidir
+        acoes={dialogo === 'decidir' ? decisoes : null}
+        ocupado={ocupado}
+        onFechar={() => setDialogo(null)}
+        onEscolher={(a) => {
+          setDialogo(null);
+          onAcao(req, a);
+        }}
+      />
+      <DialogoAutorizar
+        aberto={dialogo === 'autorizar'}
+        motoristas={candidatos}
+        padrao={padrao}
+        ocupado={ocupado}
+        onFechar={() => setDialogo(null)}
+        onConfirmar={(id) => {
+          setDialogo(null);
+          autorizar(id);
+        }}
+      />
+    </ItemArrastavel>
   );
 }

@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 import { admin } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { Alerta } from '@/components/ui/alert';
 import { dataHora } from '@/lib/formato';
 import type { LocalizacaoRegistro } from '@/lib/tipos';
 import { rotuloMomento } from '@/lib/checklist';
@@ -12,9 +14,10 @@ function urlMapa(lat: number, lon: number): string {
 }
 
 /**
- * Coordenadas gravadas nos registros de saída e chegada. A seção só existe se a API devolver
- * dados (a rota é restrita ao admin); qualquer erro, inclusive 403, deixa a tela sem a seção.
- * `versao` muda quando a requisição avança e dispara nova leitura. Nada é guardado no cliente.
+ * Coordenadas gravadas nos registros de saída e chegada. Quem monta a seção só o faz com
+ * `ver_localizacao` em acoes_permitidas (só admin); sem registros nada aparece e os erros são
+ * exibidos como vieram. `versao` muda quando a requisição avança e dispara nova leitura. Nada é
+ * guardado no cliente.
  */
 export function LocalizacaoRegistroSecao({
   requisicaoId,
@@ -23,18 +26,29 @@ export function LocalizacaoRegistroSecao({
   requisicaoId: string;
   versao: string;
 }) {
+  const { tratarErro } = useAuth();
   const [itens, setItens] = React.useState<LocalizacaoRegistro[]>([]);
+  const [erro, setErro] = React.useState<string | null>(null);
   React.useEffect(() => {
     let ativo = true;
     admin
       .localizacoes(requisicaoId)
-      .then((r) => ativo && setItens(Array.isArray(r?.itens) ? r.itens : []))
-      .catch(() => ativo && setItens([]));
+      .then((r) => {
+        if (!ativo) return;
+        setItens(Array.isArray(r?.itens) ? r.itens : []);
+        setErro(null);
+      })
+      .catch((e: unknown) => {
+        if (!ativo) return;
+        setItens([]);
+        setErro(tratarErro(e));
+      });
     return () => {
       ativo = false;
     };
-  }, [requisicaoId, versao]);
+  }, [requisicaoId, versao, tratarErro]);
 
+  if (erro) return <Alerta className="mt-6">{erro}</Alerta>;
   if (itens.length === 0) return null;
   return (
     <>

@@ -69,10 +69,12 @@ def _ler_recursos() -> tuple[bool, bool, bool]:
 
 
 def _definir(coluna: str, ligado: bool, por: uuid.UUID) -> None:
-    assert coluna in ("quilometragem", "abastecimento_manutencao", "checklist")
+    assert coluna in ("quilometragem", "abastecimento_manutencao", "checklist", "autorizador_km")
+    # Desligar a quilometragem desliga junto autorizador_km (dependente, AG010; migration 20261119120200).
+    extra = ", autorizador_km = false" if coluna == "quilometragem" and not ligado else ""
     with h.conectar() as c:
         c.execute(
-            f"update public.configuracoes set {coluna} = %s, alterado_por = %s where id = true",
+            f"update public.configuracoes set {coluna} = %s{extra}, alterado_por = %s where id = true",
             (ligado, por),
         )
 
@@ -326,6 +328,7 @@ def test_prioridade_ator_invalido_antes_do_checklist(atores: Atores) -> None:
 def test_prioridade_km_antes_do_checklist(atores: Atores) -> None:
     rid = _autorizada(atores)
     _ligar("quilometragem", atores.admin)
+    _ligar("autorizador_km", atores.admin)  # autorizador so e obrigado a lancar KM com esta flag
     _ligar("checklist", atores.admin)
     with pytest.raises(psycopg.Error) as exc:
         h.iniciar(rid, atores.autorizador)  # sem km e sem checklist

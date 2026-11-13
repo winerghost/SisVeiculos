@@ -39,6 +39,13 @@ ESTADOS_ATRIBUICAO = ("autorizada", "em_uso")  # onde o motorista pode ser atrib
 ACOES_MOTORISTA = frozenset({"registrar_saida", "registrar_chegada"})
 # Vigilante: registra saída/chegada de QUALQUER requisição nestes estados (e só isso).
 ESTADOS_VIGILANTE = ("autorizada", "em_uso")
+# Arquivar é uma preferência PESSOAL (tabela `requisicoes_arquivadas`): só estados terminais.
+ESTADOS_ARQUIVAVEIS = frozenset({"concluida", "negada", "cancelada"})
+MSG_NAO_ARQUIVAVEL = (
+    "Só é possível arquivar ou desarquivar uma requisição concluída, negada ou cancelada. "
+    "Requisições em aberto não podem ser arquivadas."
+)
+LIMITE_SELETOR = 200  # motoristas ativos devolvidos para o seletor de quem autoriza
 MSG_OCUPADO = (
     "Este veículo já possui uma requisição em aberto. "
     "Ele só aceita novo pedido após a conclusão, negativa ou cancelamento da anterior."
@@ -87,6 +94,23 @@ TRANSICOES: dict[str, Transicao] = {
     ),
 }
 
+
+# Categoria de cada ação (fonte única; o front só agrupa e ordena, nunca decide). `cancelar` é
+# "decidir" para a equipe e "solicitar" para o dono sem papel de equipe (ver `_categoria`).
+CATEGORIA_ACAO: dict[str, str] = {
+    "cancelar": "decidir",
+    "autorizar": "decidir",
+    "negar": "decidir",
+    "registrar_saida": "operar",
+    "registrar_chegada": "operar",
+    "atribuir_motorista": "designar",
+    "ver_checklist": "consultar",
+    "ver_localizacao": "consultar",
+    "arquivar": "organizar",
+    "desarquivar": "organizar",
+}
+ORDEM_CATEGORIAS = ("solicitar", "decidir", "operar", "designar", "consultar", "organizar")
+ESTADOS_CHECKLIST = ("autorizada", "em_uso", "concluida")
 
 EVENTO_POR_ACAO = {
     "autorizar": "requisicao.autorizada",
@@ -268,14 +292,12 @@ class ServicoRequisicoes:
         self,
         repo: Repositorio,
         *,
-        permitir_autoautorizacao: bool = False,
         notificador: Notificador | None = None,
         fotos: FotosExibicao | None = None,
     ) -> None:
         self._repo = repo
         self._fotos = fotos
         self._notificador: Notificador = notificador or NotificadorNulo()
-        self._autoauto = permitir_autoautorizacao
 
     # -- permissões -----------------------------------------------------------------
     def _pode(self, acao: str, perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
@@ -301,18 +323,67 @@ class ServicoRequisicoes:
             return req["usuario_id"] == perfil.id and req["status"] == "solicitada"
         if perfil.role not in STAFF:
             return False
-        if acao in {"autorizar", "negar"} and not self._autoauto:
-            return req["usuario_id"] != perfil.id
+        if acao in {"autorizar", "negar"} and req["usuario_id"] == perfil.id:
+            return config.autorizador_decide_propria  # flag das Configurações (padrão: desligada)
         return True
 
     def acoes_permitidas(
-        self, perfil: Perfil, req: Requisicao, config: Configuracoes | None = None
+        self,
+        perfil: Perfil,
+        req: Requisicao,
+        config: Configuracoes | None = None,
+        arquivadas: set[str] | None = None,
     ) -> list[str]:
+        """Ações da requisição para este usuário. `arquivadas`: ids que ele já arquivou (lote);
+        None consulta o banco só para o caso necessário."""
         config = config or self._repo.ler_configuracoes()
         acoes = [a for a in TRANSICOES if self._pode(a, perfil, req, config)]
         if self._pode_atribuir(perfil, req, config):
             acoes.append("atribuir_motorista")
+        if self._pode_ver_checklist(perfil, req, config):
+            acoes.append("ver_checklist")
+        if perfil.role == "admin" and req.get("saida_real_em"):
+            acoes.append("ver_localizacao")  # só o admin lê as coordenadas (LGPD)
+        if self._pode_arquivar(perfil, req, config):
+            if arquivadas is None:
+                arquivadas = self._repo.ids_arquivados(perfil.id, {req["id"]})
+            acoes.append("desarquivar" if req["id"] in arquivadas else "arquivar")
         return acoes
+
+    @staticmethod
+    def _pode_ver_checklist(perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
+        if not config.checklist or req["status"] not in ESTADOS_CHECKLIST:
+            return False
+        if perfil.role in STAFF:
+            return True
+        return perfil.role == "motorista" and req.get("motorista_id") == perfil.id
+
+    @staticmethod
+    def _pode_arquivar(perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
+        """Concluída/negada/cancelada, nunca aberta. Solicitante: a própria; equipe: qualquer;
+        motorista: só as atribuídas a ele, com o recurso ligado; vigilante: nunca."""
+        if req["status"] not in ESTADOS_ARQUIVAVEIS:
+            return False
+        if perfil.role in STAFF:
+            return True
+        if perfil.role == "solicitante":
+            return req["usuario_id"] == perfil.id
+        if perfil.role == "motorista":
+            return config.motorista and req.get("motorista_id") == perfil.id
+        return False
+
+    @staticmethod
+    def _categoria(acao: str, perfil: Perfil) -> str:
+        if acao == "cancelar" and perfil.role not in STAFF:
+            return "solicitar"
+        return CATEGORIA_ACAO[acao]
+
+    def grupos_acao(self, perfil: Perfil, acoes: list[str]) -> dict[str, list[str]]:
+        """Ações agrupadas por categoria, na ordem de exibição; só categorias não vazias."""
+        por_categoria: dict[str, list[str]] = {}
+        for a in acoes:
+            por_categoria.setdefault(self._categoria(a, perfil), []).append(a)
+        return {c: por_categoria[c] for c in ORDEM_CATEGORIAS if c in por_categoria}
 
     @staticmethod
     def _pode_atribuir(perfil: Perfil, req: Requisicao, config: Configuracoes) -> bool:
@@ -324,15 +395,21 @@ class ServicoRequisicoes:
         req: Requisicao,
         config: Configuracoes,
         checklists: dict[str, set[str]] | None = None,
+        seletor: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Campos extras que o front deve pedir em cada ação permitida (decididos aqui).
 
         `checklist_pendente`: momento cujo checklist ainda precisa ser registrado antes da ação
         (só com o recurso ligado). Na chegada só se exige o checklist de chegada.
+        `seletor` (motoristas ativos e o padrão) acompanha `autorizar` com o recurso ligado.
         """
         saida: dict[str, dict[str, Any]] = {}
         if config.motorista and self._pode("autorizar", perfil, req, config):
-            saida["autorizar"] = {"campos_obrigatorios": [], "campos_opcionais": ["motorista_id"]}
+            saida["autorizar"] = {
+                "campos_obrigatorios": [],
+                "campos_opcionais": ["motorista_id"],
+                **({} if seletor is None else seletor),
+            }
         # Localização: só o motorista a informa (autorizador/admin registrando não coleta).
         coleta = perfil.role == "motorista" and config.motorista_localizacao
         pede_km = self._pede_km(perfil, config)
@@ -366,10 +443,15 @@ class ServicoRequisicoes:
 
     @staticmethod
     def _pede_km(perfil: Perfil, config: Configuracoes) -> bool:
-        """Vigilante só informa km com `vigilante_km` ligada (e a quilometragem ligada)."""
+        """Km por perfil, sempre com a Quilometragem ligada: vigilante com `vigilante_km`;
+        autorizador/admin com `autorizador_km`; motorista e solicitante nunca lançam km."""
+        if not config.quilometragem:
+            return False
         if perfil.role == "vigilante":
-            return config.quilometragem and config.vigilante_km
-        return config.quilometragem
+            return config.vigilante_km
+        if perfil.role in STAFF:
+            return config.autorizador_km
+        return False
 
     def apresentar(self, perfil: Perfil, req: Requisicao) -> dict[str, Any]:
         return self.apresentar_lote(perfil, [req])[0]
@@ -398,6 +480,8 @@ class ServicoRequisicoes:
         checklists = (
             self._repo.momentos_checklist({r["id"] for r in reqs}) if config.checklist else {}
         )
+        arquivadas = self._arquivadas_do_usuario(perfil, reqs, config)
+        seletor = self._seletor_para_autorizar(perfil, reqs, config)
         return [
             {
                 **self._sem_equipe(r, staff, perfil),
@@ -405,10 +489,12 @@ class ServicoRequisicoes:
                 # o que já foi gravado.
                 "km_saida": r.get("km_saida"),
                 "km_chegada": r.get("km_chegada"),
-                "acoes_permitidas": self.acoes_permitidas(perfil, r, config),
+                **self._acoes(perfil, r, config, arquivadas),
+                # Preferência pessoal de quem consulta (false para quem não pode arquivar).
+                "arquivada": r["id"] in arquivadas,
                 # Só id e nome (nunca e-mail nem unidade); null enquanto não atribuído.
                 "motorista": self._motorista(r, nomes_motoristas),
-                "campos_acao": self.campos_acao(perfil, r, config, checklists),
+                "campos_acao": self.campos_acao(perfil, r, config, checklists, seletor),
                 "historico": montar_historico(r, nomes, incluir_por=staff),
                 "linha_do_tempo": montar_linha_do_tempo(
                     r, nomes, ocultar_nomes=not staff, agora=agora
@@ -424,6 +510,38 @@ class ServicoRequisicoes:
             }
             for r in reqs
         ]
+
+    def _acoes(
+        self, perfil: Perfil, r: Requisicao, config: Configuracoes, arquivadas: set[str]
+    ) -> dict[str, Any]:
+        acoes = self.acoes_permitidas(perfil, r, config, arquivadas)
+        return {"acoes_permitidas": acoes, "grupos_acao": self.grupos_acao(perfil, acoes)}
+
+    def _arquivadas_do_usuario(
+        self, perfil: Perfil, reqs: list[Requisicao], config: Configuracoes
+    ) -> set[str]:
+        """Ids do lote que o próprio usuário arquivou (uma consulta; só para quem pode arquivar)."""
+        candidatos = {r["id"] for r in reqs if self._pode_arquivar(perfil, r, config)}
+        return self._repo.ids_arquivados(perfil.id, candidatos) if candidatos else set()
+
+    def _seletor_para_autorizar(
+        self, perfil: Perfil, reqs: list[Requisicao], config: Configuracoes
+    ) -> dict[str, Any] | None:
+        """Motoristas ativos (id e nome) e o padrão, se alguma requisição puder ser autorizada."""
+        if not config.motorista or not any(
+            self._pode("autorizar", perfil, r, config) for r in reqs
+        ):
+            return None
+        itens, padrao = self.seletor_motoristas()
+        return {"motoristas": itens, "motorista_padrao": padrao}
+
+    def seletor_motoristas(self) -> tuple[list[dict[str, Any]], str | None]:
+        """Motoristas ATIVOS (só `id` e `nome`) e o id do único ativo (None se houver 0 ou 2+)."""
+        perfis = self._repo.listar_perfis(
+            role="motorista", ativo=True, limite=LIMITE_SELETOR, offset=0
+        )
+        itens = [{"id": p["id"], "nome": p["nome"]} for p in perfis]
+        return itens, (str(perfis[0]["id"]) if len(perfis) == 1 else None)
 
     @staticmethod
     def _motorista(r: Requisicao, nomes: dict[str, str]) -> dict[str, Any] | None:
@@ -481,8 +599,16 @@ class ServicoRequisicoes:
             raise RecursoDesligado(MSG_MOTORISTA_DESLIGADO)
 
     def listar(
-        self, perfil: Perfil, *, status: str | None, limite: int, offset: int
+        self,
+        perfil: Perfil,
+        *,
+        status: str | None,
+        limite: int,
+        offset: int,
+        arquivadas: bool | None = False,
     ) -> dict[str, Any]:
+        """`arquivadas`: False (padrão) oculta as que o usuário arquivou, True mostra só elas,
+        None mostra todas. O arquivamento é pessoal e o `total` segue o mesmo filtro."""
         if status is not None and status not in STATUS_VALIDOS:
             raise RequisicaoInvalida("Status inválido.")
         limite = max(1, min(limite, 100))
@@ -494,6 +620,12 @@ class ServicoRequisicoes:
             # O motorista nunca é dono: enxerga só as viagens atribuídas (filtro na consulta).
             self.exigir_motorista_ligado()
             dono, motorista = None, perfil.id
+        # O vigilante não arquiva: sem junção (a lista dele nunca tem arquivadas).
+        filtro_arquivo: dict[str, Any] = (
+            {}
+            if perfil.role == "vigilante"
+            else {"arquivador_id": perfil.id, "arquivadas": arquivadas}
+        )
         itens = self._repo.listar_requisicoes(
             usuario_id=dono,
             status=status,
@@ -501,11 +633,42 @@ class ServicoRequisicoes:
             offset=offset,
             motorista_id=motorista,
             ou_status=ou_status,
+            **filtro_arquivo,
         )
         total = self._repo.contar_requisicoes(
-            usuario_id=dono, status=status, motorista_id=motorista, ou_status=ou_status
+            usuario_id=dono,
+            status=status,
+            motorista_id=motorista,
+            ou_status=ou_status,
+            **filtro_arquivo,
         )
         return {"itens": self.apresentar_lote(perfil, itens), "total": total}
+
+    # -- arquivamento pessoal -------------------------------------------------------
+    def arquivar(self, perfil: Perfil, requisicao_id: str) -> dict[str, Any]:
+        return self._alterar_arquivamento(perfil, requisicao_id, arquivar=True)
+
+    def desarquivar(self, perfil: Perfil, requisicao_id: str) -> dict[str, Any]:
+        return self._alterar_arquivamento(perfil, requisicao_id, arquivar=False)
+
+    def _alterar_arquivamento(
+        self, perfil: Perfil, requisicao_id: str, *, arquivar: bool
+    ) -> dict[str, Any]:
+        """Anti-IDOR primeiro (`obter`: 404 para o que o usuário não enxerga); idempotente.
+        Só mexe em `requisicoes_arquivadas` do PRÓPRIO usuário do JWT."""
+        req = self.obter(perfil, requisicao_id)
+        config = self._repo.ler_configuracoes()
+        if perfil.role == "vigilante":
+            raise SemPermissao("Você não tem permissão para esta ação.")
+        if req["status"] not in ESTADOS_ARQUIVAVEIS:
+            raise TransicaoInvalida(MSG_NAO_ARQUIVAVEL)
+        if not self._pode_arquivar(perfil, req, config):
+            raise SemPermissao("Você não tem permissão para esta ação.")
+        if arquivar:
+            self._repo.arquivar_requisicao(perfil.id, req["id"])
+        else:
+            self._repo.desarquivar_requisicao(perfil.id, req["id"])
+        return self.apresentar(perfil, req)
 
     # -- motorista ------------------------------------------------------------------
     def validar_motorista(self, valor: Any) -> str:
@@ -635,8 +798,7 @@ class ServicoRequisicoes:
 
     def motorista_padrao(self) -> str | None:
         """Id do único motorista ATIVO, ou None (nenhum ou mais de um: o autorizador escolhe)."""
-        ativos = self._repo.listar_perfis(role="motorista", ativo=True, limite=2, offset=0)
-        return str(ativos[0]["id"]) if len(ativos) == 1 else None
+        return self.seletor_motoristas()[1]
 
     def _exigir_checklist(self, acao: str, req: Requisicao) -> None:
         """Recurso ligado: o checklist do momento precisa existir antes da saída/chegada.

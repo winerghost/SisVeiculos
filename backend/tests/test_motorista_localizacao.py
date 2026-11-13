@@ -123,7 +123,7 @@ def test_campos_acao_pede_latitude_e_longitude_so_ao_motorista(client, auth, rep
     assert j["campos_acao"] == {}
 
 
-def test_campos_acao_soma_km_e_checklist(client, auth, repo, c, m):  # type: ignore[no-untyped-def]
+def test_campos_acao_soma_localizacao_e_checklist(client, auth, repo, c, m):  # type: ignore[no-untyped-def]
     rid = viagem(
         client,
         auth,
@@ -140,13 +140,12 @@ def test_campos_acao_soma_km_e_checklist(client, auth, repo, c, m):  # type: ign
     )
     j = get(client, auth, m.a, f"/api/motorista/viagens/{rid}").get_json()
     entrada = j["campos_acao"]["registrar_saida"]
-    assert entrada["campos_obrigatorios"] == ["km_saida", "latitude", "longitude"]
+    assert entrada["campos_obrigatorios"] == ["latitude", "longitude"]  # motorista não lança km
     assert entrada["checklist_pendente"] == "saida"
     repo.requisicoes[rid]["status"] = "em_uso"
     repo.requisicoes[rid]["km_saida"] = 10
     j = get(client, auth, m.a, f"/api/motorista/viagens/{rid}").get_json()
     assert j["campos_acao"]["registrar_chegada"]["campos_obrigatorios"] == [
-        "km_chegada",
         "latitude",
         "longitude",
     ]
@@ -256,7 +255,7 @@ def test_ciclo_completo_grava_localizacao_pela_rpc_com_ator_do_jwt(client, auth,
     assert all(sem_coordenadas(json.dumps(e)) for e in repo.eventos)
 
 
-def test_km_e_checklist_continuam_valendo_antes_da_rpc(client, auth, repo, c, m):  # type: ignore[no-untyped-def]
+def test_checklist_vale_antes_da_rpc_e_km_nunca_e_exigido_do_motorista(client, auth, repo, c, m):  # type: ignore[no-untyped-def]
     cfg = Configuracoes(
         motorista=True,
         motorista_registra=True,
@@ -270,23 +269,18 @@ def test_km_e_checklist_continuam_valendo_antes_da_rpc(client, auth, repo, c, m)
     corpo = {"combustivel": "meio", "avarias": False}
     url = f"/api/requisicoes/{rid}/checklist/saida"
     assert client.post(url, headers=auth(m.a.id), json=corpo).status_code == 201
-    r = registrar(client, auth, m.a, rid, corpo=COORD)  # sem km
-    assert r.status_code == 400 and cod(r) == "requisicao_invalida"
-    assert repo.chamadas_rpc_motorista == []
-    r = registrar(client, auth, m.a, rid, corpo={**COORD, "km_saida": 100})
+    r = registrar(client, auth, m.a, rid, corpo={**COORD, "km_saida": 100})  # km descartado
     assert r.status_code == 200
-    assert repo.chamadas_rpc_motorista[0]["km_saida"] == 100
+    assert repo.chamadas_rpc_motorista[0]["km_saida"] is None
     assert (
         client.post(
             f"/api/requisicoes/{rid}/checklist/chegada", headers=auth(m.a.id), json=corpo
         ).status_code
         == 201
     )
-    r = registrar(client, auth, m.a, rid, "chegada", {**COORD, "km_chegada": 90})
-    assert r.status_code == 400 and len(repo.chamadas_rpc_motorista) == 1
     r = registrar(client, auth, m.a, rid, "chegada", {**COORD, "km_chegada": 150})
     assert r.status_code == 200
-    assert repo.chamadas_rpc_motorista[1]["km_chegada"] == 150
+    assert repo.chamadas_rpc_motorista[1]["km_chegada"] is None
     assert repo.requisicoes[rid]["status"] == "concluida"
 
 

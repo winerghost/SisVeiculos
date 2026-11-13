@@ -54,6 +54,8 @@ class RepoMemoria(
         self.config = Configuracoes()
         # Tabela `localizacoes_viagem` (dado sensível) e as chamadas da RPC do motorista.
         self.localizacoes: list[dict[str, Any]] = []
+        # Tabela `requisicoes_arquivadas`: (usuario_id, requisicao_id) -> arquivada_em (PK).
+        self.arquivadas: dict[tuple[str, str], str] = {}
         self.chamadas_rpc_motorista: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._seq = itertools.count(1)
@@ -151,19 +153,38 @@ class RepoMemoria(
         offset: int,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        arquivador_id: str | None = None,
+        arquivadas: bool | None = None,
     ) -> list[Requisicao]:
         itens = [
             dict(r)
             for r in self.requisicoes.values()
-            if (
+            if self._casa(r, usuario_id, status, motorista_id, ou_status, arquivador_id, arquivadas)
+        ]
+        return itens[offset : offset + limite]
+
+    def _casa(
+        self,
+        r: Requisicao,
+        usuario_id: str | None,
+        status: str | None,
+        motorista_id: str | None,
+        ou_status: tuple[str, ...] | None,
+        arquivador_id: str | None,
+        arquivadas: bool | None,
+    ) -> bool:
+        arquivada = (arquivador_id, r["id"]) in self.arquivadas
+        if arquivadas is not None and arquivador_id is not None and arquivada != arquivadas:
+            return False
+        return (
+            (
                 usuario_id is None
                 or r["usuario_id"] == usuario_id
                 or r["status"] in (ou_status or ())
             )
             and (motorista_id is None or r.get("motorista_id") == motorista_id)
             and (status is None or r["status"] == status)
-        ]
-        return itens[offset : offset + limite]
+        )
 
     def contar_requisicoes(
         self,
@@ -172,18 +193,29 @@ class RepoMemoria(
         status: str | None,
         motorista_id: str | None = None,
         ou_status: tuple[str, ...] | None = None,
+        arquivador_id: str | None = None,
+        arquivadas: bool | None = None,
     ) -> int:
         return sum(
             1
             for r in self.requisicoes.values()
-            if (
-                usuario_id is None
-                or r["usuario_id"] == usuario_id
-                or r["status"] in (ou_status or ())
-            )
-            and (motorista_id is None or r.get("motorista_id") == motorista_id)
-            and (status is None or r["status"] == status)
+            if self._casa(r, usuario_id, status, motorista_id, ou_status, arquivador_id, arquivadas)
         )
+
+    # -- arquivamento pessoal (emula a tabela e o gatilho AG041) -------------------------------
+    def arquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
+        with self._lock:  # PK composta + ON CONFLICT DO NOTHING: uma só linha, sem erro
+            r = self.requisicoes.get(requisicao_id)
+            if r is None or r["status"] not in {"concluida", "negada", "cancelada"}:
+                raise erro_db("AG041", "Só é possível arquivar requisição encerrada.")
+            self.arquivadas.setdefault((usuario_id, requisicao_id), datetime.now(UTC).isoformat())
+
+    def desarquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
+        with self._lock:
+            self.arquivadas.pop((usuario_id, requisicao_id), None)
+
+    def ids_arquivados(self, usuario_id: str, ids: set[str]) -> set[str]:
+        return {rid for (uid, rid) in self.arquivadas if uid == usuario_id and rid in ids}
 
     def nomes_perfis(self, ids: set[str]) -> dict[str, str]:
         return {i: self.perfis[i].nome for i in ids if i in self.perfis}
@@ -207,6 +239,7 @@ class RepoMemoria(
             return None
         campos = dict(campos)
         ator_motorista = campos.pop("motorista_alterado_por", None)  # coluna de transporte
+        self._trigger_autodecisao(r, campos)
         self._triggers_km(r, campos)
         self._triggers_checklist(r, campos)
         self._trigger_motorista(r, campos, ator_motorista, campos["status"])
@@ -227,6 +260,16 @@ class RepoMemoria(
         r.update(campos)
         r[CARIMBOS[campos["status"]]] = datetime.now(UTC).isoformat()
         return dict(r)
+
+    def _trigger_autodecisao(self, r: Requisicao, campos: dict[str, Any]) -> None:
+        """Emula AG040: autorizar/negar a própria requisição com a flag desligada."""
+        propria = campos.get("autorizado_por") == r["usuario_id"]
+        if (
+            campos.get("status") in {"autorizada", "negada"}
+            and propria
+            and not self.config.autorizador_decide_propria
+        ):
+            raise erro_db("AG040", "Você não pode decidir sobre a sua própria requisição.")
 
     def atribuir_motorista(
         self,
@@ -397,12 +440,19 @@ class RepoMemoria(
     def _ck(nome: str) -> Exception:
         return erro_db("23514", f'violates check constraint "{nome}"')
 
-    def _lancamento_vigilante_sem_km(self, r: Requisicao, campos: dict[str, Any]) -> bool:
-        """Vigilante com `vigilante_km` desligada registra sem km (decisão do ramo no banco)."""
+    def _lancamento_sem_km(self, r: Requisicao, campos: dict[str, Any]) -> bool:
+        """KM obrigatório por papel do ator (migration 20261119120200): vigilante com
+        `vigilante_km`; autorizador/admin com `autorizador_km`; motorista e demais, nunca."""
         ator = self.perfis.get(
             str(campos.get("saida_registrada_por") or campos.get("chegada_registrada_por") or "")
         )
-        return bool(ator and ator.role == "vigilante" and not self.config.vigilante_km)
+        if ator is None:
+            return False
+        if ator.role == "vigilante":
+            return not self.config.vigilante_km
+        if ator.role in {"autorizador", "admin"}:
+            return not self.config.autorizador_km
+        return True
 
     def _triggers_km(self, r: Requisicao, campos: dict[str, Any]) -> None:
         """Emula as constraints e o trigger da migration 18 (erros traduzidos de verdade)."""
@@ -419,7 +469,7 @@ class RepoMemoria(
             raise self._ck("ck_requisicoes_km_saida_nao_negativo")
         if any(v > 2_147_483_647 for v in km):
             raise erro_db("22003", "integer out of range")
-        if self.config.quilometragem and not self._lancamento_vigilante_sem_km(r, campos):
+        if self.config.quilometragem and not self._lancamento_sem_km(r, campos):
             if novo["status"] == "em_uso" and novo["km_saida"] is None:
                 raise erro_db("AG012", "Quilometragem de saída é obrigatória.")
             if novo["status"] == "concluida" and len(km) < 2:

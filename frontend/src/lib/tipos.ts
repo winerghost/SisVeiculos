@@ -2,7 +2,37 @@
 
 export type Status = 'solicitada' | 'autorizada' | 'em_uso' | 'concluida' | 'negada' | 'cancelada';
 
+/** Ações de transição (POST em /requisicoes/<id>/<rota>); os botões vêm de `acoes_permitidas`. */
 export type Acao = 'autorizar' | 'negar' | 'registrar_saida' | 'registrar_chegada' | 'cancelar';
+
+/** Organização pessoal da lista (não muda o estado da requisição). */
+export type AcaoOrganizar = 'arquivar' | 'desarquivar';
+
+/**
+ * Categorias de `grupos_acao`. O JSON da API não garante a ordem das chaves: a ordem de exibição
+ * é fixa (ORDEM_GRUPOS) e só apresentação.
+ */
+export type GrupoAcao = 'solicitar' | 'decidir' | 'operar' | 'designar' | 'consultar' | 'organizar';
+
+export const ORDEM_GRUPOS: readonly GrupoAcao[] = [
+  'solicitar',
+  'decidir',
+  'operar',
+  'designar',
+  'consultar',
+  'organizar',
+];
+
+/** Campos extras de uma ação (`campos_acao`), como a API enviar. */
+export interface CamposDaAcao {
+  campos_obrigatorios?: CampoAcao[];
+  campos_opcionais?: string[];
+  checklist_pendente?: MomentoChecklist;
+  /** Só em `autorizar` (recurso Motorista ligado): candidatos ativos, já listados pela API. */
+  motoristas?: Motorista[];
+  /** Só em `autorizar`: id do único motorista ativo (pré-seleção); null = sem padrão. */
+  motorista_padrao?: string | null;
+}
 
 export interface Eu {
   id: string;
@@ -60,6 +90,10 @@ export interface Requisicao {
   criado_em: string;
   atualizado_em: string;
   acoes_permitidas: string[];
+  /** Ações agrupadas por categoria (só as não vazias); mesmas ações de `acoes_permitidas`. */
+  grupos_acao?: Partial<Record<GrupoAcao, string[]>>;
+  /** Preferência pessoal de quem consulta: arquivada na sua lista (false para quem não arquiva). */
+  arquivada?: boolean;
   /** Mantido por compatibilidade; a tela usa `linha_do_tempo`. */
   historico: EventoHistorico[];
   /** Linha do tempo já pronta da API (estado, etapas e durações). O cliente só a exibe. */
@@ -79,9 +113,7 @@ export interface Requisicao {
   km_saida: number | null;
   km_chegada: number | null;
   /** Campos extras que a API manda pedir por ação executável ({} com o recurso desligado). */
-  campos_acao?: Partial<
-    Record<Acao, { campos_obrigatorios: CampoAcao[]; checklist_pendente?: MomentoChecklist }>
-  >;
+  campos_acao?: Partial<Record<Acao, CamposDaAcao>>;
 }
 
 // ---- Checklist (recurso opcional; backend/app/services/checklist.py) ----

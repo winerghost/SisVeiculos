@@ -71,9 +71,11 @@ function Detalhe({ id }: { id: string }) {
         <LinhaDoTempo linhaDoTempo={r.linha_do_tempo} variante="completa" />
       </section>
 
-      <ChecklistRegistrado requisicaoId={r.id} versao={versaoChecklist(r)} />
+      {r.acoes_permitidas.includes('ver_checklist') ? (
+        <ChecklistRegistrado requisicaoId={r.id} versao={versaoChecklist(r)} />
+      ) : null}
 
-      {r.saida_real_em ? (
+      {r.acoes_permitidas.includes('ver_localizacao') ? (
         <LocalizacaoRegistroSecao requisicaoId={r.id} versao={versaoChecklist(r)} />
       ) : null}
 

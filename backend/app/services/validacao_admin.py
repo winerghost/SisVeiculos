@@ -28,6 +28,8 @@ RECURSOS = (
     "motorista_registra",
     "motorista_localizacao",
     "vigilante_km",
+    "autorizador_decide_propria",
+    "autorizador_km",
 )
 
 

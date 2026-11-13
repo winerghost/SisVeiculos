@@ -165,10 +165,10 @@ def test_vigilante_km_ligada_sem_quilometragem_nao_pede_km(client, auth, repo, c
     assert post(client, auth, v.vig, rid, "saida").status_code == 200
 
 
-def test_staff_continua_pedindo_km_com_vigilante_km_desligada(client, auth, repo, c):  # type: ignore[no-untyped-def]
-    repo.config = KM
+def test_staff_nao_pede_km_com_autorizador_km_desligada(client, auth, repo, c):  # type: ignore[no-untyped-def]
+    repo.config = KM  # quilometragem ligada, autorizador_km desligada
     rid = viagem_autorizada(client, auth, repo, c)
-    assert post(client, auth, c.aut, rid, "saida").status_code == 400
+    assert post(client, auth, c.aut, rid, "saida").status_code == 200
 
 
 # ----------------------------------------------------------------- admin: usuários e configuração

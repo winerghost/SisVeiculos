@@ -14,8 +14,6 @@ from app.modelos import Perfil
 from app.repositorios.base import Repositorio
 from app.services.requisicoes import ServicoRequisicoes
 
-LIMITE_SELETOR = 200
-
 
 class ServicoMotorista:
     def __init__(self, repo: Repositorio, requisicoes: ServicoRequisicoes) -> None:
@@ -23,10 +21,18 @@ class ServicoMotorista:
         self._requisicoes = requisicoes
 
     def listar_viagens(
-        self, perfil: Perfil, *, status: str | None, limite: int, offset: int
+        self,
+        perfil: Perfil,
+        *,
+        status: str | None,
+        limite: int,
+        offset: int,
+        arquivadas: bool | None = False,
     ) -> dict[str, Any]:
         """Só as viagens com `motorista_id` = JWT (o id nunca vem do cliente)."""
-        return self._requisicoes.listar(perfil, status=status, limite=limite, offset=offset)
+        return self._requisicoes.listar(
+            perfil, status=status, limite=limite, offset=offset, arquivadas=arquivadas
+        )
 
     def obter_viagem(self, perfil: Perfil, requisicao_id: str) -> dict[str, Any]:
         # 404 tanto para viagem inexistente quanto para a de outro motorista.
@@ -35,11 +41,6 @@ class ServicoMotorista:
     def listar_motoristas(self) -> dict[str, Any]:
         """Seletor da equipe: motoristas ATIVOS, só `id` e `nome` (minimização, LGPD)."""
         self._requisicoes.exigir_motorista_ligado()
-        perfis = self._repo.listar_perfis(
-            role="motorista", ativo=True, limite=LIMITE_SELETOR, offset=0
-        )
-        return {
-            "itens": [{"id": p["id"], "nome": p["nome"]} for p in perfis],
-            # Único motorista ativo (designado por padrão ao autorizar); null se houver 0 ou 2+.
-            "padrao": perfis[0]["id"] if len(perfis) == 1 else None,
-        }
+        itens, padrao = self._requisicoes.seletor_motoristas()
+        # `padrao`: único motorista ativo (designado ao autorizar); null se houver 0 ou 2+.
+        return {"itens": itens, "padrao": padrao}

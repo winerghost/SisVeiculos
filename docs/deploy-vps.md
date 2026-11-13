@@ -51,7 +51,6 @@ Se a sub-rede `10.213.88.0/24` colidir, veja o troubleshooting (precisa de commi
 | `SUPABASE_JWT_AUDIENCE` | Obrigatória. |
 | `CORS_ORIGINS` | Origem https do site (ex.: `https://SEU-DOMINIO`). Restrita, sem curinga. |
 | `URL_ACEITE_CONVITE` | `https://SEU-DOMINIO/convite`. Sem ela, criar usuário responde 503 `convites_nao_configurados`. Precisa estar nas Redirect URLs do Supabase ([convites-supabase-auth.md](convites-supabase-auth.md)). |
-| `PERMITIR_AUTOAUTORIZACAO` | Manter `false`. |
 | `LOG_LEVEL` | Opcional. |
 | `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_TOKEN` | Opcionais; ligam só se os dois estiverem preenchidos. URL https pública; token com 32+ caracteres. Sem dados pessoais no payload. |
 

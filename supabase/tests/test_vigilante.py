@@ -30,7 +30,7 @@ pytestmark = [
 
 NEGADO = "42501"
 # Dependentes primeiro (desligar nesta ordem; religar na ordem inversa).
-FLAGS = ("vigilante_km", "abastecimento_manutencao", "quilometragem", "checklist")
+FLAGS = ("autorizador_km", "vigilante_km", "abastecimento_manutencao", "quilometragem", "checklist")
 
 
 def _estado() -> dict[str, bool]:
@@ -239,7 +239,7 @@ def test_chaves_anteriores_continuam_auditadas(cena: Cena) -> None:
     for chave in (
         "quilometragem", "abastecimento_manutencao", "checklist", "mfa", "relatorio_email",
         "relatorio_whatsapp", "notificacao_email_criticos", "motorista", "motorista_registra",
-        "motorista_localizacao", "vigilante_km",
+        "motorista_localizacao", "vigilante_km", "autorizador_decide_propria", "autorizador_km",
     ):  # fmt: skip
         assert f"'{chave}'" in d, chave
 
@@ -377,10 +377,23 @@ def test_quilometragem_ligada_vigilante_km_desligada_vigilante_registra_sem_km(
     assert _km(rid) == (None, None)
 
 
-def test_quilometragem_ligada_vigilante_km_desligada_demais_atores_seguem_obrigando(
+def test_quilometragem_ligada_autorizador_km_desligada_autorizador_e_admin_registram_sem_km(
+    cena: Cena,
+) -> None:
+    # Migration 20261119120200: autorizador/admin so sao obrigados com autorizador_km ligada.
+    cena.cfg("quilometragem", True)
+    rid = cena.autorizada()
+    _saida(rid, cena.aut)
+    _chegada(rid, cena.admin)
+    assert h.status_de(rid) == "concluida"
+    assert _km(rid) == (None, None)
+
+
+def test_quilometragem_ligada_autorizador_km_ligada_demais_atores_seguem_obrigando(
     cena: Cena,
 ) -> None:
     cena.cfg("quilometragem", True)
+    cena.cfg("autorizador_km", True)
     rid = cena.autorizada()
     for ator in (cena.aut, cena.admin):
         _falha(

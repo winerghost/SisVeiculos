@@ -215,7 +215,12 @@ def test_cancelada_por_terceiro_notifica_o_dono_e_pelo_dono_notifica_staff(e: di
 
 def test_autoautorizacao_nao_notifica_o_ator(e: dict) -> None:
     rid = _nova_req(e["aut"])
-    h.autorizar(rid, e["aut"])  # dono e ator: ninguem a notificar
+    # Autoautorizacao so vale com autorizador_decide_propria ligada (migration 20261119120100, AG040).
+    _flag("autorizador_decide_propria", True, e["adm"])
+    try:
+        h.autorizar(rid, e["aut"])  # dono e ator: ninguem a notificar
+    finally:
+        _flag("autorizador_decide_propria", False, e["adm"])
     assert _por_req(rid, "requisicao_autorizada") == []
 
 

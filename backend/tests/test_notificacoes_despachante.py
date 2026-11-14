@@ -412,6 +412,25 @@ def test_expurgo_com_excecao_nao_derruba_e_nao_repete_logo(repo, auth_admin, cap
     assert "x@agu.gov.br" not in caplog.text
 
 
+def test_expurgo_chama_purga_webauthn_com_erro_isolado(repo, auth_admin, caplog):  # type: ignore[no-untyped-def]
+    caplog.set_level("INFO")
+    rel, chamadas = Relogio(), []
+    repo.purgar_inscricoes_push = lambda: 0  # type: ignore[attr-defined]
+    repo.purgar_webauthn = lambda: chamadas.append(1) or 7  # type: ignore[attr-defined]
+    d = montar(repo, auth_admin, EnviadorFalso(), rel)
+    rel.t += 61
+    assert d.expurgar_se_devido() is not None and chamadas == [1]
+    assert "webauthn_purga removidos=7" in caplog.text
+
+    def quebra() -> int:
+        raise ErroInterno("x@agu.gov.br")
+
+    repo.purgar_webauthn = quebra  # type: ignore[attr-defined]
+    rel.t += 25 * 3600
+    assert d.expurgar_se_devido() is not None  # falha isolada: o expurgo segue
+    assert "webauthn_purga_falhou" in caplog.text and "x@agu.gov.br" not in caplog.text
+
+
 def test_expurgo_roda_no_laco_sem_email(repo, auth_admin, monkeypatch):  # type: ignore[no-untyped-def]
     d = montar(repo, auth_admin, EnviadorFalso(), email_enabled=False)
     eventos = []

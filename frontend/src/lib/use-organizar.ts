@@ -23,14 +23,18 @@ const INVERSA: Record<AcaoOrganizar, AcaoOrganizar> = {
  */
 export function useOrganizar(depois: () => void | Promise<void>, viagem = false) {
   const { tratarErro } = useAuth();
-  const [ocupado, setOcupado] = React.useState(false);
+  const [processando, setProcessando] = React.useState<ReadonlySet<string>>(() => new Set());
+  const emVoo = React.useRef<Set<string>>(new Set());
   const [erro, setErro] = React.useState<string | null>(null);
   const [aviso, setAviso] = React.useState<AvisoOrganizar | null>(null);
   const nome = viagem ? 'Viagem' : 'Requisição';
+  const ocupado = processando.size > 0;
 
   const executar = React.useCallback(
     async (id: string, acao: AcaoOrganizar, oferecerDesfazer = true) => {
-      setOcupado(true);
+      if (emVoo.current.has(id)) return;
+      emVoo.current.add(id);
+      setProcessando(new Set(emVoo.current));
       setErro(null);
       setAviso(null);
       try {
@@ -47,7 +51,8 @@ export function useOrganizar(depois: () => void | Promise<void>, viagem = false)
         try {
           await depois();
         } finally {
-          setOcupado(false);
+          emVoo.current.delete(id);
+          setProcessando(new Set(emVoo.current));
         }
       }
     },
@@ -59,5 +64,5 @@ export function useOrganizar(depois: () => void | Promise<void>, viagem = false)
     setAviso(null);
   }, []);
 
-  return { ocupado, erro, aviso, executar, limpar };
+  return { ocupado, processando, erro, aviso, executar, limpar };
 }

@@ -52,7 +52,12 @@ Se a sub-rede `10.213.88.0/24` colidir, veja o troubleshooting (precisa de commi
 | `CORS_ORIGINS` | Origem https do site (ex.: `https://SEU-DOMINIO`). Restrita, sem curinga. |
 | `URL_ACEITE_CONVITE` | `https://SEU-DOMINIO/convite`. Sem ela, criar usuário responde 503 `convites_nao_configurados`. Precisa estar nas Redirect URLs do Supabase ([convites-supabase-auth.md](convites-supabase-auth.md)). |
 | `LOG_LEVEL` | Opcional. |
-| `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_TOKEN` | Opcionais; ligam só se os dois estiverem preenchidos. URL https pública; token com 32+ caracteres. Sem dados pessoais no payload. |
+| `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_TOKEN` | Opcionais; ligam só se os dois estiverem preenchidos. URL https pública; token com 32+ caracteres. Eventos comuns levam payload mínimo; saída e chegada levam o conjunto completo ([payload-webhook-n8n.md](payload-webhook-n8n.md)). Trocar teste/produção: ver seção 6.1. |
+| `N8N_HMAC_SECRET` | **Obrigatória** com URL ou token definidos (o backend não sobe sem ela). 32+ caracteres, distinta do token (`openssl rand -hex 32`); o mesmo valor no n8n. |
+| `N8N_ALLOWED_HOSTS` | Recomendada: `n8n.revizzicar.com.br` (só o host, sem https:// nem caminho). |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Opcionais (Web Push). Gere o par com `python scripts/gerar-vapid.py`. A privada é SECRETA, só no `.env` da VPS. Assunto: `mailto:` ou https. Passo a passo em [web-push.md](web-push.md). Só `.env`: `docker compose up -d`. |
+| `PUSH_ENDPOINT_HOSTS`, `PUSH_INTERVALO_SEGUNDOS` | Opcionais. Domínios de serviço push aceitos (anti-SSRF) e intervalo do despachante. |
+| `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGINS` | Opcionais (Passkeys). RP ID = domínio registrável sem esquema; origens = https completas, separadas por vírgula. **Não troque o RP ID depois**: invalida as passkeys. Detalhes em [passkeys.md](passkeys.md). Só `.env`: `docker compose up -d`. |
 
 ### Variáveis SOMENTE do pipeline (GitHub Secrets; NÃO vão para a VPS)
 
@@ -78,6 +83,12 @@ Conferir:
   `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`,
   `Cross-Origin-Resource-Policy`, `X-Robots-Tag: noindex, nofollow`; e
   `Strict-Transport-Security` vindo do Cloudflare (HSTS).
+- `Permissions-Policy` deve conter `camera=(self)` (leitor de QR), `microphone=(self)` (ditado por voz, Fase 4),
+  `geolocation=(self)` e `payment=()`. O reconhecimento de voz do navegador não exige mudança no
+  CSP (confirmado: nenhuma diretiva nova). O leitor não exige mudança no CSP: o stream de câmera em
+  `<video srcObject>` não precisa de `media-src`. Só se a biblioteca de leitura usar Web Worker
+  criado a partir de Blob, trocar `worker-src 'self'` por `worker-src 'self' blob:` (mínimo
+  necessário, nada mais). Alterar `security-headers.conf` exige `docker compose up -d --build`.
 - Cada header aparece **uma vez**. O vhost do CloudPanel pode adicionar os seus; já foi observado
   duplicado em produção: remova do vhost as linhas `add_header` de `X-Frame-Options`,
   `Referrer-Policy` e `X-Content-Type-Options` (o nginx do frontend é a fonte única). Conferir:
@@ -237,6 +248,22 @@ Migrations NÃO têm rollback automático. Como proceder:
   `NEXT_PUBLIC_SUPABASE_URL`/`ANON_KEY`, use `--build`. Revogue a chave antiga e, se houve
   suspeita de vazamento, avise a equipe de segurança.
 - Revisar periodicamente as faixas de IP do Cloudflare em `frontend/nginx.conf` (exige `--build`).
+
+### 6.1 Trocar o webhook do n8n de teste para produção
+
+Só muda o `.env`; nada é fixo no código, então **não precisa de `--build`**.
+
+1. No n8n, ative o workflow e copie a URL de **produção** (`https://n8n.revizzicar.com.br/webhook/<nome>`).
+   A de teste usa `/webhook-test/<nome>` e só escuta uma chamada após `Listen for test event`.
+2. Na VPS, edite o `.env` (`nano .env`; é o mesmo arquivo criado na primeira instalação, fora do
+   git; nunca cole valores em chat): troque o valor de `N8N_WEBHOOK_URL`.
+3. Confira `N8N_ALLOWED_HOSTS=n8n.revizzicar.com.br` e que `N8N_WEBHOOK_TOKEN` e `N8N_HMAC_SECRET`
+   (distintos entre si) são os mesmos configurados no n8n.
+4. Aplique: `docker compose up -d` (sem build; só o `.env` mudou).
+5. Valide: `docker compose ps` (backend `healthy`), `docker compose logs --tail=50 backend` sem
+   erro de configuração, e registre uma saída de teste conferindo a execução no n8n.
+
+Para voltar ao teste, repita com a URL `/webhook-test/`.
 
 ## 7. Troubleshooting (erros já vistos)
 

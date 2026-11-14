@@ -6,6 +6,8 @@ elas são aplicadas antes, para devolver mensagens claras e `acoes_permitidas`.
 
 from __future__ import annotations
 
+import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,6 +34,8 @@ from app.services.horario_saida import (
 )
 from app.services.localizacao import validar_localizacao
 from app.services.validacao import validar_criacao, validar_km, validar_uuid
+
+log = logging.getLogger(__name__)
 
 STAFF = frozenset({"autorizador", "admin"})
 STATUS_VALIDOS = frozenset(
@@ -125,6 +129,30 @@ EVENTO_POR_ACAO = {
     "registrar_chegada": "requisicao.chegada",
     "cancelar": "requisicao.cancelada",
 }
+
+# Webhook n8n em saída/chegada: a linha da requisição vai INTEIRA (colunas novas passam sozinhas).
+# Só chaves cujo NOME contenha um destes trechos (segredo, acesso, contato) ficam de fora, em
+# qualquer nível de aninhamento. Não é allowlist: chave nova e inofensiva passa sozinha.
+DENYLIST_WEBHOOK_REQ = re.compile(
+    r"email|e_mail|token|senha|password|secret|key|caminho|path|url|cpf|telefone|celular",
+    re.IGNORECASE,
+)
+
+
+def filtrar_denylist_webhook(valor: Any) -> Any:
+    """Remove, recursivamente em dicts e listas, as chaves que casam com a denylist."""
+    if isinstance(valor, dict):
+        return {
+            k: filtrar_denylist_webhook(v)
+            for k, v in valor.items()
+            if not DENYLIST_WEBHOOK_REQ.search(str(k))
+        }
+    if isinstance(valor, list):
+        return [filtrar_denylist_webhook(v) for v in valor]
+    return valor
+
+
+ACOES_COM_DETALHES = frozenset({"registrar_saida", "registrar_chegada"})
 
 CAMPOS_ATORES = ("autorizado_por", "saida_registrada_por", "chegada_registrada_por")
 # Quem fez cada evento do histórico (campo `por`): inclui o dono (Solicitada) e quem cancelou.
@@ -767,8 +795,94 @@ class ServicoRequisicoes:
         atualizada = self._repo.transicionar(req["id"], req["status"], campos)
         if atualizada is None:  # outra requisição mudou o estado no meio do caminho
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
-        self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada)  # após o commit
+        self._notificar_acao(acao, atualizada)  # após o commit
         return self.apresentar(perfil, atualizada)
+
+    def _notificar_acao(self, acao: str, atualizada: Requisicao) -> None:
+        """Notifica o n8n; saída e chegada levam `detalhes` (aprovação LGPD), best-effort."""
+        detalhes: dict[str, Any] | None = None
+        if acao in ACOES_COM_DETALHES:
+            try:
+                detalhes = self._detalhes_webhook(atualizada, acao)
+            except Exception as exc:  # noqa: BLE001 - nunca quebra a resposta
+                # Só evento e tipo da exceção; sem exc_info (a mensagem pode ter PII).
+                log.warning(
+                    "n8n: detalhes indisponiveis evento=%s (%s)",
+                    EVENTO_POR_ACAO[acao],
+                    type(exc).__name__,
+                )
+                detalhes = None
+        if detalhes is None:
+            self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada)
+        else:
+            self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada, detalhes)
+
+    def _detalhes_webhook(self, req: Requisicao, acao: str) -> dict[str, Any]:
+        """Dados completos da viagem para o n8n (só saída e chegada). Recurso opcional desligado
+        => campo ausente. Nunca inclui e-mail, token, URL assinada nem caminho de Storage."""
+        momento = "saida" if acao == "registrar_saida" else "chegada"
+        config = self._repo.ler_configuracoes()
+        checklists = self._repo.obter_checklists(req["id"]) if config.checklist else []
+        checklist = next((c for c in checklists if c.get("momento") == momento), None)
+        papeis = {
+            "solicitante": req.get("usuario_id"),
+            "autorizado_por": req.get("autorizado_por"),
+            "saida_registrada_por": req.get("saida_registrada_por"),
+            "chegada_registrada_por": req.get("chegada_registrada_por"),
+        }
+        if config.motorista:
+            papeis["motorista"] = req.get("motorista_id")
+        ids = {v for v in papeis.values() if v}
+        if checklist and checklist.get("registrado_por"):
+            ids.add(checklist["registrado_por"])
+        nomes = self._repo.nomes_perfis(ids) if ids else {}
+        veiculo_id = req.get("veiculo_id")
+        descricoes = self._repo.descricoes_veiculos({veiculo_id}) if veiculo_id else {}
+
+        def pessoa(pid: str | None) -> dict[str, Any]:
+            return {"id": pid, "nome": nomes.get(pid) if pid else None}
+
+        # Recurso desligado: o valor gravado no banco também não sai dentro de `requisicao`.
+        omitir: set[str] = set()
+        if not config.quilometragem:
+            omitir |= {"km_saida", "km_chegada"}
+        if not config.motorista:
+            omitir.add("motorista_id")
+        detalhes: dict[str, Any] = {
+            "momento": momento,
+            "requisicao": filtrar_denylist_webhook(
+                {k: v for k, v in req.items() if k not in omitir}
+            ),
+            "veiculo": {"id": veiculo_id, "descricao": descricoes.get(veiculo_id or "")},
+            **{papel: pessoa(pid) for papel, pid in papeis.items()},
+            "saida_real_em": req.get("saida_real_em"),
+            "chegada_real_em": req.get("chegada_real_em"),
+        }
+        if config.quilometragem:
+            detalhes["km_saida"] = req.get("km_saida")
+            detalhes["km_chegada"] = req.get("km_chegada")
+        if config.motorista_localizacao:
+            loc = next(
+                (
+                    x
+                    for x in self._repo.listar_localizacoes(req["id"])
+                    if x.get("momento") == momento
+                ),
+                None,
+            )
+            if loc is not None:
+                detalhes["localizacao"] = filtrar_denylist_webhook(loc)
+        if config.checklist and checklist is not None:
+            detalhes["checklist"] = {
+                "momento": momento,
+                "combustivel": checklist.get("combustivel"),
+                "avarias": checklist.get("avarias"),
+                "descricao_avarias": checklist.get("descricao_avarias"),
+                "registrado_por": pessoa(checklist.get("registrado_por")),
+                "registrado_em": checklist.get("registrado_em"),
+                "quantidade_fotos": len(checklist.get("fotos") or []),
+            }
+        return detalhes
 
     def _executar_motorista(
         self, acao: str, perfil: Perfil, req: Requisicao, corpo: Any, config: Configuracoes
@@ -795,7 +909,7 @@ class ServicoRequisicoes:
         atualizada = self._repo.obter_requisicao(req["id"])
         if atualizada is None or atualizada["status"] != resultado["status"]:
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
-        self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada)  # após o commit
+        self._notificar_acao(acao, atualizada)  # após o commit
         return self.apresentar(perfil, atualizada)
 
     def _motorista_na_autorizacao(

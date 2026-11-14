@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 
 const LIMIAR_PADRAO = 0.4;
 const INICIO_PX = 6;
@@ -44,6 +45,11 @@ interface Props {
   /** Arrastar para a esquerda (ou ArrowLeft, se `focavel`). Ausente: gesto desabilitado. */
   esquerda?: PapelGesto;
   ocupado?: boolean;
+  /**
+   * Texto de uma ação em andamento (ex.: "Arquivando..."). Presente: cobre o cartão com spinner e
+   * texto, marca `aria-busy` e bloqueia gestos e teclas. Só apresentação; quem decide é o pai.
+   */
+  processando?: string;
   /** Classes do `<li>` (borda, raio, fundo). */
   className?: string;
   /** Classes da caixa interna que desliza (espaçamento). */
@@ -68,6 +74,7 @@ export function ItemArrastavel({
   direita,
   esquerda,
   ocupado,
+  processando,
   className,
   classeInterna,
   focavel = false,
@@ -87,12 +94,13 @@ export function ItemArrastavel({
   }
 
   function acionar(papel: PapelGesto) {
+    if (processando) return;
     if (papel.confirmar) setConfirmando(papel);
     else papel.onAcionar();
   }
 
   function aoPressionar(e: React.PointerEvent<HTMLDivElement>) {
-    if (ocupado || confirmando) return;
+    if (ocupado || processando || confirmando) return;
     // Links são permitidos (o cartão é quase todo um link); controles de formulário não.
     if ((e.target as HTMLElement).closest('button, input, select, textarea, label')) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -144,7 +152,7 @@ export function ItemArrastavel({
   }
 
   function aoTeclar(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (!focavel || e.target !== e.currentTarget || ocupado) return;
+    if (!focavel || e.target !== e.currentTarget || ocupado || processando) return;
     if (e.key === 'ArrowLeft' && esquerda) {
       e.preventDefault();
       acionar(esquerda);
@@ -157,16 +165,29 @@ export function ItemArrastavel({
   const controle: ControleGesto = {
     acionar: (lado) => {
       const papel = lado === 'direita' ? direita : esquerda;
-      if (papel && !ocupado) acionar(papel);
+      if (papel && !ocupado && !processando) acionar(papel);
     },
     confirmando: confirmando !== null,
   };
   const conteudo = typeof children === 'function' ? children(controle) : children;
+  const cobertura = processando ? (
+    <div
+      role="status"
+      className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-white/80 text-base font-semibold transition-opacity duration-200 starting:opacity-0"
+    >
+      <Spinner />
+      {processando}
+    </div>
+  ) : null;
 
   if (!direita && !esquerda) {
     return (
-      <li className={cn('rounded-padrao', className)}>
+      <li
+        className={cn('relative rounded-padrao', className)}
+        aria-busy={processando ? true : undefined}
+      >
         <div className={cn('flex flex-col gap-2 p-3', classeInterna)}>{conteudo}</div>
+        {cobertura}
       </li>
     );
   }
@@ -180,7 +201,10 @@ export function ItemArrastavel({
   const lado = dx < 0 ? esquerda : dx > 0 ? direita : undefined;
 
   return (
-    <li className={cn('relative overflow-hidden rounded-padrao', className)}>
+    <li
+      className={cn('relative overflow-hidden rounded-padrao', className)}
+      aria-busy={processando ? true : undefined}
+    >
       <div
         aria-hidden="true"
         className={cn(
@@ -250,6 +274,7 @@ export function ItemArrastavel({
             </Button>
           </div>
         ) : null}
+        {cobertura}
       </div>
     </li>
   );

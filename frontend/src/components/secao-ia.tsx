@@ -6,6 +6,7 @@ import type { CorpoIA, ResultadoTesteIA } from '@/lib/tipos';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,15 +22,22 @@ export function SecaoIA() {
   const cfg = useCarga(() => admin.ia());
   const envio = useEnvio();
   const [teste, setTeste] = React.useState<ResultadoTesteIA | null>(null);
+  const [clicado, setClicado] = React.useState<string | null>(null);
 
   async function testar(provedor: string) {
+    if (envio.ocupado) return;
     setTeste(null);
+    setClicado(`testar:${provedor}`);
     const r = await envio.executar(() => admin.testarIA(provedor));
+    setClicado(null);
     if (r.ok) setTeste(r.valor);
   }
 
-  async function enviar(corpo: CorpoIA) {
+  async function enviar(corpo: CorpoIA, origem = 'campo') {
+    if (envio.ocupado) return;
+    setClicado(origem);
     const r = await envio.executar(() => admin.atualizarIA(corpo));
+    setClicado(null);
     if (r.ok) cfg.setDados(r.valor);
     else await cfg.recarregar();
   }
@@ -51,7 +59,8 @@ export function SecaoIA() {
       {envio.erro ? <Alerta className="mb-4">{envio.erro}</Alerta> : null}
 
       {cfg.carregando || !d ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : (
@@ -157,7 +166,7 @@ export function SecaoIA() {
               onSubmit={(e) => {
                 e.preventDefault();
                 const bruto = String(new FormData(e.currentTarget).get('teto') ?? '').trim();
-                void enviar({ teto_tokens_mes: bruto === '' ? null : Number(bruto) });
+                void enviar({ teto_tokens_mes: bruto === '' ? null : Number(bruto) }, 'teto');
               }}
             >
               <Label htmlFor="ia-teto">Teto de tokens por mês (opcional)</Label>
@@ -175,8 +184,13 @@ export function SecaoIA() {
                 Teto em vigor: {d.teto_efetivo_tokens_mes.toLocaleString('pt-BR')} tokens por mês
                 (vale o menor entre este e o do servidor).
               </p>
-              <Button type="submit" variante="contorno" disabled={!editar || envio.ocupado}>
-                Salvar teto
+              <Button
+                type="submit"
+                variante="contorno"
+                carregando={clicado === 'teto'}
+                disabled={!editar || envio.ocupado}
+              >
+                {clicado === 'teto' ? 'Salvando...' : 'Salvar teto'}
               </Button>
             </form>
           </div>
@@ -194,10 +208,11 @@ export function SecaoIA() {
                       key={chave}
                       type="button"
                       variante="contorno"
+                      carregando={clicado === `testar:${chave}`}
                       disabled={envio.ocupado}
                       onClick={() => void testar(chave)}
                     >
-                      Testar {rotulo}
+                      {clicado === `testar:${chave}` ? 'Testando' : 'Testar'} {rotulo}
                     </Button>
                   );
                 })}

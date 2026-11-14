@@ -211,6 +211,12 @@ def editar_veiculo(veiculo_id: str) -> Any:
     return jsonify(_veiculos().editar(g.perfil, veiculo_id, _corpo()))
 
 
+@admin.post("/veiculos/<veiculo_id>/rotacionar-codigo")
+@limiter.limit(_limite_escrita)
+def rotacionar_codigo_veiculo(veiculo_id: str) -> Any:
+    return jsonify(_veiculos().rotacionar_codigo(g.perfil, veiculo_id))
+
+
 @admin.post("/veiculos/<veiculo_id>/ativar")
 @limiter.limit(_limite_escrita)
 def ativar_veiculo(veiculo_id: str) -> Any:

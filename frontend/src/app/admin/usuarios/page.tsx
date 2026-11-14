@@ -8,6 +8,7 @@ import { useCarga } from '@/lib/use-carga';
 import { AdminShell } from '@/components/admin-shell';
 import { Avatar } from '@/components/avatar';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRole, ROLES, rotuloRole } from '@/components/ui/chip';
 import { Input, Select } from '@/components/ui/input';
@@ -98,7 +99,8 @@ function Conteudo() {
       ) : null}
 
       {lista.carregando ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : itens.length === 0 ? (

@@ -8,6 +8,7 @@ import { useEnvio } from '@/lib/use-envio';
 import { AdminShell } from '@/components/admin-shell';
 import { SecaoIA } from '@/components/secao-ia';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 
 function Conteudo() {
@@ -36,7 +37,8 @@ function Conteudo() {
       {envio.erro ? <Alerta className="mb-4">{envio.erro}</Alerta> : null}
 
       {cfg.carregando ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : (

@@ -674,15 +674,19 @@ def test_fluxo_da_api_nao_gera_logs_com_coordenadas(client, auth, repo, c, m, ca
 class Gravador:
     def __init__(self) -> None:
         self.eventos: list[tuple[str, dict[str, Any]]] = []
+        self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
 
-    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+    def notificar(
+        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+    ) -> None:
         self.eventos.append((evento, dict(requisicao)))
+        self.detalhes.append((evento, detalhes))
 
     def fechar(self) -> None:
         return None
 
 
-def test_notificador_externo_n8n_nao_recebe_coordenadas(repo, c, m):  # type: ignore[no-untyped-def]
+def test_n8n_recebe_coordenadas_so_em_detalhes_de_saida_e_chegada(repo, c, m):  # type: ignore[no-untyped-def]
     repo.config = LOC
     grav = Gravador()
     svc = ServicoRequisicoes(repo, notificador=grav)
@@ -694,6 +698,12 @@ def test_notificador_externo_n8n_nao_recebe_coordenadas(repo, c, m):  # type: ig
     assert [e for e, _ in grav.eventos][-2:] == ["requisicao.saida", "requisicao.chegada"]
     assert sem_coordenadas(json.dumps(grav.eventos, default=str))
     assert not any("latitude" in r or "longitude" in r for _, r in grav.eventos)
+    # Aprovação LGPD: as coordenadas vão só em `detalhes` de saída e chegada.
+    por_evento = dict(grav.detalhes)
+    assert por_evento["requisicao.autorizada"] is None
+    for evento in ("requisicao.saida", "requisicao.chegada"):
+        loc = por_evento[evento]["localizacao"]
+        assert loc["latitude"] == LAT and loc["longitude"] == LON
 
 
 def _corpo_requisicao(veiculo_id: str) -> dict[str, Any]:

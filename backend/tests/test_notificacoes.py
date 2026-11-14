@@ -47,9 +47,13 @@ class Gravador:
 
     def __init__(self) -> None:
         self.chamadas: list[tuple[str, dict[str, Any]]] = []
+        self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
 
-    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+    def notificar(
+        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+    ) -> None:
         self.chamadas.append((evento, dict(requisicao)))
+        self.detalhes.append((evento, detalhes))
 
     def fechar(self) -> None:
         return None
@@ -62,7 +66,9 @@ class Gravador:
 class Quebrado:
     """Notificador que levanta: a API não pode depender dele (defesa em profundidade)."""
 
-    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+    def notificar(
+        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+    ) -> None:
         raise RuntimeError("n8n fora")
 
     def fechar(self) -> None:
@@ -489,7 +495,7 @@ def test_falha_no_banco_nao_notifica(repo, auth_admin, storage, auth, cen):  # t
     assert grav.eventos == ["requisicao.criada"]
 
 
-def test_payload_dos_eventos_reais_sem_dados_pessoais(client_n, auth, cen, grav):  # type: ignore[no-untyped-def]
+def test_payload_dos_demais_eventos_continua_minimo_sem_dados_pessoais(client_n, auth, cen, grav):  # type: ignore[no-untyped-def]
     r = criar(client_n, auth, cen.sol, cen.veiculo, observacao="obs-sensivel")
     rid = r.get_json()["id"]
     acao(client_n, auth, cen.aut, rid, "autorizar")
@@ -613,3 +619,207 @@ def test_create_app_liga_ao_desistir_ao_alerta_de_sistema(monkeypatch: pytest.Mo
     # um repositório que falha não derruba o worker (registrar_falha_sistema nunca propaga)
     repo.falha_sistema = RuntimeError("banco fora")
     capturado["cb"]("requisicao.criada")
+
+
+# ------------------------------------------------------------------ detalhes de saída/chegada
+def _fluxo_ate_chegada(client_n, auth, cen):  # type: ignore[no-untyped-def]
+    rid = criar(client_n, auth, cen.sol, cen.veiculo, observacao="obs-sensivel").get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    assert acao(client_n, auth, cen.aut, rid, "saida").status_code == 200
+    assert acao(client_n, auth, cen.aut, rid, "chegada").status_code == 200
+    return rid
+
+
+def test_saida_e_chegada_levam_detalhes_completos_e_demais_eventos_nao(client_n, auth, cen, grav):  # type: ignore[no-untyped-def]
+    rid = _fluxo_ate_chegada(client_n, auth, cen)
+    por_evento = dict(grav.detalhes)
+    assert por_evento["requisicao.criada"] is None
+    assert por_evento["requisicao.autorizada"] is None
+    for evento, momento in (("requisicao.saida", "saida"), ("requisicao.chegada", "chegada")):
+        d = por_evento[evento]
+        assert d is not None and d["momento"] == momento
+        assert d["requisicao"]["id"] == rid and d["requisicao"]["observacao"] == "obs-sensivel"
+        assert d["requisicao"]["trajeto"] == "AGU -> Fórum"
+        assert d["veiculo"]["id"] == cen.veiculo and "descricao" in d["veiculo"]
+        assert d["solicitante"]["id"] == cen.sol.id and d["solicitante"]["nome"]
+        assert d["autorizado_por"]["id"] == cen.aut.id
+        assert d["saida_registrada_por"]["id"] == cen.aut.id
+        assert "saida_real_em" in d and "chegada_real_em" in d
+        payload = montar_payload(evento, {"id": rid}, detalhes=d)
+        assert payload["versao"] == 2 and payload["detalhes"] == d
+        assert TOKEN not in json.dumps(payload, default=str)
+    assert por_evento["requisicao.chegada"]["chegada_real_em"] is not None
+    assert por_evento["requisicao.chegada"]["chegada_registrada_por"]["id"] == cen.aut.id
+    d = por_evento["requisicao.saida"]  # recursos desligados => campos ausentes
+    for ausente in ("km_saida", "km_chegada", "localizacao", "checklist", "motorista"):
+        assert ausente not in d
+
+
+def test_detalhes_respeitam_recursos_ligados(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    from dataclasses import replace
+
+    repo.config = replace(
+        repo.ler_configuracoes(), checklist=True, quilometragem=True, autorizador_km=True
+    )
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    r = client_n.post(
+        f"/api/requisicoes/{rid}/checklist/saida",
+        headers=auth(cen.aut.id),
+        json={
+            "combustivel": "cheio",
+            "avarias": True,
+            "descricao_avarias": "risco-na-porta",
+            "fotos": [],
+        },
+    )
+    assert r.status_code == 201, r.get_json()
+    r = client_n.post(
+        f"/api/requisicoes/{rid}/saida", headers=auth(cen.aut.id), json={"km_saida": 100}
+    )
+    assert r.status_code == 200, r.get_json()
+    d = dict(grav.detalhes)["requisicao.saida"]
+    assert d["km_saida"] == 100 and d["km_chegada"] is None
+    ck = d["checklist"]
+    assert ck["combustivel"] == "cheio" and ck["avarias"] is True
+    assert ck["descricao_avarias"] == "risco-na-porta" and ck["quantidade_fotos"] == 0
+    assert "fotos" not in ck and "caminho" not in json.dumps(d)
+
+
+def test_toda_chave_da_requisicao_vai_em_detalhes_menos_denylist(client_n, auth, cen, grav):  # type: ignore[no-untyped-def]
+    from app.services.requisicoes import DENYLIST_WEBHOOK_REQ
+
+    # Sem recursos opcionais ligados, km e motorista saem da linha por regra de flag (ver abaixo).
+    por_flag = {"km_saida", "km_chegada", "motorista_id"}
+
+    _fluxo_ate_chegada(client_n, auth, cen)
+    vistos = 0
+    for (evento, req), (_, d) in zip(grav.chamadas, grav.detalhes, strict=True):
+        if evento not in {"requisicao.saida", "requisicao.chegada"}:
+            continue
+        vistos += 1
+        esperado = {k for k in req if not DENYLIST_WEBHOOK_REQ.search(k)} - por_flag
+        assert esperado <= set(d["requisicao"]), esperado - set(d["requisicao"])
+    assert vistos == 2
+
+
+def test_coluna_nova_passa_sozinha_ao_webhook(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    repo.requisicoes[rid]["coluna_futura"] = "valor-novo"
+    acao(client_n, auth, cen.aut, rid, "saida")
+    assert dict(grav.detalhes)["requisicao.saida"]["requisicao"]["coluna_futura"] == "valor-novo"
+
+
+def test_falha_ao_montar_detalhes_nao_quebra_resposta(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    original = repo.nomes_perfis
+    chamadas = {"n": 0}
+
+    def uma_vez(ids: set[str]) -> dict[str, str]:
+        chamadas["n"] += 1
+        if chamadas["n"] == 1:  # 1ª chamada = montagem dos detalhes; a apresentação segue normal
+            raise RuntimeError("Fulano de Tal quebrou")
+        return original(ids)
+
+    repo.nomes_perfis = uma_vez  # type: ignore[method-assign]
+    r = acao(client_n, auth, cen.aut, rid, "saida")
+    assert r.status_code == 200 and r.get_json()["status"] == "em_uso"
+    assert grav.eventos[-1] == "requisicao.saida" and grav.detalhes[-1][1] is None
+
+
+def test_assinatura_hmac_cobre_corpo_com_detalhes_e_reentrega_mantem_evento_id() -> None:
+    recebidos: list[httpx.Request] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        recebidos.append(req)
+        return httpx.Response(503 if len(recebidos) == 1 else 200)
+
+    n = webhook(h)
+    detalhes = {"momento": "saida", "requisicao": {"trajeto": "AGU -> Fórum"}}
+    n.notificar("requisicao.saida", req_exemplo(), detalhes)
+    assert esperar(lambda: len(recebidos) == 2)
+    n.fechar()
+    a, b = recebidos
+    corpo = json.loads(a.content)
+    assert corpo["versao"] == 2 and corpo["detalhes"] == detalhes
+    assert a.content == b.content
+    assert json.loads(b.content)["evento_id"] == corpo["evento_id"] == a.headers["X-Evento-Id"]
+    for r in (a, b):
+        assert r.headers["X-Assinatura"] == _assin(TOKEN, r)
+    assert TOKEN not in a.content.decode()
+
+
+def test_payload_sem_detalhes_segue_versao_1() -> None:
+    p = montar_payload("requisicao.saida", req_exemplo())
+    assert p["versao"] == 1 and "detalhes" not in p
+
+
+def test_denylist_por_substring_recursiva_e_chave_inofensiva_passa(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    repo.requisicoes[rid].update(
+        {
+            "email_solicitante": "x@y.gov.br",
+            "foto_url": "https://x/f.png",
+            "token_convite": "abc",
+            "Telefone_Contato": "999",
+            "extra": {"cpf_motorista": "1", "ok": [{"api_key": "k", "valor": 2}]},
+            "campo_novo_inofensivo": "passa",
+        }
+    )
+    acao(client_n, auth, cen.aut, rid, "saida")
+    r = dict(grav.detalhes)["requisicao.saida"]["requisicao"]
+    for removida in ("email_solicitante", "foto_url", "token_convite", "Telefone_Contato"):
+        assert removida not in r
+    assert r["campo_novo_inofensivo"] == "passa"
+    assert r["extra"] == {"ok": [{"valor": 2}]}
+
+
+def test_flags_desligadas_removem_km_e_motorista_da_linha_mesmo_gravados(  # type: ignore[no-untyped-def]
+    client_n, auth, cen, grav, repo
+):
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    repo.requisicoes[rid].update({"km_saida": 10, "km_chegada": 20, "motorista_id": cen.aut.id})
+    assert not repo.ler_configuracoes().quilometragem and not repo.ler_configuracoes().motorista
+    acao(client_n, auth, cen.aut, rid, "saida")
+    r = dict(grav.detalhes)["requisicao.saida"]["requisicao"]
+    assert not {"km_saida", "km_chegada", "motorista_id"} & set(r)
+
+
+def test_flags_ligadas_mantem_km_e_motorista_na_linha(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    from dataclasses import replace
+
+    repo.config = replace(repo.ler_configuracoes(), quilometragem=True, motorista=True)
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    repo.requisicoes[rid].update({"km_saida": 10, "motorista_id": None})
+    acao(client_n, auth, cen.aut, rid, "saida")
+    r = dict(grav.detalhes)["requisicao.saida"]["requisicao"]
+    assert "km_saida" in r and "km_chegada" in r and "motorista_id" in r
+
+
+def test_log_de_detalhes_indisponiveis_sem_pii(  # type: ignore[no-untyped-def]
+    client_n, auth, cen, grav, repo, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    original = repo.nomes_perfis
+    chamadas = {"n": 0}
+
+    def uma_vez(ids: set[str]) -> dict[str, str]:
+        chamadas["n"] += 1
+        if chamadas["n"] == 1:
+            raise RuntimeError("Fulano de Tal AGU -> Fórum obs-sensivel")
+        return original(ids)
+
+    repo.nomes_perfis = uma_vez  # type: ignore[method-assign]
+    assert acao(client_n, auth, cen.aut, rid, "saida").status_code == 200
+    avisos = [x for x in caplog.records if "detalhes indisponiveis" in x.getMessage()]
+    assert len(avisos) == 1 and avisos[0].exc_info is None
+    assert "evento=requisicao.saida (RuntimeError)" in avisos[0].getMessage()
+    for pii in (*PROIBIDOS, cen.sol.id, cen.aut.id, "Traceback"):
+        assert pii not in caplog.text

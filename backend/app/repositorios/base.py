@@ -18,6 +18,10 @@ class Repositorio(Protocol):
 
     def obter_veiculo(self, veiculo_id: str) -> dict[str, Any] | None: ...
 
+    def obter_veiculo_ativo_por_codigo(self, codigo: str) -> dict[str, Any] | None:
+        """Veículo ATIVO pelo `codigo_publico` (id, descricao, placa); None se não houver."""
+        ...
+
     def veiculos_ocupados(self) -> set[str]:
         """Ids de veículos com requisição aberta (solicitada, autorizada, em_uso)."""
         ...
@@ -206,6 +210,10 @@ class Repositorio(Protocol):
     def atualizar_veiculo(
         self, veiculo_id: str, campos: dict[str, Any], *, ator_id: str
     ) -> dict[str, Any] | None: ...
+
+    def rotacionar_codigo_veiculo(self, veiculo_id: str, *, ator_id: str) -> str | None:
+        """RPC `rotacionar_codigo_veiculo`: gera e devolve o novo código (auditado no banco)."""
+        ...
 
     def atualizar_configuracoes(self, campos: dict[str, bool], *, ator_id: str) -> Configuracoes:
         """Grava só os flags informados. A auditoria sai do trigger do banco."""
@@ -520,3 +528,87 @@ class Repositorio(Protocol):
         ...
 
     def purgar_notificacoes(self, dias: int = 90) -> int: ...
+
+    # -- web push (migration 20261120120000; RPCs só service_role) --------------------------
+    def registrar_inscricao_push(
+        self, usuario_id: str, endpoint: str, p256dh: str, auth: str
+    ) -> None:
+        """Cria ou reatribui o endpoint ao usuário (um endpoint pertence a um usuário por vez)."""
+        ...
+
+    def revogar_inscricao_push(self, usuario_id: str, endpoint: str) -> None:
+        """Revoga só a inscrição do próprio usuário; endpoint alheio ou ausente não muda nada."""
+        ...
+
+    def listar_inscricoes_push(self, usuario_id: str) -> list[dict[str, Any]]:
+        """Inscrições ativas: [{id, endpoint, p256dh, auth}]."""
+        ...
+
+    def marcar_resultado_inscricao_push(
+        self, inscricao_id: str, ok: bool, expirada: bool
+    ) -> None: ...
+
+    def reservar_push_notificacao(self, limite: int) -> list[dict[str, Any]]:
+        """Lote de notificações a enviar (FOR UPDATE SKIP LOCKED)."""
+        ...
+
+    def marcar_push_notificacao(
+        self, notificacao_id: str, status: str, codigo: str | None = None
+    ) -> None: ...
+
+    def purgar_inscricoes_push(self) -> int: ...
+
+    # -- passkeys / WebAuthn (migration 20261122120000; RPCs só service_role) -----------------
+    # Binários sempre como texto base64url. Credential ID, chave e desafio são sensíveis: nunca
+    # vão a log. O usuário vem sempre do JWT; o banco filtra por dono (anti-IDOR).
+    def criar_desafio_webauthn(self, usuario_id: str, tipo: str) -> tuple[str, str]:
+        """(id, desafio base64url de 32 bytes). `tipo`: registro | autenticacao. Validade 5 min."""
+        ...
+
+    def consumir_desafio_webauthn(self, desafio_id: str, usuario_id: str, tipo: str) -> str | None:
+        """Atômico e de uso único. None = inexistente, expirado, usado, de outro usuário/tipo."""
+        ...
+
+    def registrar_credencial_webauthn(
+        self,
+        usuario_id: str,
+        credential_id: str,
+        chave_publica: str,
+        contador: int,
+        transportes: list[str] | None,
+        apelido: str | None,
+    ) -> str:
+        """Devolve o id interno. Limite de 10 ativas e duplicidade viram erros de API."""
+        ...
+
+    def credenciais_ativas_webauthn(self, usuario_id: str) -> list[dict[str, Any]]:
+        """[{id, credential_id, transportes, apelido, criada_em, ultimo_uso_em}]; sem a chave."""
+        ...
+
+    def buscar_credencial_webauthn(
+        self, usuario_id: str, credential_id: str
+    ) -> dict[str, Any] | None:
+        """{id, chave_publica, contador} só se ativa e do usuário; senão None."""
+        ...
+
+    def atualizar_contador_webauthn(self, credencial_id: str, novo: int) -> bool:
+        """False = regressão (possível clone) ou credencial inexistente/revogada."""
+        ...
+
+    def revogar_credencial_webauthn(self, usuario_id: str, credencial_id: str) -> bool:
+        """False = inexistente, alheia ou já revogada (mesma resposta)."""
+        ...
+
+    def registrar_reautenticacao_webauthn(self, usuario_id: str, sessao: str) -> str:
+        """Grava a janela de 5 min para (usuário, session_id do JWT); devolve `valido_ate`."""
+        ...
+
+    def reautenticacao_valida_webauthn(self, usuario_id: str, sessao: str) -> bool: ...
+
+    def registrar_evento_webauthn(self, usuario_id: str, evento: str, codigo: str) -> None:
+        """Auditoria de falha: `evento` na allowlist do banco, `codigo` ^[a-z_]{1,40}$."""
+        ...
+
+    def purgar_webauthn(self) -> int:
+        """Remove desafios e reautenticações vencidos há mais de 1 dia."""
+        ...

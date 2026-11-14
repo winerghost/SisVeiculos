@@ -11,6 +11,7 @@ import { DadosViagem } from '@/components/cartao-viagem';
 import { BotoesAcao } from '@/components/cartao-requisicao';
 import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { StatusChip } from '@/components/ui/status-chip';
 
 function Detalhe({ id }: { id: string }) {
@@ -21,7 +22,8 @@ function Detalhe({ id }: { id: string }) {
 
   if (viagem.carregando) {
     return (
-      <p role="status" className="text-texto-2">
+      <p role="status" className="flex items-center gap-2 text-texto-2">
+        <Spinner />
         Carregando...
       </p>
     );
@@ -58,6 +60,7 @@ function Detalhe({ id }: { id: string }) {
       <BotoesAcao
         req={v}
         ocupado={acao.ocupado}
+        acaoEmAndamento={acao.emAndamento?.id === v.id ? acao.emAndamento.acao : null}
         onAcao={(rq, a, c) => void acao.executar(rq, a, c)}
         aoRegistrarChecklist={viagem.recarregar}
       />

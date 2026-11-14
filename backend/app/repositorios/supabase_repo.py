@@ -71,7 +71,8 @@ MSG_VEICULO_OCUPADO = (
 COLUNAS_CONFIG = (
     "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
     "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao,"
-    "vigilante_km,autorizador_decide_propria,autorizador_km"
+    "vigilante_km,autorizador_decide_propria,autorizador_km,notificacao_push,"
+    "indicador_conectividade,feedback_tatil,leitor_qr_veiculos,voz_campos,passkeys"
 )
 
 
@@ -132,6 +133,12 @@ def _configuracoes(r: dict[str, Any]) -> Configuracoes:
         vigilante_km=bool(r.get("vigilante_km")),
         autorizador_decide_propria=bool(r.get("autorizador_decide_propria")),
         autorizador_km=bool(r.get("autorizador_km")),
+        notificacao_push=bool(r.get("notificacao_push")),
+        indicador_conectividade=bool(r.get("indicador_conectividade")),
+        feedback_tatil=bool(r.get("feedback_tatil")),
+        leitor_qr_veiculos=bool(r.get("leitor_qr_veiculos")),
+        voz_campos=bool(r.get("voz_campos")),
+        passkeys=bool(r.get("passkeys")),
     )
 
 
@@ -146,7 +153,7 @@ COLUNAS_CONVITE = (
     "id,email,role,unidade,criado_por,criado_em,expira_em,usado_em,usado_por,"
     "revogado_em,revogado_por"
 )
-COLUNAS_VEICULO_ADMIN = "id,descricao,placa,ativo,criado_em,atualizado_em"
+COLUNAS_VEICULO_ADMIN = "id,descricao,placa,ativo,criado_em,atualizado_em,codigo_publico"
 _SET_PERFIL = frozenset(COLUNAS_PERFIL_ADMIN.split(","))
 _SET_CONVITE = frozenset(COLUNAS_CONVITE.split(","))
 _SET_VEICULO = frozenset(COLUNAS_VEICULO_ADMIN.split(","))
@@ -321,6 +328,25 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return RequisicaoInvalida(MSG_CHECKLIST_INVALIDO, "checklist_invalido")
     if codigo == "22P02" and "nivel_combustivel" in texto:
         return RequisicaoInvalida("Nível de combustível inválido.", "checklist_invalido")
+    if codigo == "AG050":  # passkey: parâmetros inválidos (mensagem fixa, sem eco)
+        return RequisicaoInvalida("Dados da passkey inválidos.", "passkey_invalida")
+    if codigo == "AG051":  # passkey: perfil inexistente ou inativo
+        return SemPermissao("Conta sem acesso ao sistema.", codigo="conta_inativa")
+    if codigo == "AG052":
+        return Conflito(
+            "Você atingiu o limite de 10 passkeys ativas. Revogue uma para cadastrar outra.",
+            "passkey_limite",
+        )
+    if codigo == "AG053":
+        return ErroApi(
+            "Muitas tentativas com passkeys. Tente novamente mais tarde.",
+            "passkey_muitas_tentativas",
+            429,
+        )
+    if codigo == "AG054":
+        return RequisicaoInvalida("Não foi possível validar a passkey.", "passkey_invalida")
+    if codigo == "AG055":
+        return Conflito("Esta passkey já está cadastrada.", "passkey_ja_cadastrada")
     if codigo == "AG001":
         return TransicaoInvalida("A requisição não está em um estado que permita esta ação.")
     if codigo == "AG002":
@@ -477,6 +503,17 @@ class SupabaseRepositorio:
             lambda: self._c.table("veiculos")
             .select(COLUNAS_VEICULO_ADMIN)
             .eq("id", veiculo_id)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+    def obter_veiculo_ativo_por_codigo(self, codigo: str) -> dict[str, Any] | None:
+        res = _exec(
+            lambda: self._c.table("veiculos")
+            .select("id,descricao,placa")  # nunca devolve o próprio código
+            .eq("codigo_publico", codigo)
+            .eq("ativo", True)
             .limit(1)
             .execute()
         )
@@ -1045,6 +1082,156 @@ class SupabaseRepositorio:
         dados = self._rpc_dict("purgar_notificacoes", {"p_dias": dias}, escrita=True)
         return int(dados) if isinstance(dados, int) and not isinstance(dados, bool) else 0
 
+    # -- web push (RPCs só service_role; endpoint e chaves nunca vão a log) ---------------------
+    def registrar_inscricao_push(
+        self, usuario_id: str, endpoint: str, p256dh: str, auth: str
+    ) -> None:
+        self._rpc_dict(
+            "registrar_inscricao_push",
+            {"p_usuario": usuario_id, "p_endpoint": endpoint, "p_p256dh": p256dh, "p_auth": auth},
+            escrita=True,
+        )
+
+    def revogar_inscricao_push(self, usuario_id: str, endpoint: str) -> None:
+        self._rpc_dict(
+            "revogar_inscricao_push",
+            {"p_usuario": usuario_id, "p_endpoint": endpoint},
+            escrita=True,
+        )
+
+    def listar_inscricoes_push(self, usuario_id: str) -> list[dict[str, Any]]:
+        dados = self._rpc_dict("listar_inscricoes_push", {"p_usuario": usuario_id})
+        return [dict(i) for i in dados] if isinstance(dados, list) else []
+
+    def marcar_resultado_inscricao_push(self, inscricao_id: str, ok: bool, expirada: bool) -> None:
+        self._rpc_dict(
+            "marcar_resultado_inscricao_push",
+            {"p_id": inscricao_id, "p_ok": ok, "p_expirada": expirada},
+            escrita=True,
+        )
+
+    def reservar_push_notificacao(self, limite: int) -> list[dict[str, Any]]:
+        dados = self._rpc_dict("reservar_push_notificacao", {"p_limite": limite}, escrita=True)
+        return [dict(i) for i in dados] if isinstance(dados, list) else []
+
+    def marcar_push_notificacao(
+        self, notificacao_id: str, status: str, codigo: str | None = None
+    ) -> None:
+        self._rpc_dict(
+            "marcar_push_notificacao",
+            {"p_id": notificacao_id, "p_status": status, "p_codigo": codigo},
+            escrita=True,
+        )
+
+    def purgar_inscricoes_push(self) -> int:
+        dados = self._rpc_dict("purgar_inscricoes_push", {}, escrita=True)
+        return int(dados) if isinstance(dados, int) and not isinstance(dados, bool) else 0
+
+    # -- passkeys / WebAuthn (credential_id, chave e desafio nunca vão a log) ------------------
+    def criar_desafio_webauthn(self, usuario_id: str, tipo: str) -> tuple[str, str]:
+        dados = self._rpc_dict(
+            "criar_desafio_webauthn", {"p_usuario": usuario_id, "p_tipo": tipo}, escrita=True
+        )
+        linha = dados[0] if isinstance(dados, list) and dados else dados
+        if (
+            not isinstance(linha, dict)
+            or not isinstance(linha.get("id"), str)
+            or not isinstance(linha.get("desafio"), str)
+        ):
+            log.error("erro_banco resposta_invalida rpc=criar_desafio_webauthn")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return linha["id"], linha["desafio"]
+
+    def consumir_desafio_webauthn(self, desafio_id: str, usuario_id: str, tipo: str) -> str | None:
+        dados = self._rpc_dict(
+            "consumir_desafio_webauthn",
+            {"p_id": desafio_id, "p_usuario": usuario_id, "p_tipo": tipo},
+            escrita=True,
+        )
+        return dados if isinstance(dados, str) and dados else None
+
+    def registrar_credencial_webauthn(
+        self,
+        usuario_id: str,
+        credential_id: str,
+        chave_publica: str,
+        contador: int,
+        transportes: list[str] | None,
+        apelido: str | None,
+    ) -> str:
+        dados = self._rpc_dict(
+            "registrar_credencial_webauthn",
+            {
+                "p_usuario": usuario_id,
+                "p_credential_id": credential_id,
+                "p_chave_publica": chave_publica,
+                "p_contador": contador,
+                "p_transportes": transportes,
+                "p_apelido": apelido,
+            },
+            escrita=True,
+        )
+        if not isinstance(dados, str) or not dados:
+            log.error("erro_banco resposta_invalida rpc=registrar_credencial_webauthn")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return dados
+
+    def credenciais_ativas_webauthn(self, usuario_id: str) -> list[dict[str, Any]]:
+        dados = self._rpc_dict("credenciais_ativas_webauthn", {"p_usuario": usuario_id})
+        return [dict(i) for i in dados if isinstance(i, dict)] if isinstance(dados, list) else []
+
+    def buscar_credencial_webauthn(
+        self, usuario_id: str, credential_id: str
+    ) -> dict[str, Any] | None:
+        dados = self._rpc_dict(
+            "buscar_credencial_webauthn",
+            {"p_usuario": usuario_id, "p_credential_id": credential_id},
+        )
+        linha = dados[0] if isinstance(dados, list) and dados else None
+        return dict(linha) if isinstance(linha, dict) else None
+
+    def atualizar_contador_webauthn(self, credencial_id: str, novo: int) -> bool:
+        dados = self._rpc_dict(
+            "atualizar_contador_webauthn", {"p_id": credencial_id, "p_novo": novo}, escrita=True
+        )
+        return dados is True
+
+    def revogar_credencial_webauthn(self, usuario_id: str, credencial_id: str) -> bool:
+        dados = self._rpc_dict(
+            "revogar_credencial_webauthn",
+            {"p_usuario": usuario_id, "p_id": credencial_id},
+            escrita=True,
+        )
+        return dados is True
+
+    def registrar_reautenticacao_webauthn(self, usuario_id: str, sessao: str) -> str:
+        dados = self._rpc_dict(
+            "registrar_reautenticacao_webauthn",
+            {"p_usuario": usuario_id, "p_sessao": sessao},
+            escrita=True,
+        )
+        if not isinstance(dados, str) or not dados:
+            log.error("erro_banco resposta_invalida rpc=registrar_reautenticacao_webauthn")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return dados
+
+    def reautenticacao_valida_webauthn(self, usuario_id: str, sessao: str) -> bool:
+        dados = self._rpc_dict(
+            "reautenticacao_valida_webauthn", {"p_usuario": usuario_id, "p_sessao": sessao}
+        )
+        return dados is True
+
+    def registrar_evento_webauthn(self, usuario_id: str, evento: str, codigo: str) -> None:
+        self._rpc_dict(
+            "registrar_evento_webauthn",
+            {"p_usuario": usuario_id, "p_evento": evento, "p_codigo": codigo},
+            escrita=True,
+        )
+
+    def purgar_webauthn(self) -> int:
+        dados = self._rpc_dict("purgar_webauthn", {}, escrita=True)
+        return int(dados) if isinstance(dados, int) and not isinstance(dados, bool) else 0
+
     def obter_envio_email(self, envio_id: str) -> dict[str, Any] | None:
         res = _exec(
             lambda: self._c.table("envios_email")
@@ -1435,6 +1622,19 @@ class SupabaseRepositorio:
             admin=True,
         )
         return _so(res.data[0], _SET_VEICULO) if res.data else None
+
+    def rotacionar_codigo_veiculo(self, veiculo_id: str, *, ator_id: str) -> str | None:
+        res = _exec(
+            lambda: self._c.rpc(
+                "rotacionar_codigo_veiculo", {"p_veiculo": veiculo_id, "p_ator": ator_id}
+            ).execute(),
+            repetir_lock=True,
+            admin=True,
+        )
+        dado = res.data[0] if isinstance(res.data, list) and res.data else res.data
+        if isinstance(dado, dict):  # RPC que devolve linha: {"rotacionar_codigo_veiculo": "..."}
+            dado = next(iter(dado.values()), None)
+        return dado if isinstance(dado, str) and dado else None
 
     def atualizar_configuracoes(self, campos: dict[str, bool], *, ator_id: str) -> Configuracoes:
         res = _exec(

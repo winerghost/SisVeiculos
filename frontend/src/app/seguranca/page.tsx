@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/app-shell';
 import { FotoPerfil } from '@/components/foto-perfil';
 import { CadastroTotp } from '@/components/cadastro-totp';
+import { GerenciarPasskeys } from '@/components/gerenciar-passkeys';
 import { Alerta } from '@/components/ui/alert';
 
 /** Segurança da conta: cadastro do autenticador TOTP (SDK do Supabase). */
@@ -53,6 +54,7 @@ function Conteudo() {
           <CadastroTotp aoConcluir={() => setFatores(1)} />
         </section>
       )}
+      <GerenciarPasskeys />
     </>
   );
 }

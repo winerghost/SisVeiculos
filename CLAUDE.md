@@ -14,6 +14,8 @@ Dados de servidores e deslocamentos oficiais: tratar como sensíveis (LGPD). Idi
 - Backend: Python 3.12 + Flask (factory + blueprints sob `/api`; regra de negócio em `services/`, nunca nas rotas).
 - Banco/Auth: Supabase hospedado (Postgres + Auth). O front usa o SDK só para login; os dados passam pelo Flask.
 - Automação: n8n externo via webhook (só notifica e agrega; nunca decide autorização). Webhook autenticado por token, chamado de forma assíncrona pelo backend. Infra: Docker com imagens Alpine. CI: GitHub Actions.
+- Webhook n8n: saída e chegada enviam o conjunto completo de dados (requisição inteira, veículo, nomes, km, localização e checklist sem fotos), por aprovação expressa do dono do projeto; os demais eventos seguem mínimos.
+- Todo campo novo (coluna/recurso) em requisição, checklist, km, localização etc. DEVE ser repassado ao webhook em saída/chegada; incluir no payload e no teste de regressão do webhook na mesma mudança.
 - Trade-offs: Front→Flask→Supabase centraliza regras e secrets ao custo de um serviço a mais. Conflito de horário no banco (exclusion constraint) é seguro contra concorrência, mas exige `btree_gist`. Export estático é leve e compatível com Capacitor, mas `NEXT_PUBLIC_*` fica embutido no build.
 
 ## Contas e perfis (role vem de `perfis` no banco, nunca do cliente)
@@ -46,6 +48,8 @@ Só abre requisição se o veículo estiver livre. Decisão: uma requisição ab
 - Abastecimento e manutenção: ligado, registra abastecimentos e manutenções por veículo, com alerta de revisão por km (exige Quilometragem ligada).
 - Checklist: ligado, é obrigatório na saída e na chegada (avarias, combustível, fotos). Fotos em Storage privado do Supabase com URL assinada.
 - MFA: ligado, o login de `admin` e `autorizador` exige segundo fator (TOTP do Supabase Auth); a verificação é feita no backend. `solicitante` segue só com senha. Desligado, vale só senha para todos.
+- Notificações push (Web Push, sem Capacitor): ligado, o backend envia avisos genéricos (sem dados da requisição) aos aparelhos inscritos; exige chaves VAPID no servidor, HTTPS e, no iOS/iPadOS 16.4+, o PWA na tela inicial. Os destinatários vêm das notificações internas (regras do banco); não depende do n8n. Novos tipos de notificação não podem levar dados pessoais ao push.
+- Passkeys (WebAuthn, 1ª etapa): ligado, o usuário cadastra passkeys e as usa para reautenticação; o Supabase Auth segue como único emissor de JWT e o login por senha não muda; a verificação criptográfica é do Flask; exige HTTPS e WEBAUTHN_* no servidor.
 - Desligar um recurso nunca apaga dados já gravados.
 
 ## Banco
@@ -56,7 +60,7 @@ Só abre requisição se o veículo estiver livre. Decisão: uma requisição ab
 - Nunca commitar segredos. `service_role` só no backend; no front, apenas URL e `anon key`. gitleaks no CI.
 - Validar JWT (assinatura, exp, aud, iss) em toda rota protegida; checar role no servidor; filtrar por dono (anti-IDOR).
 - CORS restrito, rate limit em login e criação, CSP no nginx do frontend e HSTS no Cloudflare, IP real do cliente via `CF-Connecting-IP`, payload limitado, SQL parametrizado, saída sanitizada.
-- LGPD: coletar o mínimo, sem dados pessoais em logs, n8n ou IA sem aprovação. Confirmar a política de segurança da AGU antes de produção.
+- LGPD: coletar o mínimo, sem dados pessoais em logs, n8n ou IA sem aprovação (exceção aprovada: saída/chegada no n8n, ver Stack). Confirmar a política de segurança da AGU antes de produção.
 - `pip-audit`, `npm audit`, Trivy; containers não-root, read-only e com versões fixadas. Alpine por padrão; usar `slim` só se uma dependência falhar em musl, informando o motivo.
 
 ## PWA e visual

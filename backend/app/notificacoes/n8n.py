@@ -4,8 +4,12 @@ Garantias:
 - Desligado por padrão: sem URL ou sem token o notificador é um no-op.
 - Assíncrono e best-effort: fila em memória + uma thread; `notificar` nunca bloqueia nem lança.
 - Entrega at-most-once por processo (se o processo cair, eventos na fila se perdem).
-- Payload mínimo, montado por allowlist (sem nome, e-mail, trajeto, placa, km, fotos, ids de
-  pessoas). Ver `montar_payload`.
+- Payload mínimo por padrão, montado por allowlist (sem nome, e-mail, trajeto, placa, km, fotos,
+  ids de pessoas). Exceção APROVADA pelo dono do projeto (LGPD): em `requisicao.saida` e
+  `requisicao.chegada` o serviço envia também `detalhes` (dados completos da viagem; versão 2).
+  A exceção aprovada inclui ids de pessoas (com nome), texto livre (`descricao_avarias`,
+  `observacao`, `trajeto`) e coordenadas da localização. Nunca segue token, URL assinada, caminho
+  de Storage, e-mail, CPF nem telefone (denylist por substring no serviço). Ver `montar_payload`.
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
 - Assinatura: `X-Assinatura: sha256=HMAC(chave, "<timestamp>.<corpo>")` e `X-Timestamp`
   (segundos Unix) para o n8n rejeitar replay. A chave é `N8N_HMAC_SECRET`; se ausente, cai no
@@ -39,6 +43,7 @@ import httpx
 log = logging.getLogger(__name__)
 
 VERSAO_PAYLOAD = 1
+VERSAO_PAYLOAD_DETALHES = 2
 EVENTOS = frozenset(
     {
         "requisicao.criada",
@@ -60,7 +65,9 @@ _MSG_PUBLICO = "N8N_WEBHOOK_URL deve apontar para um host público."
 
 
 class Notificador(Protocol):
-    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+    def notificar(
+        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+    ) -> None:
         """Nunca bloqueia e nunca lança."""
         ...
 
@@ -70,7 +77,9 @@ class Notificador(Protocol):
 class NotificadorNulo:
     """No-op (integração desligada)."""
 
-    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+    def notificar(
+        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+    ) -> None:
         return None
 
     def fechar(self) -> None:
@@ -145,12 +154,16 @@ def validar_url_webhook(url: str, hosts_permitidos: Iterable[str] = ()) -> None:
 
 
 def montar_payload(
-    evento: str, requisicao: dict[str, Any], evento_id: str | None = None
+    evento: str,
+    requisicao: dict[str, Any],
+    evento_id: str | None = None,
+    detalhes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Payload mínimo por allowlist: nada além destes campos sai do backend.
+    """Payload mínimo por allowlist; com `detalhes` (só saída e chegada) acrescenta o bloco
+    completo aprovado e sobe a versão para 2.
 
     `evento_id` (uuid4) é estável por evento; o n8n deduplica por ele."""
-    return {
+    payload: dict[str, Any] = {
         "evento": evento,
         "evento_id": evento_id or str(uuid.uuid4()),
         "requisicao_id": requisicao.get("id"),
@@ -158,6 +171,10 @@ def montar_payload(
         "ocorrido_em": datetime.now(UTC).isoformat(),
         "versao": VERSAO_PAYLOAD,
     }
+    if detalhes:
+        payload["detalhes"] = detalhes
+        payload["versao"] = VERSAO_PAYLOAD_DETALHES
+    return payload
 
 
 class N8nWebhook:
@@ -198,15 +215,18 @@ class N8nWebhook:
         return "N8nWebhook()"
 
     # -- API pública ---------------------------------------------------------------
-    def notificar(self, evento: str, requisicao: dict[str, Any]) -> None:
+    def notificar(
+        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+    ) -> None:
         try:
             if evento not in EVENTOS or self._parar.is_set():
                 return
             evento_id = str(uuid.uuid4())  # gerado uma vez; reutilizado nas retentativas
             corpo = json.dumps(
-                montar_payload(evento, requisicao, evento_id),
+                montar_payload(evento, requisicao, evento_id, detalhes),
                 separators=(",", ":"),
                 ensure_ascii=False,
+                default=str,  # datetime/UUID/Decimal vindos do banco
             ).encode()
             with self._cond:
                 if len(self._fila) >= self._max_fila:

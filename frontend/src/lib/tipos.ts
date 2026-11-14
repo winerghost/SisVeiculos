@@ -313,6 +313,8 @@ export interface VeiculoAdmin {
   placa: string | null;
   ativo: boolean;
   requisicao_aberta: boolean;
+  /** Código opaco do QR; só o admin recebe (a API o envia sempre a ele). */
+  codigo_publico?: string | null;
   acoes_permitidas: string[];
 }
 
@@ -697,4 +699,53 @@ export interface ListaNotificacoes {
   itens: Notificacao[];
   total: number;
   nao_lidas: number;
+}
+
+/** GET /api/push/config: habilitado = recurso ligado e VAPID configurado no servidor. */
+export interface PushConfig {
+  habilitado: boolean;
+  chave_publica: string | null;
+}
+
+/** Inscrição Web Push (PushSubscription.toJSON) enviada ao servidor. */
+export interface InscricaoPush {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+/** Passkey (WebAuthn) do usuário: só metadados; nunca chave nem credential_id. */
+export interface Passkey {
+  id: string;
+  apelido: string | null;
+  criada_em: string;
+  ultimo_uso_em: string | null;
+  transportes?: string[];
+  /** Ações por item decididas pela API (ex.: "revogar"). */
+  acoes_permitidas: string[];
+}
+
+/** GET /api/passkeys. Ações ("cadastrar", "reautenticar") e estados vêm da API. */
+export interface ListaPasskeys {
+  itens: Passkey[];
+  limite: number;
+  exige_passkey: boolean;
+  identidade_confirmada: boolean;
+  acoes_permitidas: string[];
+}
+
+/** Opções WebAuthn em JSON (binários em base64url), como entregues pela API. */
+export type OpcoesWebAuthn = Record<string, unknown>;
+
+/** Resposta de opções de passkey: as opções podem vir na raiz ou em `opcoes`. */
+export type RespostaOpcoesPasskey = OpcoesWebAuthn & { opcoes?: OpcoesWebAuthn };
+
+/** Credencial serializada (binários em base64url) enviada de volta para confirmação. */
+export interface CredencialSerializada {
+  id: string;
+  rawId: string;
+  type: string;
+  response: Record<string, string | null>;
+  transports?: string[];
+  clientExtensionResults?: Record<string, unknown>;
+  authenticatorAttachment?: string | null;
 }

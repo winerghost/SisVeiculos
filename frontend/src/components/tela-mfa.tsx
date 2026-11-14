@@ -8,6 +8,7 @@ import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 
 /**
  * Verificação do segundo fator (TOTP do Supabase Auth). Só é exibida quando a API
@@ -36,14 +37,21 @@ export function TelaMfa() {
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
+    if (enviando) return;
     setEnviando(true);
-    setErro(await verificarMfa(codigo.trim()));
-    setEnviando(false);
+    try {
+      setErro(await verificarMfa(codigo.trim()));
+    } catch {
+      setErro('Não foi possível verificar o código. Tente novamente.');
+    } finally {
+      setEnviando(false);
+    }
   }
 
   if (semFator === null) {
     return (
-      <div role="status" className="flex min-h-dvh items-center justify-center text-texto-2">
+      <div role="status" className="flex min-h-dvh items-center justify-center gap-2 text-texto-2">
+        <Spinner />
         Carregando...
       </div>
     );
@@ -81,8 +89,8 @@ export function TelaMfa() {
                 aria-invalid={erro ? true : undefined}
               />
             </div>
-            <Button type="submit" tamanho="cheio" disabled={enviando}>
-              Verificar
+            <Button type="submit" tamanho="cheio" carregando={enviando}>
+              {enviando ? 'Verificando...' : 'Verificar'}
             </Button>
             <Button type="button" variante="contorno" tamanho="cheio" onClick={() => void sair()}>
               Sair

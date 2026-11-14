@@ -19,13 +19,14 @@ class ServicoVeiculosAdmin:
 
     @staticmethod
     def _acoes(v: dict[str, Any]) -> list[str]:
-        return ["editar", "desativar"] if v["ativo"] else ["editar", "ativar"]
+        return ["editar", "desativar" if v["ativo"] else "ativar", "rotacionar_codigo"]
 
     def _apresentar(self, itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ocupados = self._repo.veiculos_ocupados()
         return [
             {
                 **v,
+                "codigo_publico": v.get("codigo_publico"),  # só admin chega aqui
                 # Informativo para o admin: desativar não cancela requisição em andamento.
                 "requisicao_aberta": v["id"] in ocupados,
                 "acoes_permitidas": self._acoes(v),
@@ -65,6 +66,16 @@ class ServicoVeiculosAdmin:
         if atualizado is None:
             raise NaoEncontrado("Veículo não encontrado.")
         return self._apresentar([atualizado])[0]
+
+    def rotacionar_codigo(self, admin: Perfil, veiculo_id: str) -> dict[str, Any]:
+        """Gera novo código público (o QR impresso antigo deixa de valer). A auditoria sai da
+        própria RPC (ator = admin do JWT)."""
+        exigir_admin(admin)
+        atual = self._carregar(veiculo_id)
+        novo = self._repo.rotacionar_codigo_veiculo(atual["id"], ator_id=admin.id)
+        if novo is None:
+            raise NaoEncontrado("Veículo não encontrado.")
+        return {"id": atual["id"], "codigo_publico": novo}
 
     def _definir_ativo(self, admin: Perfil, veiculo_id: str, ativo: bool) -> dict[str, Any]:
         exigir_admin(admin)

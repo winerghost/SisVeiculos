@@ -154,6 +154,8 @@ def create_app(
     from app.rotas.convites import convites
     from app.rotas.dashboards import dashboards
     from app.rotas.notificacoes import notificacoes
+    from app.rotas.passkeys import passkeys
+    from app.rotas.push import push
     from app.rotas.relatorios import relatorios
     from app.rotas.saudacao import saudacao, saudacao_admin
 
@@ -163,6 +165,8 @@ def create_app(
     app.register_blueprint(dashboards)
     app.register_blueprint(relatorios)
     app.register_blueprint(notificacoes)
+    app.register_blueprint(push)
+    app.register_blueprint(passkeys)
     app.register_blueprint(saudacao)
     app.register_blueprint(saudacao_admin)
 

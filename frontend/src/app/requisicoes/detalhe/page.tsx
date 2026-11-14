@@ -14,6 +14,7 @@ import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
 import { LocalizacaoRegistroSecao } from '@/components/localizacao-registro';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { HoraSaida } from '@/components/ui/hora-saida';
 import { StatusChip } from '@/components/ui/status-chip';
 
@@ -25,7 +26,8 @@ function Detalhe({ id }: { id: string }) {
 
   if (req.carregando) {
     return (
-      <p role="status" className="text-texto-2">
+      <p role="status" className="flex items-center gap-2 text-texto-2">
+        <Spinner />
         Carregando...
       </p>
     );
@@ -85,6 +87,7 @@ function Detalhe({ id }: { id: string }) {
       <BotoesAcao
         req={r}
         ocupado={acao.ocupado}
+        acaoEmAndamento={acao.emAndamento?.id === r.id ? acao.emAndamento.acao : null}
         onAcao={(rq, a, c) => void acao.executar(rq, a, c)}
         aoRegistrarChecklist={req.recarregar}
       />

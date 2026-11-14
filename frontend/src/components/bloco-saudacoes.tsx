@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,18 +30,26 @@ export function BlocoSaudacoes() {
   const [ocasiaoNova, setOcasiaoNova] = React.useState('');
   const [ocasiaoGerar, setOcasiaoGerar] = React.useState('');
   const [aviso, setAviso] = React.useState<string | null>(null);
+  // Qual botão disparou o envio (só ele mostra o spinner; os demais só ficam desabilitados).
+  const [clicado, setClicado] = React.useState<string | null>(null);
 
   const ocasioes = lista.dados?.ocasioes ?? [];
 
   async function decidir(id: string, acao: 'aprovar' | 'rejeitar') {
+    if (envio.ocupado) return;
     setAviso(null);
+    setClicado(`${id}:${acao}`);
     const r = await envio.executar(() => admin.decidirSaudacao(id, acao));
+    setClicado(null);
     if (r.ok) await lista.recarregar();
   }
 
   async function excluir(id: string) {
+    if (envio.ocupado) return;
     setAviso(null);
+    setClicado(`${id}:excluir`);
     const r = await envio.executar(() => admin.excluirSaudacao(id));
+    setClicado(null);
     if (r.ok) await lista.recarregar();
   }
 
@@ -48,10 +57,13 @@ export function BlocoSaudacoes() {
     e.preventDefault();
     const form = e.currentTarget;
     const texto = String(new FormData(form).get('texto') ?? '').trim();
+    if (envio.ocupado) return;
     setAviso(null);
+    setClicado('adicionar');
     const r = await envio.executar(() =>
       admin.criarSaudacao({ ocasiao: ocasiaoNova || ocasioes[0] || '', texto }),
     );
+    setClicado(null);
     if (!r.ok) return;
     form.reset();
     setAviso('Frase adicionada.');
@@ -62,10 +74,13 @@ export function BlocoSaudacoes() {
   async function gerar(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const quantidade = Number(new FormData(e.currentTarget).get('quantidade'));
+    if (envio.ocupado) return;
     setAviso(null);
+    setClicado('gerar');
     const r = await envio.executar(() =>
       admin.gerarSaudacoes({ ocasiao: ocasiaoGerar || ocasioes[0] || '', quantidade }),
     );
+    setClicado(null);
     if (!r.ok) return;
     setAviso('Frases geradas. Revise-as em Pendentes.');
     if (status === 'pendente') await lista.recarregar();
@@ -109,7 +124,8 @@ export function BlocoSaudacoes() {
       </div>
 
       {lista.carregando ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : lista.dados && lista.dados.itens.length === 0 ? (
@@ -131,20 +147,22 @@ export function BlocoSaudacoes() {
                     {f.acoes_permitidas.includes('aprovar') ? (
                       <Button
                         type="button"
+                        carregando={clicado === `${f.id}:aprovar`}
                         disabled={envio.ocupado}
                         onClick={() => void decidir(f.id, 'aprovar')}
                       >
-                        Aprovar
+                        {clicado === `${f.id}:aprovar` ? 'Aprovando...' : 'Aprovar'}
                       </Button>
                     ) : null}
                     {f.acoes_permitidas.includes('rejeitar') ? (
                       <Button
                         type="button"
                         variante="perigo"
+                        carregando={clicado === `${f.id}:rejeitar`}
                         disabled={envio.ocupado}
                         onClick={() => void decidir(f.id, 'rejeitar')}
                       >
-                        Rejeitar
+                        {clicado === `${f.id}:rejeitar` ? 'Rejeitando...' : 'Rejeitar'}
                       </Button>
                     ) : null}
                     {controle && f.acoes_permitidas.includes('excluir') ? (
@@ -235,8 +253,12 @@ export function BlocoSaudacoes() {
             Use {'{nome}'} onde o nome da pessoa deve aparecer.
           </p>
         </div>
-        <Button type="submit" disabled={envio.ocupado || ocasioes.length === 0}>
-          Adicionar frase
+        <Button
+          type="submit"
+          carregando={clicado === 'adicionar'}
+          disabled={envio.ocupado || ocasioes.length === 0}
+        >
+          {clicado === 'adicionar' ? 'Adicionando...' : 'Adicionar frase'}
         </Button>
       </form>
 
@@ -269,8 +291,13 @@ export function BlocoSaudacoes() {
             defaultValue={3}
           />
         </div>
-        <Button type="submit" variante="contorno" disabled={envio.ocupado || ocasioes.length === 0}>
-          {envio.ocupado ? 'Processando...' : 'Gerar com IA'}
+        <Button
+          type="submit"
+          variante="contorno"
+          carregando={clicado === 'gerar'}
+          disabled={envio.ocupado || ocasioes.length === 0}
+        >
+          {clicado === 'gerar' ? 'Gerando...' : 'Gerar com IA'}
         </Button>
       </form>
     </div>

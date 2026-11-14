@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { dataCurta, dataHora, numero } from '@/lib/formato';
 import type { Acao, CorpoAcao, Requisicao } from '@/lib/tipos';
-import { BotoesAcao, type OnOrganizar } from '@/components/cartao-requisicao';
+import { BotoesAcao, ROTULO_ANDAMENTO, type OnOrganizar } from '@/components/cartao-requisicao';
 import { ItemArrastavel, type PapelGesto } from '@/components/item-arrastavel';
 import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { StatusChip } from '@/components/ui/status-chip';
@@ -51,9 +51,15 @@ export function CartaoViagem({
   onAcao,
   onOrganizar,
   aoRegistrarChecklist,
+  arquivando,
+  acaoEmAndamento,
 }: {
   viagem: Requisicao;
   ocupado: boolean;
+  /** Ação em andamento na API (passada pela página): spinner nos botões. */
+  acaoEmAndamento?: Acao | null;
+  /** Arquivar/desarquivar em andamento: cobertura no cartão e spinner no botão. */
+  arquivando?: boolean;
   onAcao: (req: Requisicao, acao: Acao, corpo?: CorpoAcao) => void;
   /** Arquivar/desarquivar (gesto e botão), só com a ação em `acoes_permitidas`. */
   onOrganizar?: OnOrganizar;
@@ -77,6 +83,15 @@ export function CartaoViagem({
       className="rounded-xl border border-borda bg-white"
       classeInterna="gap-0 p-4"
       ocupado={ocupado}
+      processando={
+        arquivando
+          ? viagem.acoes_permitidas.includes('arquivar')
+            ? 'Arquivando...'
+            : 'Desarquivando...'
+          : acaoEmAndamento
+            ? ROTULO_ANDAMENTO[acaoEmAndamento]
+            : undefined
+      }
       direita={direita}
       esquerda={esquerda}
     >
@@ -97,6 +112,8 @@ export function CartaoViagem({
         ocupado={ocupado}
         onAcao={onAcao}
         onOrganizar={onOrganizar}
+        arquivando={arquivando}
+        acaoEmAndamento={acaoEmAndamento}
         aoRegistrarChecklist={aoRegistrarChecklist}
       />
     </ItemArrastavel>

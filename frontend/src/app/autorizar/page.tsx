@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { AppShell } from '@/components/app-shell';
 import { CartaoRequisicao } from '@/components/cartao-requisicao';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 
 const ABAS: { status: Status; rotulo: string }[] = [
   { status: 'solicitada', rotulo: 'Pendentes' },
@@ -77,7 +78,8 @@ function Painel() {
 
       <div id="painel-lista" role="tabpanel" aria-labelledby={`aba-${aba}`}>
         {listas.carregando ? (
-          <p role="status" className="text-texto-2">
+          <p role="status" className="flex items-center gap-2 text-texto-2">
+            <Spinner />
             Carregando...
           </p>
         ) : itens.length === 0 ? (
@@ -90,6 +92,7 @@ function Painel() {
                 req={r}
                 mostrarSolicitante
                 ocupado={acao.ocupado}
+                acaoEmAndamento={acao.emAndamento?.id === r.id ? acao.emAndamento.acao : null}
                 onAcao={(req, a, c) => void acao.executar(req, a, c)}
                 aoRegistrarChecklist={listas.recarregar}
                 motoristas={motoristas}

@@ -33,6 +33,11 @@ import type {
   NovaRequisicao,
   NovoConvite,
   PainelId,
+  PushConfig,
+  ListaPasskeys,
+  CredencialSerializada,
+  RespostaOpcoesPasskey,
+  InscricaoPush,
   PreviaRelatorio,
   Requisicao,
   RespostaChecklists,
@@ -169,6 +174,9 @@ export const admin = {
     }),
   acaoVeiculo: (id: string, acao: 'ativar' | 'desativar') =>
     chamar<VeiculoAdmin>(`/admin/veiculos/${enc(id)}/${acao}`, JSON_POST()),
+  /** Só com `rotacionar_codigo` em acoes_permitidas; invalida o QR impresso e devolve o novo código. */
+  rotacionarCodigoVeiculo: (id: string) =>
+    chamar<VeiculoAdmin>(`/admin/veiculos/${enc(id)}/rotacionar-codigo`, JSON_POST()),
 
   usuarios: (p: { q?: string; role?: string; ativo?: string; limite: number; offset: number }) =>
     chamar<ListaUsuarios>(`/admin/usuarios${query(p)}`),
@@ -245,6 +253,9 @@ export const api = {
   aceitarConvite: (token: string, nome?: string) =>
     chamar<Eu>('/convites/aceitar', JSON_POST(nome ? { token, nome } : { token })),
   veiculos: () => chamar<{ itens: Veiculo[] }>('/veiculos').then((r) => r.itens),
+  /** Consulta pelo código lido no QR (404 uniforme se não existir). O código vai no corpo (POST), nunca na URL. Ler não autoriza nada. */
+  veiculoPorCodigo: (codigo: string) =>
+    chamar<Veiculo>('/veiculos/por-codigo', JSON_POST({ codigo })),
   /** `arquivadas: true` lista só as arquivadas do usuário; o padrão da API (false) as oculta. */
   requisicoes: (status?: Status, arquivadas?: boolean) =>
     chamar<ListaRequisicoes>(
@@ -321,6 +332,27 @@ export const api = {
   marcarNotificacaoLida: (id: string) =>
     chamar<{ id: string; lida_em: string }>(`/notificacoes/${enc(id)}/lida`, JSON_POST()),
   marcarNotificacoesLidas: () => chamar<{ marcadas: number }>('/notificacoes/lidas', JSON_POST()),
+
+  /** Web Push: a API decide se está habilitado; a chave pública vai ao pushManager.subscribe. */
+  pushConfig: () => chamar<PushConfig>('/push/config'),
+  pushInscrever: (d: InscricaoPush) => chamar<unknown>('/push/inscricoes', JSON_POST(d)),
+  pushRevogar: (endpoint: string) =>
+    chamar<unknown>('/push/inscricoes', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
+    }),
+
+  /** Passkeys (WebAuthn): a API valida tudo; o cliente só repassa as opções e a credencial. */
+  passkeys: () => chamar<ListaPasskeys>('/passkeys'),
+  passkeysOpcoesRegistro: (d: { apelido?: string }) =>
+    chamar<RespostaOpcoesPasskey>('/passkeys/registro/opcoes', JSON_POST(d)),
+  passkeysConfirmarRegistro: (d: { credencial: CredencialSerializada; apelido?: string }) =>
+    chamar<unknown>('/passkeys/registro/confirmar', JSON_POST(d)),
+  passkeysOpcoesAutenticacao: () =>
+    chamar<RespostaOpcoesPasskey>('/passkeys/autenticacao/opcoes', JSON_POST()),
+  passkeysConfirmarAutenticacao: (d: { credencial: CredencialSerializada }) =>
+    chamar<{ reautenticado_ate?: string | null }>('/passkeys/autenticacao/confirmar', JSON_POST(d)),
+  passkeysRevogar: (id: string) => chamar<unknown>(`/passkeys/${enc(id)}`, { method: 'DELETE' }),
 
   /** Checklist (autorizador/admin). As URLs de leitura expiram: recarregue ao abrir. */
   checklists: (id: string) => chamar<RespostaChecklists>(`/requisicoes/${enc(id)}/checklist`),

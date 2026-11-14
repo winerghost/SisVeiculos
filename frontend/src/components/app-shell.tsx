@@ -11,6 +11,7 @@ import {
   FileText,
   ListChecks,
   LogOut,
+  ScanLine,
   Settings,
   ShieldCheck,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ import { Avatar } from '@/components/avatar';
 import { TelaMfa } from '@/components/tela-mfa';
 import { SinoNotificacoes } from '@/components/sino-notificacoes';
 import { Saudacao } from '@/components/saudacao';
+import { IndicadorConexao } from '@/components/indicador-conexao';
 
 function Carregando() {
   return (
@@ -96,6 +98,10 @@ export function AppShell({
   if (relatorios && relatorios.relatorios.length > 0) {
     itens.push({ href: '/relatorios', rotulo: 'Relatórios', icone: <FileText aria-hidden /> });
   }
+  // Só com o recurso ligado pela API (eu.recursos); a própria API também recusa a consulta.
+  if (eu.recursos.leitor_qr_veiculos === true) {
+    itens.push({ href: '/veiculos/ler', rotulo: 'Ler QR', icone: <ScanLine aria-hidden /> });
+  }
   if (permissoes.has('administrar')) {
     itens.push({ href: '/admin', rotulo: 'Admin', icone: <Settings aria-hidden /> });
   }
@@ -114,6 +120,7 @@ export function AppShell({
           <h1 className="min-w-0 flex-1 text-2xl font-semibold">{titulo}</h1>
           <SinoNotificacoes />
         </header>
+        <IndicadorConexao />
         <main className="flex-1 px-5 pt-3 pb-8">{children}</main>
       </div>
     );
@@ -165,6 +172,7 @@ export function AppShell({
           </button>
         </div>
       </header>
+      <IndicadorConexao />
 
       <main className="flex-1 px-5 pt-5 pb-28">
         <Saudacao />

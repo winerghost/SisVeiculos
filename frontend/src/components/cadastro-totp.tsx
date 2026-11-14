@@ -25,52 +25,62 @@ export function CadastroTotp({ aoConcluir }: { aoConcluir: () => void | Promise<
   const [ocupado, setOcupado] = React.useState(false);
 
   async function iniciar() {
+    if (ocupado) return;
     setOcupado(true);
     setErro(null);
-    const auth = supabase().auth;
-    // Fatores não verificados de tentativas anteriores impedem novo cadastro: remove-os antes.
-    const { data: lista } = await auth.mfa.listFactors();
-    for (const f of lista?.all ?? []) {
-      if (f.status === 'unverified') await auth.mfa.unenroll({ factorId: f.id });
-    }
-    const { data, error } = await auth.mfa.enroll({
-      factorType: 'totp',
-      friendlyName: `Autenticador ${new Date().toISOString()}`,
-    });
-    if (error || !data) {
+    try {
+      const auth = supabase().auth;
+      // Fatores não verificados de tentativas anteriores impedem novo cadastro: remove-os antes.
+      const { data: lista } = await auth.mfa.listFactors();
+      for (const f of lista?.all ?? []) {
+        if (f.status === 'unverified') await auth.mfa.unenroll({ factorId: f.id });
+      }
+      const { data, error } = await auth.mfa.enroll({
+        factorType: 'totp',
+        friendlyName: `Autenticador ${new Date().toISOString()}`,
+      });
+      if (error || !data) {
+        setErro('Não foi possível iniciar o cadastro do autenticador. Tente novamente.');
+      } else {
+        setCadastro({ factorId: data.id, qr: data.totp.qr_code, segredo: data.totp.secret });
+      }
+    } catch {
       setErro('Não foi possível iniciar o cadastro do autenticador. Tente novamente.');
-    } else {
-      setCadastro({ factorId: data.id, qr: data.totp.qr_code, segredo: data.totp.secret });
+    } finally {
+      setOcupado(false);
     }
-    setOcupado(false);
   }
 
   async function confirmar(e: React.FormEvent) {
     e.preventDefault();
-    if (!cadastro) return;
+    if (!cadastro || ocupado) return;
     setOcupado(true);
     setErro(null);
-    const { error } = await supabase().auth.mfa.challengeAndVerify({
-      factorId: cadastro.factorId,
-      code: codigo.trim(),
-    });
-    if (error) {
-      setErro('Código inválido ou expirado. Tente novamente.');
+    try {
+      const { error } = await supabase().auth.mfa.challengeAndVerify({
+        factorId: cadastro.factorId,
+        code: codigo.trim(),
+      });
+      if (error) {
+        setErro('Código inválido ou expirado. Tente novamente.');
+        return;
+      }
+      setCadastro(null);
+      setCodigo('');
+      await aoConcluir();
+    } catch {
+      setErro('Não foi possível confirmar o código. Tente novamente.');
+    } finally {
       setOcupado(false);
-      return;
     }
-    setCadastro(null);
-    setCodigo('');
-    setOcupado(false);
-    await aoConcluir();
   }
 
   return (
     <div className="flex flex-col gap-4">
       {erro ? <Alerta>{erro}</Alerta> : null}
       {!cadastro ? (
-        <Button tamanho="cheio" disabled={ocupado} onClick={() => void iniciar()}>
-          Cadastrar autenticador
+        <Button tamanho="cheio" carregando={ocupado} onClick={() => void iniciar()}>
+          {ocupado ? 'Preparando...' : 'Cadastrar autenticador'}
         </Button>
       ) : (
         <form onSubmit={(e) => void confirmar(e)} className="flex flex-col gap-4">
@@ -104,8 +114,8 @@ export function CadastroTotp({ aoConcluir }: { aoConcluir: () => void | Promise<
               aria-invalid={erro ? true : undefined}
             />
           </div>
-          <Button type="submit" tamanho="cheio" disabled={ocupado}>
-            Confirmar cadastro
+          <Button type="submit" tamanho="cheio" carregando={ocupado}>
+            {ocupado ? 'Confirmando...' : 'Confirmar cadastro'}
           </Button>
         </form>
       )}

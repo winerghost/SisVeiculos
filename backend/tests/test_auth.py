@@ -46,6 +46,12 @@ def test_token_valido_carrega_role_do_banco(client, repo, auth):  # type: ignore
         "vigilante_km": False,
         "autorizador_decide_propria": False,
         "autorizador_km": False,
+        "notificacao_push": False,
+        "indicador_conectividade": False,
+        "feedback_tatil": False,
+        "leitor_qr_veiculos": False,
+        "voz_campos": False,
+        "passkeys": False,
     }
 
 

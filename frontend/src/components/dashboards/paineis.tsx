@@ -41,6 +41,7 @@ import {
   TabelaSimples,
 } from '@/components/dashboards/graficos';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { rotuloRole } from '@/components/ui/chip';
 
 const INTERVALO_MS = 30_000;
@@ -50,7 +51,8 @@ const Vazio = ({ children = 'Sem dados no período.' }: { children?: React.React
 );
 
 const Carregando = () => (
-  <p role="status" className="text-texto-2">
+  <p role="status" className="flex items-center gap-2 text-texto-2">
+    <Spinner />
     Carregando...
   </p>
 );
@@ -154,6 +156,7 @@ export function PainelOperacao() {
                   req={r}
                   mostrarSolicitante
                   ocupado={acao.ocupado}
+                  acaoEmAndamento={acao.emAndamento?.id === r.id ? acao.emAndamento.acao : null}
                   onAcao={(req, a, c) => void acao.executar(req, a, c)}
                   aoRegistrarChecklist={recarregar}
                 />

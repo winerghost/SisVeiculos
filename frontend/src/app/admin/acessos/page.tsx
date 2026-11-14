@@ -6,6 +6,7 @@ import { useCarga } from '@/lib/use-carga';
 import { dataHoraNumerica, diaParaIso } from '@/lib/formato';
 import { AdminShell } from '@/components/admin-shell';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -105,7 +106,8 @@ function Conteudo() {
       {acessos.erro ? <Alerta className="mb-4">{acessos.erro}</Alerta> : null}
 
       {acessos.carregando ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : itens.length === 0 ? (

@@ -19,6 +19,8 @@ from app.services.veiculos import ServicoVeiculos
 
 api = Blueprint("api", __name__, url_prefix="/api")
 
+LIMITE_LEITURA_QR = "30 per minute"  # por usuário
+
 
 def _limite_escrita() -> str:
     return deps().config.limite_escrita
@@ -125,6 +127,18 @@ def remover_foto_perfil() -> Any:
 @requer_auth()
 def listar_veiculos() -> Any:
     return jsonify({"itens": ServicoVeiculos(deps().repo).listar()})
+
+
+def _limite_qr() -> str:
+    return LIMITE_LEITURA_QR
+
+
+@api.post("/veiculos/por-codigo")
+@requer_auth()
+@limiter.limit(_limite_qr, key_func=chave_usuario)  # contra enumeração de códigos
+def veiculo_por_codigo() -> Any:
+    # O código vai no corpo (nunca no path): fora dos logs de acesso do gunicorn e do nginx.
+    return jsonify(ServicoVeiculos(deps().repo).por_codigo(request.get_json(silent=True)))
 
 
 @api.get("/requisicoes")

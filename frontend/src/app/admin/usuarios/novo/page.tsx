@@ -27,6 +27,7 @@ function Formulario() {
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
+    if (envio.ocupado) return;
     const r = await envio.executar(() =>
       admin.convidar({
         email: email.trim(),
@@ -118,8 +119,8 @@ function Formulario() {
           onChange={(e) => setValidade(e.target.value)}
         />
       </div>
-      <Button type="submit" tamanho="cheio" disabled={envio.ocupado} className="mt-4">
-        Enviar convite
+      <Button type="submit" tamanho="cheio" carregando={envio.ocupado} className="mt-4">
+        {envio.ocupado ? 'Enviando...' : 'Enviar convite'}
       </Button>
     </form>
   );

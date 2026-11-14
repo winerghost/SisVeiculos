@@ -32,6 +32,12 @@ def test_padrao_tudo_desligado_com_acoes_por_item(client, auth, adm):  # type: i
         "vigilante_km": False,
         "autorizador_decide_propria": False,
         "autorizador_km": False,
+        "notificacao_push": False,
+        "indicador_conectividade": False,
+        "feedback_tatil": False,
+        "leitor_qr_veiculos": False,
+        "voz_campos": False,
+        "passkeys": False,
     }
     assert j["acoes_permitidas"] == ["editar"]
     itens = {i["chave"]: i for i in j["itens"]}
@@ -64,6 +70,12 @@ def test_ligar_audita_e_reflete_em_eu(client, auth, adm, repo):  # type: ignore[
         "vigilante_km": False,
         "autorizador_decide_propria": False,
         "autorizador_km": False,
+        "notificacao_push": False,
+        "indicador_conectividade": False,
+        "feedback_tatil": False,
+        "leitor_qr_veiculos": False,
+        "voz_campos": False,
+        "passkeys": False,
     }
     ev = repo.eventos_de("configuracao_alterada")
     assert sorted((e["detalhes"]["recurso"], e["de"], e["para"], e["ator_id"]) for e in ev) == [
@@ -168,3 +180,55 @@ def test_mfa_exige_segundo_fator_na_sessao_para_ligar(client, auth, auth_aal2, a
     mfa = next(i for i in j["itens"] if i["chave"] == "mfa")
     assert mfa["acoes_permitidas"] == ["desligar"]
     assert put(client, auth_aal2(adm.id), {"mfa": False}).status_code == 200
+
+
+NOVAS_FLAGS = [
+    "indicador_conectividade",
+    "feedback_tatil",
+    "leitor_qr_veiculos",
+    "voz_campos",
+    "passkeys",
+]
+
+
+def test_novas_flags_desligadas_por_padrao_e_no_catalogo(client, auth, adm):  # type: ignore[no-untyped-def]
+    j = client.get("/api/admin/configuracoes", headers=auth(adm.id)).get_json()
+    itens = {i["chave"]: i for i in j["itens"]}
+    for chave in NOVAS_FLAGS:
+        assert j["recursos"][chave] is False
+        assert itens[chave]["habilitado"] is False
+        assert itens[chave]["acoes_permitidas"] == ["ligar"] and itens[chave]["exige"] == []
+        assert itens[chave]["rotulo"] and itens[chave]["descricao"]
+    assert "aprovação" in itens["voz_campos"]["descricao"]
+    assert "senha continua" in itens["passkeys"]["descricao"]
+    assert "não autoriza" in itens["leitor_qr_veiculos"]["descricao"]
+
+
+@pytest.mark.parametrize("chave", NOVAS_FLAGS)
+def test_admin_liga_e_desliga_nova_flag_com_auditoria(client, auth, adm, repo, chave):  # type: ignore[no-untyped-def]
+    h = auth(adm.id)
+    assert put(client, h, {chave: True}).status_code == 200
+    assert repo.config.como_dict()[chave] is True
+    sol = repo.novo_perfil("solicitante")
+    assert client.get("/api/eu", headers=auth(sol.id)).get_json()["recursos"][chave] is True
+    assert put(client, h, {chave: False}).status_code == 200
+    assert client.get("/api/eu", headers=h).get_json()["recursos"][chave] is False
+    ev = repo.eventos_de("configuracao_alterada")
+    assert [(e["detalhes"]["recurso"], e["para"], e["ator_id"]) for e in ev] == [
+        (chave, "true", adm.id),
+        (chave, "false", adm.id),
+    ]
+
+
+@pytest.mark.parametrize("papel", ["solicitante", "autorizador", "motorista", "vigilante"])
+def test_nao_admin_nao_altera_novas_flags(client, auth, repo, papel):  # type: ignore[no-untyped-def]
+    p = repo.novo_perfil(papel)
+    r = put(client, auth(p.id), {"voz_campos": True})
+    assert r.status_code == 403
+    assert repo.config == Configuracoes() and repo.eventos == []
+
+
+@pytest.mark.parametrize("valor", ["sim", 1, None])
+def test_nova_flag_exige_booleano(client, auth, adm, repo, valor):  # type: ignore[no-untyped-def]
+    r = put(client, auth(adm.id), {"passkeys": valor})
+    assert r.status_code == 400 and repo.config == Configuracoes()

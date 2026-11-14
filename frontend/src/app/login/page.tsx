@@ -42,11 +42,17 @@ export default function Login() {
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
+    if (enviando) return;
     setEnviando(true);
     setErro(null);
     setInfo(null);
-    setErro(await entrar(email.trim(), senha));
-    setEnviando(false);
+    try {
+      setErro(await entrar(email.trim(), senha));
+    } catch {
+      setErro('Não foi possível entrar. Tente novamente.');
+    } finally {
+      setEnviando(false);
+    }
   }
 
   async function esqueci() {
@@ -133,8 +139,8 @@ export default function Login() {
               Esqueci minha senha
             </Button>
           </div>
-          <Button type="submit" tamanho="cheio" disabled={enviando}>
-            Entrar
+          <Button type="submit" tamanho="cheio" carregando={enviando}>
+            {enviando ? 'Entrando...' : 'Entrar'}
           </Button>
         </form>
       </div>

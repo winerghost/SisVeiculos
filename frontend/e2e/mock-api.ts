@@ -111,7 +111,68 @@ export interface Opcoes {
   erroHorarioReferencia?: boolean;
   /** A criação responde com este erro da API (ex.: hora_saida_passada). */
   erroCriacao?: { status: number; codigo: string; mensagem: string };
+  /** Liga/desliga eu.recursos.indicador_conectividade (omitido: a chave não vai no objeto). */
+  conectividade?: boolean;
+  /** Liga/desliga eu.recursos.feedback_tatil (omitido: a chave não vai no objeto). */
+  tatil?: boolean;
+  /** Liga/desliga eu.recursos.leitor_qr_veiculos (omitido: a chave não vai no objeto). */
+  leitorQr?: boolean;
+  /** Liga/desliga eu.recursos.voz_campos (omitido: a chave não vai no objeto). */
+  vozCampos?: boolean;
+  /** Ajustes do veículo devolvido por POST /api/veiculos/por-codigo com {"codigo": CODIGO_QR_VALIDO}. */
+  veiculoQr?: {
+    disponivel?: boolean;
+    motivo?: string | null;
+    acoes?: string[];
+    descricao?: string;
+    placa?: string | null;
+  };
+  /** Itens de GET /api/admin/veiculos: `codigo_publico` (undefined = a API não devolve o campo). */
+  adminVeiculosQr?: { codigoPublico?: string | null; acoes?: string[] };
+  /** POST /api/admin/veiculos/<id>/rotacionar-codigo responde com este erro da API. */
+  erroRotacao?: { status: number; codigo: string; mensagem: string };
+  /** Liga/desliga eu.recursos.passkeys (omitido: a chave não vai no objeto). Desligado, /api/passkeys* dá 404. */
+  passkeys?: boolean;
+  /** Ajustes da API fake de passkeys (fase 5). */
+  passkeysApi?: OpcoesPasskeysApi;
 }
+
+type ErroApi = { status: number; codigo: string; mensagem: string };
+
+export interface OpcoesPasskeysApi {
+  /** Passkeys já cadastradas (só metadados, como a API real). */
+  itens?: { id: string; apelido: string | null; criada_em: string; ultimo_uso_em: string | null }[];
+  /** reautenticado_ate inicial (ISO). */
+  reautenticadoAte?: string | null;
+  /** Adicionar exige reautenticação por passkey (403 reautenticacao_requerida nas opções, como no backend). */
+  exigirReautParaAdicionar?: boolean;
+  /** Atraso (ms) em cada resposta, para testar estado ocupado e clique duplo. */
+  atrasoMs?: number;
+  /** Limite de passkeys devolvido pela API (padrão 10). Sem espaço, a API omite "cadastrar". */
+  limite?: number;
+  /** Força `acoes_permitidas` da listagem (padrão: como o backend, cadastrar/reautenticar). */
+  acoesLista?: string[];
+  /** Força `acoes_permitidas` de cada item (padrão: ["revogar"]). */
+  acoesItem?: string[];
+  /** Erros por etapa. */
+  erroLista?: ErroApi;
+  erroOpcoesRegistro?: ErroApi;
+  erroConfirmarRegistro?: ErroApi;
+  erroOpcoesAutenticacao?: ErroApi;
+  erroConfirmarAutenticacao?: ErroApi;
+  erroRevogar?: ErroApi;
+}
+
+export interface ChamadaPasskey {
+  metodo: string;
+  caminho: string;
+  corpo: unknown;
+  auth: string;
+}
+
+/** Código público (16-32 [a-z0-9]) que a API fake reconhece; qualquer outro dá 404 uniforme. */
+export const CODIGO_QR_VALIDO = 'a1b2c3d4e5f6g7h8i9j0';
+export const CODIGO_QR_ROTACIONADO = 'z9y8x7w6v5u4t3s2r1q0';
 
 export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
   const reqs: Req[] = [];
@@ -469,12 +530,21 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
           opcoes.comAdmin && papel === 'autorizador'
             ? [...p.permissoes, 'administrar']
             : p.permissoes,
-        recursos: recursos({
-          checklist: !!opcoes.checklist,
-          quilometragem: !!opcoes.km,
-          vigilante_km: !!opcoes.km && papel === 'vigilante',
-          motorista: !!opcoes.motoristas,
-        }),
+        recursos: {
+          ...recursos({
+            checklist: !!opcoes.checklist,
+            quilometragem: !!opcoes.km,
+            vigilante_km: !!opcoes.km && papel === 'vigilante',
+            motorista: !!opcoes.motoristas,
+          }),
+          ...(opcoes.conectividade === undefined
+            ? {}
+            : { indicador_conectividade: opcoes.conectividade }),
+          ...(opcoes.tatil === undefined ? {} : { feedback_tatil: opcoes.tatil }),
+          ...(opcoes.leitorQr === undefined ? {} : { leitor_qr_veiculos: opcoes.leitorQr }),
+          ...(opcoes.vozCampos === undefined ? {} : { voz_campos: opcoes.vozCampos }),
+          ...(opcoes.passkeys === undefined ? {} : { passkeys: opcoes.passkeys }),
+        },
         foto_url: fotoUrl(),
       },
     });
@@ -539,6 +609,74 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
       },
     }),
   );
+
+  // Leitor de QR (Fase 3): consulta pelo código lido. 404 uniforme para código desconhecido.
+  const consultasQr: string[] = [];
+  // Contrato: POST /api/veiculos/por-codigo com {"codigo"}; o código nunca vai em URL/path.
+  // Qualquer outro método ou caminho com o código (rota GET antiga) não existe: 404/405.
+  await page.route('**/api/veiculos/por-codigo/**', (route) =>
+    erro(route, 404, 'nao_encontrado', 'Não encontrado.'),
+  );
+  await page.route('**/api/veiculos/por-codigo', (route) => {
+    if (route.request().method() !== 'POST') {
+      return erro(route, 405, 'metodo_nao_permitido', 'Método não permitido.');
+    }
+    const papel = papelDoToken(route);
+    if (!papel) return erro(route, 401, 'nao_autenticado', 'Autenticação necessária.');
+    let corpoQr: { codigo?: unknown } | null = null;
+    try {
+      corpoQr = route.request().postDataJSON() as { codigo?: unknown } | null;
+    } catch {
+      corpoQr = null;
+    }
+    const codigo = typeof corpoQr?.codigo === 'string' ? corpoQr.codigo : '';
+    consultasQr.push(codigo);
+    if (opcoes.leitorQr !== true) {
+      return erro(route, 403, 'recurso_desabilitado', 'O leitor de QR Code está desabilitado.');
+    }
+    if (codigo !== CODIGO_QR_VALIDO) {
+      return erro(route, 404, 'nao_encontrado', 'Veículo não encontrado.');
+    }
+    const q = opcoes.veiculoQr ?? {};
+    const disponivel = q.disponivel ?? !ocupado();
+    return route.fulfill({
+      json: {
+        id: VEICULO_ID,
+        descricao: q.descricao ?? 'Veículo 01',
+        placa: q.placa === undefined ? 'ABC-1D23' : q.placa,
+        disponivel,
+        motivo_indisponibilidade: disponivel
+          ? null
+          : (q.motivo ?? 'Há uma requisição em aberto para este veículo.'),
+        acoes_permitidas: q.acoes ?? (disponivel ? ['solicitar'] : []),
+      },
+    });
+  });
+
+  // Admin de veículos (só o que o QR usa); o código gira a cada rotação.
+  let codigoAtual: string | null | undefined = opcoes.adminVeiculosQr?.codigoPublico;
+  const rotacoesQr: string[] = [];
+  const itemAdminVeiculo = () => ({
+    id: VEICULO_ID,
+    descricao: 'Veículo 01',
+    placa: 'ABC1D23',
+    ativo: true,
+    requisicao_aberta: false,
+    ...(codigoAtual === undefined ? {} : { codigo_publico: codigoAtual }),
+    acoes_permitidas: opcoes.adminVeiculosQr?.acoes ?? ['editar', 'desativar', 'rotacionar_codigo'],
+  });
+  await page.route('**/api/admin/veiculos', (route) =>
+    route.fulfill({ json: { itens: [itemAdminVeiculo()], acoes_permitidas: ['criar'] } }),
+  );
+  await page.route('**/api/admin/veiculos/*/rotacionar-codigo', (route) => {
+    rotacoesQr.push(route.request().method());
+    if (opcoes.erroRotacao) {
+      const e = opcoes.erroRotacao;
+      return erro(route, e.status, e.codigo, e.mensagem);
+    }
+    codigoAtual = CODIGO_QR_ROTACIONADO;
+    return route.fulfill({ json: itemAdminVeiculo() });
+  });
 
   await page.route(/\/api\/requisicoes(\?.*)?$/, async (route) => {
     const papel = papelDoToken(route);
@@ -980,8 +1118,137 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     });
   });
 
+  // Passkeys (contrato: docs/passkeys.md). A API fake só reflete; a criptografia é do pytest.
+  const chamadasPasskeys: ChamadaPasskey[] = [];
+  const pk = opcoes.passkeysApi ?? {};
+  const passkeysItens = [...(pk.itens ?? [])];
+  let reautenticadoAte: string | null = pk.reautenticadoAte ?? null;
+  const limite = pk.limite ?? 10;
+  await page.route(/\/api\/passkeys(\/[^?]*)?(\?.*)?$/, async (route) => {
+    const req = route.request();
+    const caminho = new URL(req.url()).pathname.replace(/^\/api\/passkeys/, '') || '/';
+    let corpo: unknown = null;
+    try {
+      corpo = req.postDataJSON();
+    } catch {
+      corpo = null;
+    }
+    chamadasPasskeys.push({
+      metodo: req.method(),
+      caminho,
+      corpo,
+      auth: req.headers()['authorization'] ?? '',
+    });
+    if (pk.atrasoMs) await new Promise((r) => setTimeout(r, pk.atrasoMs));
+    if (opcoes.passkeys !== true) {
+      return erro(route, 404, 'recurso_desabilitado', 'Recurso desabilitado.');
+    }
+    const falha = (e?: ErroApi) => (e ? erro(route, e.status, e.codigo, e.mensagem) : null);
+    const b64 = (t: string) => Buffer.from(t).toString('base64url');
+    if (req.method() === 'GET' && caminho === '/') {
+      return (
+        falha(pk.erroLista) ??
+        route.fulfill({
+          headers: { 'Cache-Control': 'no-store' },
+          json: {
+            itens: passkeysItens.map((i) => ({
+              ...i,
+              transportes: ['internal'],
+              acoes_permitidas: pk.acoesItem ?? ['revogar'],
+            })),
+            limite,
+            exige_passkey: passkeysItens.length > 0,
+            identidade_confirmada:
+              reautenticadoAte !== null && new Date(reautenticadoAte).getTime() > Date.now(),
+            acoes_permitidas: pk.acoesLista ?? [
+              ...(passkeysItens.length < limite ? ['cadastrar'] : []),
+              ...(passkeysItens.length > 0 ? ['reautenticar'] : []),
+            ],
+          },
+        })
+      );
+    }
+    if (caminho === '/registro/opcoes') {
+      // Como o backend real: a identidade (login recente ou passkey) é exigida já nas opções.
+      if (pk.exigirReautParaAdicionar && !reautenticadoAte) {
+        return erro(
+          route,
+          403,
+          'reautenticacao_requerida',
+          'Confirme sua identidade com uma passkey para continuar.',
+        );
+      }
+      return (
+        falha(pk.erroOpcoesRegistro) ??
+        route.fulfill({
+          json: {
+            opcoes: {
+              challenge: b64('desafio-registro-0001'),
+              rp: { id: 'sisv.exemplo.test', name: 'SisVeiculos' },
+              user: { id: b64('usuario-0001'), name: 'marcos', displayName: 'Marcos Silva' },
+              pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+              timeout: 60000,
+              excludeCredentials: [{ type: 'public-key', id: b64('cred-existente') }],
+              authenticatorSelection: { userVerification: 'required' },
+              attestation: 'none',
+            },
+          },
+        })
+      );
+    }
+    if (caminho === '/registro/confirmar') {
+      const f = falha(pk.erroConfirmarRegistro);
+      if (f) return f;
+      const c = corpo as { apelido?: string } | null;
+      passkeysItens.push({
+        id: `pk-${passkeysItens.length + 1}`,
+        apelido: c?.apelido ?? null,
+        criada_em: new Date().toISOString(),
+        ultimo_uso_em: null,
+      });
+      return route.fulfill({ status: 201, json: { ok: true } });
+    }
+    if (caminho === '/autenticacao/opcoes') {
+      if (passkeysItens.length === 0) {
+        return erro(route, 404, 'passkey_inexistente', 'Nenhuma passkey cadastrada.');
+      }
+      return (
+        falha(pk.erroOpcoesAutenticacao) ??
+        route.fulfill({
+          json: {
+            opcoes: {
+              challenge: b64('desafio-autenticacao-0001'),
+              rpId: 'sisv.exemplo.test',
+              timeout: 60000,
+              userVerification: 'required',
+              allowCredentials: [{ type: 'public-key', id: b64('cred-existente') }],
+            },
+          },
+        })
+      );
+    }
+    if (caminho === '/autenticacao/confirmar') {
+      const f = falha(pk.erroConfirmarAutenticacao);
+      if (f) return f;
+      reautenticadoAte = new Date(Date.now() + 5 * 60_000).toISOString();
+      return route.fulfill({ json: { reautenticado_ate: reautenticadoAte } });
+    }
+    if (req.method() === 'DELETE') {
+      const f = falha(pk.erroRevogar);
+      if (f) return f;
+      const i = passkeysItens.findIndex((x) => `/${x.id}` === caminho);
+      if (i < 0) return erro(route, 404, 'nao_encontrado', 'Passkey não encontrada.');
+      passkeysItens.splice(i, 1);
+      return route.fulfill({ json: { ok: true } });
+    }
+    return erro(route, 404, 'nao_encontrado', 'Não encontrado.');
+  });
+
   return {
+    chamadasPasskeys,
     consultasReferencia: () => consultasReferencia,
+    consultasQr,
+    rotacoesQr,
     reqs,
     organizacoes,
     consultasPainel,

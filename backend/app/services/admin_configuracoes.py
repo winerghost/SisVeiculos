@@ -90,6 +90,43 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "saída e a chegada. Desligado, registram sem informar km.",
         ("quilometragem",),
     ),
+    "notificacao_push": (
+        "Notificações push",
+        "Envia avisos genéricos ao aparelho dos usuários que ativarem as notificações (sem dados "
+        "da requisição). Exige HTTPS e as chaves VAPID configuradas no servidor.",
+        (),
+    ),
+    "indicador_conectividade": (
+        "Indicador de conectividade",
+        "Mostra um aviso quando o aparelho estiver sem internet ou quando o servidor do sistema "
+        "estiver indisponível. É apenas informativo: não grava nada offline.",
+        (),
+    ),
+    "feedback_tatil": (
+        "Feedback tátil (vibração)",
+        "Vibra o aparelho de forma curta em confirmações, saída, chegada e erros importantes. "
+        "Funciona só em aparelhos compatíveis e complementa o aviso visual.",
+        (),
+    ),
+    "leitor_qr_veiculos": (
+        "Leitor de QR Code dos veículos",
+        "Permite identificar um veículo lendo o QR Code dele com a câmera. O QR só identifica o "
+        "veículo e não autoriza nada: as permissões continuam sendo as do usuário.",
+        (),
+    ),
+    "voz_campos": (
+        "Ditado por voz",
+        "Permite ditar por voz campos de texto (observações e avarias). Atenção: o reconhecimento "
+        "de voz pode usar o serviço de voz do navegador ou do fornecedor dele, que pode processar "
+        "o áudio fora da AGU. Exige aprovação da política de segurança da AGU antes de ligar.",
+        (),
+    ),
+    "passkeys": (
+        "Passkeys (WebAuthn)",
+        "Permite cadastrar passkeys para reautenticação e como fator adicional em ações "
+        "sensíveis. O login por e-mail e senha continua funcionando normalmente.",
+        (),
+    ),
 }
 ROTULOS_RECURSOS = {k: v[0] for k, v in CATALOGO.items()}
 

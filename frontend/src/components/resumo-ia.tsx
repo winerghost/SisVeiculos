@@ -31,6 +31,7 @@ export function ResumoIA({
   if (!habilitado) return null;
 
   async function resumir() {
+    if (envio.ocupado) return;
     setResumo(null);
     const r = await envio.executar(gerar);
     if (r.ok) setResumo(r.valor);
@@ -42,10 +43,11 @@ export function ResumoIA({
         type="button"
         variante="contorno"
         className="self-start"
-        disabled={envio.ocupado || bloqueado}
+        carregando={envio.ocupado}
+        disabled={bloqueado}
         onClick={() => void resumir()}
       >
-        <Sparkles aria-hidden className="size-5" />
+        {envio.ocupado ? null : <Sparkles aria-hidden className="size-5" />}
         {envio.ocupado ? 'Gerando resumo...' : 'Resumir com IA'}
       </Button>
       <div role="status" aria-live="polite">

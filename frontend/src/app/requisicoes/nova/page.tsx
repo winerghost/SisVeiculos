@@ -1,13 +1,14 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { CalendarDays } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useCarga } from '@/lib/use-carga';
 import { diaDoCalendario, montarHoraSaida, rotuloHoraSaida, sugestaoLocal } from '@/lib/formato';
 import { AppShell } from '@/components/app-shell';
+import { CampoVoz } from '@/components/campo-voz';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -32,7 +33,9 @@ function Formulario() {
   const veiculos = useCarga(() => api.veiculos());
   const [nome, setNome] = React.useState(eu?.nome ?? '');
   const [unidade, setUnidade] = React.useState(eu?.unidade ?? '');
-  const [veiculoId, setVeiculoId] = React.useState('');
+  // ?veiculo=<id> (vindo do leitor de QR) só pré-seleciona; a API revalida no envio.
+  const veiculoDaUrl = useSearchParams().get('veiculo') ?? '';
+  const [veiculoId, setVeiculoId] = React.useState(veiculoDaUrl);
   const [trajeto, setTrajeto] = React.useState('');
   const [observacao, setObservacao] = React.useState('');
   const [erro, setErro] = React.useState<string | null>(null);
@@ -84,6 +87,7 @@ function Formulario() {
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
+    if (enviando) return;
     setEnviando(true);
     setErro(null);
     try {
@@ -192,15 +196,17 @@ function Formulario() {
         <Label htmlFor="observacao">
           Observação <span className="font-normal text-texto-2">(opcional)</span>
         </Label>
-        <Textarea
-          id="observacao"
-          value={observacao}
-          onChange={(e) => setObservacao(e.target.value)}
-        />
+        <CampoVoz id="observacao" valor={observacao} aoMudar={setObservacao}>
+          <Textarea
+            id="observacao"
+            value={observacao}
+            onChange={(e) => setObservacao(e.target.value)}
+          />
+        </CampoVoz>
       </div>
 
-      <Button type="submit" tamanho="cheio" disabled={enviando} className="mt-4">
-        Enviar requisição
+      <Button type="submit" tamanho="cheio" carregando={enviando} className="mt-4">
+        {enviando ? 'Enviando...' : 'Enviar requisição'}
       </Button>
 
       <Drawer open={aberto} onOpenChange={setAberto}>
@@ -255,7 +261,9 @@ function Formulario() {
 export default function NovaRequisicao() {
   return (
     <AppShell titulo="Nova requisição" voltarPara="/requisicoes">
-      <Formulario />
+      <React.Suspense fallback={null}>
+        <Formulario />
+      </React.Suspense>
     </AppShell>
   );
 }

@@ -7,8 +7,10 @@ import { useAuth } from '@/lib/auth';
 import { COMBUSTIVEIS, rotuloMomento } from '@/lib/checklist';
 import { reprocessarImagem } from '@/lib/imagem';
 import { supabase } from '@/lib/supabase';
+import { useTatil } from '@/lib/tatil';
 import type { FotoEnviada, MomentoChecklist } from '@/lib/tipos';
 import { cn } from '@/lib/utils';
+import { CampoVoz } from '@/components/campo-voz';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -57,6 +59,7 @@ export function FormularioChecklist({
   aoRegistrar: () => void | Promise<void>;
 }) {
   const { tratarErro } = useAuth();
+  const tatil = useTatil();
   const [combustivel, setCombustivel] = React.useState('');
   const [avarias, setAvarias] = React.useState<boolean | null>(null);
   const [descricao, setDescricao] = React.useState('');
@@ -136,8 +139,10 @@ export function FormularioChecklist({
 
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (enviando) return;
     setEnviando(true);
     setErro(null);
+    let registrado = false;
     try {
       const enviadas: FotoEnviada[] = [];
       let falhou = false;
@@ -156,8 +161,11 @@ export function FormularioChecklist({
         ...(avarias === true ? { descricao_avarias: descricao } : {}),
         fotos: enviadas,
       });
+      registrado = true;
+      tatil.checklist();
       await aoRegistrar();
     } catch (err) {
+      if (!registrado) tatil.erro();
       setErro(tratarErro(err));
       if (err instanceof ApiErro && REENVIAR.has(err.codigo)) {
         setFotos((fs) => fs.map((f) => ({ ...f, estado: 'pronta', enviada: null })));
@@ -225,13 +233,20 @@ export function FormularioChecklist({
       {avarias === true ? (
         <div>
           <Label htmlFor={`${pre}-descricao`}>Descrição das avarias</Label>
-          <Textarea
+          <CampoVoz
             id={`${pre}-descricao`}
-            name="descricao_avarias"
+            valor={descricao}
+            aoMudar={setDescricao}
             maxLength={500}
-            value={descricao}
-            onChange={(e) => setDescricao(e.target.value)}
-          />
+          >
+            <Textarea
+              id={`${pre}-descricao`}
+              name="descricao_avarias"
+              maxLength={500}
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+            />
+          </CampoVoz>
           <p className="mt-1 text-sm text-texto-2">{descricao.length}/500</p>
         </div>
       ) : null}
@@ -297,7 +312,7 @@ export function FormularioChecklist({
         ) : null}
       </fieldset>
 
-      <Button type="submit" tamanho="cheio" disabled={enviando}>
+      <Button type="submit" tamanho="cheio" carregando={enviando}>
         {enviando ? 'Enviando...' : `Registrar checklist de ${rotuloMomento(momento)}`}
       </Button>
     </form>

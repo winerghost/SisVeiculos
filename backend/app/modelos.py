@@ -43,6 +43,12 @@ class Configuracoes:
     vigilante_km: bool = False  # exige `quilometragem`
     autorizador_decide_propria: bool = False  # staff decide a própria requisição
     autorizador_km: bool = False  # exige `quilometragem`; staff lança km
+    notificacao_push: bool = False  # Web Push: avisos genéricos (exige VAPID no servidor)
+    indicador_conectividade: bool = False  # indicador de conexão (internet e Flask)
+    feedback_tatil: bool = False  # vibração curta (Vibration API)
+    leitor_qr_veiculos: bool = False  # leitor de QR que só identifica o veículo
+    voz_campos: bool = False  # ditado por voz (Web Speech API)
+    passkeys: bool = False  # WebAuthn: reautenticação/fator adicional
 
     def como_dict(self) -> dict[str, bool]:
         return {
@@ -59,4 +65,10 @@ class Configuracoes:
             "vigilante_km": self.vigilante_km,
             "autorizador_decide_propria": self.autorizador_decide_propria,
             "autorizador_km": self.autorizador_km,
+            "notificacao_push": self.notificacao_push,
+            "indicador_conectividade": self.indicador_conectividade,
+            "feedback_tatil": self.feedback_tatil,
+            "leitor_qr_veiculos": self.leitor_qr_veiculos,
+            "voz_campos": self.voz_campos,
+            "passkeys": self.passkeys,
         }

@@ -95,8 +95,14 @@ function Formulario({
         </div>
       ) : null}
       <CampoFormato valor={formato} onChange={setFormato} />
-      <Button type="submit" tamanho="cheio" disabled={ocupado}>
-        {modo === 'email' ? 'Enviar por e-mail' : 'Compartilhar'}
+      <Button type="submit" tamanho="cheio" carregando={ocupado}>
+        {modo === 'email'
+          ? ocupado
+            ? 'Enviando...'
+            : 'Enviar por e-mail'
+          : ocupado
+            ? 'Gerando...'
+            : 'Compartilhar'}
       </Button>
       <DrawerClose asChild>
         <Button type="button" variante="link" className="self-center">

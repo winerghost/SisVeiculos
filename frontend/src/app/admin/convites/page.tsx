@@ -7,6 +7,7 @@ import { useEnvio } from '@/lib/use-envio';
 import { dataHora } from '@/lib/formato';
 import { AdminShell } from '@/components/admin-shell';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Chip, rotuloRole } from '@/components/ui/chip';
 import { Select } from '@/components/ui/input';
@@ -29,13 +30,20 @@ function Conteudo() {
   );
   const envio = useEnvio();
   const [aviso, setAviso] = React.useState<string | null>(null);
+  const [clicado, setClicado] = React.useState<string | null>(null);
   const total = lista.dados?.total ?? 0;
 
   async function executar(id: string, acao: 'reenviar' | 'revogar') {
+    if (envio.ocupado) return;
     setAviso(null);
-    const r = await envio.executar(() => admin.acaoConvite(id, acao));
-    if (r.ok) setAviso(acao === 'reenviar' ? 'Convite reenviado.' : 'Convite revogado.');
-    await lista.recarregar();
+    setClicado(`${id}:${acao}`);
+    try {
+      const r = await envio.executar(() => admin.acaoConvite(id, acao));
+      if (r.ok) setAviso(acao === 'reenviar' ? 'Convite reenviado.' : 'Convite revogado.');
+      await lista.recarregar();
+    } finally {
+      setClicado(null);
+    }
   }
 
   return (
@@ -68,7 +76,8 @@ function Conteudo() {
       ) : null}
 
       {lista.carregando ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : lista.dados?.itens.length === 0 ? (
@@ -94,21 +103,23 @@ function Conteudo() {
                     {c.acoes_permitidas.includes('reenviar') ? (
                       <Button
                         variante="contorno"
+                        carregando={clicado === `${c.id}:reenviar`}
                         disabled={envio.ocupado}
                         onClick={() => void executar(c.id, 'reenviar')}
                         aria-label={`Reenviar convite para ${c.email}`}
                       >
-                        Reenviar
+                        {clicado === `${c.id}:reenviar` ? 'Reenviando...' : 'Reenviar'}
                       </Button>
                     ) : null}
                     {c.acoes_permitidas.includes('revogar') ? (
                       <Button
                         variante="perigo"
+                        carregando={clicado === `${c.id}:revogar`}
                         disabled={envio.ocupado}
                         onClick={() => void executar(c.id, 'revogar')}
                         aria-label={`Revogar convite de ${c.email}`}
                       >
-                        Revogar
+                        {clicado === `${c.id}:revogar` ? 'Revogando...' : 'Revogar'}
                       </Button>
                     ) : null}
                   </div>

@@ -20,6 +20,7 @@ from tests.fakes_checklist import ChecklistMemoria
 from tests.fakes_dashboards import DashboardsMemoria
 from tests.fakes_foto import FotoPerfilMemoria
 from tests.fakes_notificacoes import NotificacoesMemoria
+from tests.fakes_push import PushMemoria
 from tests.fakes_relatorios import RelatoriosMemoria
 
 CARIMBOS = {
@@ -38,6 +39,7 @@ class RepoMemoria(
     DashboardsMemoria,
     RelatoriosMemoria,
     NotificacoesMemoria,
+    PushMemoria,
 ):
     def __init__(self) -> None:
         self._init_admin()
@@ -46,6 +48,7 @@ class RepoMemoria(
         self._init_dashboards()
         self._init_relatorios()
         self._init_notificacoes()
+        self._init_push()
         self._seq_eventos = 0
         self.perfis: dict[str, Perfil] = {}
         self.veiculos: dict[str, dict[str, Any]] = {}

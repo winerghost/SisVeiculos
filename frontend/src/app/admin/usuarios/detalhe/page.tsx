@@ -12,6 +12,7 @@ import { AdminShell } from '@/components/admin-shell';
 import { Avatar } from '@/components/avatar';
 import { TrocarFotoUsuario } from '@/components/trocar-foto-usuario';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRole, ROLES, rotuloRole } from '@/components/ui/chip';
 import { Input, Select } from '@/components/ui/input';
@@ -36,6 +37,9 @@ function Edicao({
   const [confirmandoFoto, setConfirmandoFoto] = React.useState(false);
   const [fotoRemovida, setFotoRemovida] = React.useState(false);
   const [salvo, setSalvo] = React.useState(false);
+  const [clicado, setClicado] = React.useState<'salvar' | 'ativar' | 'desativar' | 'foto' | null>(
+    null,
+  );
 
   // Alterações que o servidor autoriza vêm em acoes_permitidas; as regras (último admin,
   // auto-alteração) são dele e o erro é exibido como veio.
@@ -48,10 +52,13 @@ function Edicao({
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
+    if (envio.ocupado) return;
     setSalvo(false);
+    setClicado('salvar');
     const r = await envio.executar(() =>
       admin.alterarUsuario(u.id, { nome, unidade, ...(podeRole ? { role } : {}) }),
     );
+    setClicado(null);
     if (r.ok) {
       aoAtualizar(r.valor);
       setNome(r.valor.nome);
@@ -64,8 +71,11 @@ function Edicao({
   }
 
   async function mudarSituacao(acao: 'ativar' | 'desativar') {
+    if (envio.ocupado) return;
     setSalvo(false);
+    setClicado(acao);
     const r = await envio.executar(() => admin.acaoUsuario(u.id, acao));
+    setClicado(null);
     setConfirmando(false);
     if (r.ok) {
       aoAtualizar(r.valor);
@@ -76,9 +86,12 @@ function Edicao({
   }
 
   async function removerFoto() {
+    if (envio.ocupado) return;
     setSalvo(false);
     setFotoRemovida(false);
+    setClicado('foto');
     const r = await envio.executar(() => admin.removerFotoUsuario(u.id));
+    setClicado(null);
     setConfirmandoFoto(false);
     if (r.ok) {
       aoAtualizar(r.valor);
@@ -156,8 +169,13 @@ function Edicao({
           </Select>
         </div>
         {podeEditar ? (
-          <Button type="submit" tamanho="cheio" disabled={envio.ocupado}>
-            Salvar alterações
+          <Button
+            type="submit"
+            tamanho="cheio"
+            carregando={clicado === 'salvar'}
+            disabled={envio.ocupado}
+          >
+            {clicado === 'salvar' ? 'Salvando...' : 'Salvar alterações'}
           </Button>
         ) : null}
       </form>
@@ -188,8 +206,13 @@ function Edicao({
               <Button variante="contorno" onClick={() => setConfirmandoFoto(false)}>
                 Cancelar
               </Button>
-              <Button variante="perigo" disabled={envio.ocupado} onClick={() => void removerFoto()}>
-                Confirmar
+              <Button
+                variante="perigo"
+                carregando={clicado === 'foto'}
+                disabled={envio.ocupado}
+                onClick={() => void removerFoto()}
+              >
+                {clicado === 'foto' ? 'Removendo...' : 'Confirmar'}
               </Button>
             </div>
           ) : (
@@ -209,11 +232,12 @@ function Edicao({
           {podeAtivar ? (
             <Button
               tamanho="cheio"
+              carregando={clicado === 'ativar'}
               disabled={envio.ocupado}
               className={podeDesativar ? 'mb-3' : undefined}
               onClick={() => void mudarSituacao('ativar')}
             >
-              Ativar conta
+              {clicado === 'ativar' ? 'Ativando...' : 'Ativar conta'}
             </Button>
           ) : null}
           {!podeDesativar ? null : confirmando ? (
@@ -223,10 +247,11 @@ function Edicao({
               </Button>
               <Button
                 variante="perigo"
+                carregando={clicado === 'desativar'}
                 disabled={envio.ocupado}
                 onClick={() => void mudarSituacao('desativar')}
               >
-                Confirmar
+                {clicado === 'desativar' ? 'Desativando...' : 'Confirmar'}
               </Button>
             </div>
           ) : (
@@ -249,7 +274,8 @@ function PorId({ id }: { id: string }) {
   const usuario = useCarga(() => admin.usuario(id));
   if (usuario.carregando) {
     return (
-      <p role="status" className="text-texto-2">
+      <p role="status" className="flex items-center gap-2 text-texto-2">
+        <Spinner />
         Carregando...
       </p>
     );

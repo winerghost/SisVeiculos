@@ -14,6 +14,7 @@ import { AbasArquivadas } from '@/components/abas-arquivadas';
 import { AvisoOrganizarRegiao } from '@/components/aviso-organizar';
 import { CartaoRequisicao } from '@/components/cartao-requisicao';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 
 function Conteudo() {
@@ -103,7 +104,8 @@ function Conteudo() {
         </p>
       ) : null}
       {reqs.dados === null && !reqs.erro ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : reqs.dados && itens.length === 0 ? (
@@ -117,7 +119,9 @@ function Conteudo() {
               key={r.id}
               req={r}
               mostrarSolicitante={todas}
-              ocupado={acao.ocupado || organizar.ocupado}
+              ocupado={acao.ocupado || organizar.processando.has(r.id)}
+              acaoEmAndamento={acao.emAndamento?.id === r.id ? acao.emAndamento.acao : null}
+              arquivando={organizar.processando.has(r.id)}
               gestos
               onAcao={(req, a, c) => void acao.executar(req, a, c)}
               onOrganizar={(req, a) => void aoOrganizar(req.id, a)}

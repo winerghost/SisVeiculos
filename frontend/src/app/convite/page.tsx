@@ -11,6 +11,7 @@ import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 
 type Fase =
   'verificando' | 'sem_sessao' | 'outra_conta' | 'saiu' | 'senha' | 'aceitando' | 'encerrado';
@@ -94,20 +95,25 @@ function Aceite() {
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
+    if (ocupado) return;
     setErro(null);
     setOcupado(true);
-    if (!senhaDefinida) {
-      const { error } = await supabase().auth.updateUser({ password: senha });
-      if (error) {
-        // Política de senha é do Supabase; a mensagem dele é exibida como veio.
-        setErro(error.message);
-        setOcupado(false);
-        return;
+    try {
+      if (!senhaDefinida) {
+        const { error } = await supabase().auth.updateUser({ password: senha });
+        if (error) {
+          // Política de senha é do Supabase; a mensagem dele é exibida como veio.
+          setErro(error.message);
+          return;
+        }
+        setSenhaDefinida(true);
       }
-      setSenhaDefinida(true);
+      await aceitar();
+    } catch {
+      setErro('Não foi possível concluir o cadastro.');
+    } finally {
+      setOcupado(false);
     }
-    await aceitar();
-    setOcupado(false);
   }
 
   async function irParaLogin() {
@@ -129,7 +135,8 @@ function Aceite() {
       </h1>
 
       {fase === 'verificando' ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Verificando o convite...
         </p>
       ) : null}
@@ -216,8 +223,12 @@ function Aceite() {
               />
             </div>
           ) : null}
-          <Button type="submit" tamanho="cheio" disabled={ocupado || fase === 'aceitando'}>
-            {senhaDefinida ? 'Tentar novamente' : 'Concluir cadastro'}
+          <Button type="submit" tamanho="cheio" carregando={ocupado || fase === 'aceitando'}>
+            {ocupado || fase === 'aceitando'
+              ? 'Concluindo...'
+              : senhaDefinida
+                ? 'Tentar novamente'
+                : 'Concluir cadastro'}
           </Button>
         </form>
       ) : null}

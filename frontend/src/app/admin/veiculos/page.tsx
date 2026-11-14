@@ -1,15 +1,18 @@
 'use client';
 
 import * as React from 'react';
-import { Pencil, Plus } from 'lucide-react';
+import { Pencil, Plus, Printer, RefreshCw } from 'lucide-react';
 import { admin } from '@/lib/api';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import type { VeiculoAdmin } from '@/lib/tipos';
 import { AdminShell } from '@/components/admin-shell';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
+import { Dialogo } from '@/components/ui/dialogo';
+import { QrVeiculo, imprimirQr } from '@/components/qr-veiculo';
 import {
   Drawer,
   DrawerClose,
@@ -37,6 +40,7 @@ function FormularioVeiculo({
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
+    if (envio.ocupado) return;
     const dados = { descricao, placa };
     const r = await envio.executar(() =>
       alvo ? admin.editarVeiculo(alvo.id, dados) : admin.criarVeiculo(dados),
@@ -82,13 +86,95 @@ function FormularioVeiculo({
                 Cancelar
               </Button>
             </DrawerClose>
-            <Button type="submit" tamanho="cheio" disabled={envio.ocupado}>
-              Salvar
+            <Button type="submit" tamanho="cheio" carregando={envio.ocupado}>
+              {envio.ocupado ? 'Salvando...' : 'Salvar'}
             </Button>
           </div>
         </form>
       </DrawerContent>
     </Drawer>
+  );
+}
+
+/** QR do veículo (só se a API devolveu o código), com Imprimir e Rotacionar código. */
+function BlocoQr({ v, aoRotacionar }: { v: VeiculoAdmin; aoRotacionar: () => Promise<void> }) {
+  const envio = useEnvio();
+  const [confirmando, setConfirmando] = React.useState(false);
+  const [bloqueada, setBloqueada] = React.useState(false);
+  if (!v.codigo_publico) return null;
+  const codigo = v.codigo_publico;
+  // Rotacionar só aparece se a API listar a ação.
+  const podeRotacionar = v.acoes_permitidas.includes('rotacionar_codigo');
+
+  async function rotacionar() {
+    const r = await envio.executar(() => admin.rotacionarCodigoVeiculo(v.id));
+    if (r.ok) {
+      setConfirmando(false);
+      await aoRotacionar();
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-3 border-t border-borda pt-3">
+      <div className="flex items-center gap-4">
+        <QrVeiculo
+          codigoPublico={codigo}
+          descricao={v.descricao}
+          className="size-32 shrink-0 rounded-padrao border border-borda"
+        />
+        <p className="text-sm text-texto-2">
+          QR Code do veículo. Ler o código não autoriza nada; imprima e fixe no veículo.
+        </p>
+      </div>
+      {bloqueada ? (
+        <Alerta>
+          O navegador bloqueou a janela de impressão. Permita pop-ups e tente de novo.
+        </Alerta>
+      ) : null}
+      {envio.erro && !confirmando ? <Alerta>{envio.erro}</Alerta> : null}
+      <div className="flex flex-wrap gap-3">
+        <Button
+          variante="contorno"
+          onClick={() => setBloqueada(!imprimirQr(codigo, v.descricao, v.placa))}
+          aria-label={`Imprimir QR Code de ${v.descricao}`}
+        >
+          <Printer aria-hidden className="size-4" /> Imprimir
+        </Button>
+        {podeRotacionar ? (
+          <Button
+            variante="contorno"
+            onClick={() => {
+              envio.setErro(null);
+              setConfirmando(true);
+            }}
+            aria-label={`Rotacionar código de ${v.descricao}`}
+          >
+            <RefreshCw aria-hidden className="size-4" /> Rotacionar código
+          </Button>
+        ) : null}
+      </div>
+      <Dialogo
+        aberto={confirmando}
+        titulo="Rotacionar código?"
+        descricao="O QR Code impresso atual deixará de funcionar e será preciso imprimir e fixar o novo."
+        onFechar={() => setConfirmando(false)}
+      >
+        {envio.erro ? <Alerta>{envio.erro}</Alerta> : null}
+        <div className="grid grid-cols-2 gap-3">
+          <Button
+            data-autofocus
+            variante="contorno"
+            disabled={envio.ocupado}
+            onClick={() => setConfirmando(false)}
+          >
+            Voltar
+          </Button>
+          <Button carregando={envio.ocupado} onClick={() => void rotacionar()}>
+            {envio.ocupado ? 'Rotacionando...' : 'Rotacionar'}
+          </Button>
+        </div>
+      </Dialogo>
+    </div>
   );
 }
 
@@ -113,7 +199,8 @@ function Conteudo() {
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
 
       {lista.carregando ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : lista.dados?.itens.length === 0 ? (
@@ -161,6 +248,7 @@ function Conteudo() {
                     <Pencil aria-hidden className="size-4" /> Editar
                   </Button>
                 ) : null}
+                <BlocoQr v={v} aoRotacionar={lista.recarregar} />
               </li>
             );
           })}

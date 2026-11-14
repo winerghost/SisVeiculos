@@ -23,7 +23,7 @@ def test_criar_normaliza_placa_audita_e_aparece_para_solicitar(client, auth, adm
     assert r.status_code == 201
     v = r.get_json()
     assert v["placa"] == "ABC1D23" and v["ativo"] is True and v["requisicao_aberta"] is False
-    assert v["acoes_permitidas"] == ["editar", "desativar"]
+    assert v["acoes_permitidas"] == ["editar", "desativar", "rotacionar_codigo"]
     ev = repo.eventos_de("veiculo_criado")
     assert len(ev) == 1 and ev[0]["ator_id"] == adm.id and ev[0]["registro_id"] == v["id"]
     sol = repo.novo_perfil("solicitante")
@@ -100,7 +100,7 @@ def test_desativar_ativar_sem_apagar(client, auth, adm, repo):  # type: ignore[n
     sol = repo.novo_perfil("solicitante")
     r = client.post(f"/api/admin/veiculos/{vid}/desativar", headers=h)
     assert r.status_code == 200 and r.get_json()["ativo"] is False
-    assert r.get_json()["acoes_permitidas"] == ["editar", "ativar"]
+    assert r.get_json()["acoes_permitidas"] == ["editar", "ativar", "rotacionar_codigo"]
     ev = repo.eventos_de("veiculo_alterado")[-1]
     assert (ev["de"], ev["para"], ev["ator_id"]) == ("true", "false", adm.id)
     # inativo: some da lista de solicitação e não aceita requisição, mas continua na admin

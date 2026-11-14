@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { api, ApiErro } from './api';
+import { inscricaoAtual } from './push';
 import { supabase } from './supabase';
 import type { Eu, PainelMenu, RespostaRelatorios } from './tipos';
 
@@ -41,6 +42,27 @@ export function useAuth(): Contexto {
   return c;
 }
 
+async function revogarPushDesteAparelho(): Promise<void> {
+  try {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const insc = await inscricaoAtual();
+    if (!insc) return;
+    try {
+      // Revogação no servidor é melhor esforço, com prazo próprio.
+      await Promise.race([
+        api.pushRevogar(insc.endpoint),
+        new Promise<void>((r) => window.setTimeout(r, 1500)),
+      ]);
+    } catch {
+      // Sem rede/401/recurso desligado: o cancelamento local abaixo segue mesmo assim.
+    }
+    // Sempre cancela a inscrição LOCAL, para o aparelho não receber avisos do usuário anterior.
+    await insc.unsubscribe();
+  } catch {
+    // Sem service worker/inscrição: segue o logout.
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [estado, setEstado] = React.useState<Estado>('carregando');
   const [eu, setEu] = React.useState<Eu | null>(null);
@@ -62,6 +84,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     encerrando.current = true;
     try {
       const auth = supabase().auth;
+      // Melhor esforço, antes do signOut (precisa do token): revoga a inscrição push DESTE
+      // aparelho, com prazo curto para nunca prender o logout.
+      await Promise.race([
+        revogarPushDesteAparelho(),
+        new Promise<void>((r) => window.setTimeout(r, 2000)),
+      ]);
       // Dispara a revogação já (lê o token do armazenamento) antes de limpar o estado.
       const remoto = auth
         .signOut({ scope: global ? 'global' : 'local' })

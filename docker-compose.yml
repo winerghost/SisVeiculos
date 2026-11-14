@@ -50,6 +50,16 @@ services:
       AI_MONTHLY_TOKEN_CAP: ${AI_MONTHLY_TOKEN_CAP:-}
       AI_CIRCUIT_FAILURE_THRESHOLD: ${AI_CIRCUIT_FAILURE_THRESHOLD:-}
       AI_CIRCUIT_OPEN_SECONDS: ${AI_CIRCUIT_OPEN_SECONDS:-}
+      # Web Push (desligado sem chaves VAPID). VAPID_PRIVATE_KEY é segredo só do backend.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      PUSH_ENDPOINT_HOSTS: ${PUSH_ENDPOINT_HOSTS:-}
+      PUSH_INTERVALO_SEGUNDOS: ${PUSH_INTERVALO_SEGUNDOS:-}
+      # Passkeys (WebAuthn): sem valores padrão; o recurso fica indisponível se não definidos.
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-}
+      WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-}
     expose:
       - "8000"
     read_only: true

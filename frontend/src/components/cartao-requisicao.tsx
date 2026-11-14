@@ -48,6 +48,15 @@ const ROTULO_ORGANIZAR: Record<AcaoOrganizar, string> = {
   desarquivar: 'Desarquivar',
 };
 
+/** Só apresentação: texto do botão enquanto a API responde à ação (`acaoEmAndamento`). */
+export const ROTULO_ANDAMENTO: Partial<Record<Acao, string>> = {
+  autorizar: 'Autorizando...',
+  negar: 'Negando...',
+  cancelar: 'Cancelando...',
+  registrar_saida: 'Registrando saída...',
+  registrar_chegada: 'Registrando chegada...',
+};
+
 export const ehOrganizar = (a: string): a is AcaoOrganizar =>
   a === 'arquivar' || a === 'desarquivar';
 
@@ -71,12 +80,14 @@ function AcaoComCampos({
   acao,
   campos,
   ocupado,
+  emAndamento,
   onAcao,
 }: {
   req: Requisicao;
   acao: Acao;
   campos: CampoAcao[];
   ocupado: boolean;
+  emAndamento?: boolean;
   onAcao: OnAcao;
 }) {
   const [valores, setValores] = React.useState<Partial<Record<CampoKm, string>>>({});
@@ -86,6 +97,7 @@ function AcaoComCampos({
   const exigeLocal = campos.some((c) => c === 'latitude' || c === 'longitude');
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (obtendo || emAndamento) return;
     const corpo: CorpoAcao = {};
     for (const c of camposKm) {
       const v = valores[c] ?? '';
@@ -143,9 +155,16 @@ function AcaoComCampos({
         type="submit"
         tamanho="cheio"
         variante={ACOES[acao].variante}
-        disabled={ocupado || obtendo}
+        disabled={ocupado}
+        carregando={obtendo || emAndamento}
       >
-        {erroLocal ? 'Tentar novamente' : ACOES[acao].rotulo}
+        {obtendo
+          ? 'Obtendo localização...'
+          : emAndamento
+            ? (ROTULO_ANDAMENTO[acao] ?? ACOES[acao].rotulo)
+            : erroLocal
+              ? 'Tentar novamente'
+              : ACOES[acao].rotulo}
       </Button>
     </form>
   );
@@ -181,6 +200,7 @@ function TrocarMotorista({
   }, [tratarErro]);
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (enviando) return;
     setEnviando(true);
     setErro(null);
     try {
@@ -215,8 +235,14 @@ function TrocarMotorista({
         </Select>
       </div>
       {erro ? <Alerta>{erro}</Alerta> : null}
-      <Button type="submit" tamanho="cheio" variante="contorno" disabled={ocupado || enviando}>
-        Salvar motorista
+      <Button
+        type="submit"
+        tamanho="cheio"
+        variante="contorno"
+        disabled={ocupado}
+        carregando={enviando}
+      >
+        {enviando ? 'Salvando...' : 'Salvar motorista'}
       </Button>
     </form>
   );
@@ -226,11 +252,13 @@ function TrocarMotorista({
 function DialogoDecidir({
   acoes,
   ocupado,
+  acaoEmAndamento,
   onEscolher,
   onFechar,
 }: {
   acoes: Decisao[] | null;
   ocupado: boolean;
+  acaoEmAndamento?: Acao | null;
   onEscolher: (a: Decisao) => void;
   onFechar: () => void;
 }) {
@@ -256,9 +284,10 @@ function DialogoDecidir({
             tamanho="cheio"
             variante={ACOES[a].variante}
             disabled={ocupado}
+            carregando={acaoEmAndamento === a}
             onClick={() => onEscolher(a)}
           >
-            {ACOES[a].rotulo}
+            {acaoEmAndamento === a ? (ROTULO_ANDAMENTO[a] ?? ACOES[a].rotulo) : ACOES[a].rotulo}
           </Button>
         ))}
         <Button type="button" tamanho="cheio" variante="contorno" data-autofocus onClick={onFechar}>
@@ -361,10 +390,16 @@ export function BotoesAcao({
   aoRegistrarChecklist,
   motoristas,
   motoristaPadrao,
+  arquivando,
+  acaoEmAndamento,
 }: {
   req: Requisicao;
   ocupado: boolean;
   onAcao: OnAcao;
+  /** Ação em andamento na API (vem do pai): o botão correspondente mostra spinner e o gerúndio. */
+  acaoEmAndamento?: Acao | null;
+  /** Arquivar/desarquivar em andamento: o botão mostra o spinner e fica desabilitado. */
+  arquivando?: boolean;
   /** Arquivar/desarquivar; sem isto (ex.: telas de detalhe) esses botões não são exibidos. */
   onOrganizar?: OnOrganizar;
   /** Recarrega a requisição após o checklist (o botão volta) ou a troca de motorista. */
@@ -459,6 +494,7 @@ export function BotoesAcao({
           acao={a}
           campos={camposDe(a)}
           ocupado={ocupado}
+          emAndamento={acaoEmAndamento === a}
           onAcao={onAcao}
         />,
       );
@@ -473,9 +509,10 @@ export function BotoesAcao({
               tamanho="cheio"
               variante={ACOES[a].variante}
               disabled={ocupado}
+              carregando={acaoEmAndamento === a}
               onClick={() => (ehDecisao(a) ? setPedido([a]) : enviar(req, a))}
             >
-              {ACOES[a].rotulo}
+              {acaoEmAndamento === a ? (ROTULO_ANDAMENTO[a] ?? ACOES[a].rotulo) : ACOES[a].rotulo}
             </Button>
           ))}
         </div>,
@@ -490,9 +527,14 @@ export function BotoesAcao({
           tamanho="cheio"
           variante="contorno"
           disabled={ocupado}
+          carregando={arquivando}
           onClick={() => onOrganizar?.(req, a)}
         >
-          {ROTULO_ORGANIZAR[a]}
+          {arquivando
+            ? a === 'arquivar'
+              ? 'Arquivando...'
+              : 'Desarquivando...'
+            : ROTULO_ORGANIZAR[a]}
         </Button>,
       );
     }
@@ -528,6 +570,7 @@ export function BotoesAcao({
       <DialogoDecidir
         acoes={pedido}
         ocupado={ocupado}
+        acaoEmAndamento={acaoEmAndamento}
         onFechar={() => setPedido(null)}
         onEscolher={(a) => {
           setPedido(null);
@@ -555,12 +598,18 @@ export function CartaoRequisicao({
   mostrarChecklist,
   motoristas,
   motoristaPadrao,
+  arquivando,
+  acaoEmAndamento,
 }: {
   req: Requisicao;
   mostrarSolicitante?: boolean;
+  /** Ação em andamento na API (passada pela página): spinner nos botões e cobertura no swipe. */
+  acaoEmAndamento?: Acao | null;
   ocupado: boolean;
   onAcao: OnAcao;
   onOrganizar?: OnOrganizar;
+  /** Arquivar/desarquivar em andamento (vem de `processando` do hook): cobertura e spinner. */
+  arquivando?: boolean;
   /** Liga os gestos de arrastar (só dos lados cuja ação a API liberou em acoes_permitidas). */
   gestos?: boolean;
   aoRegistrarChecklist?: () => void | Promise<void>;
@@ -616,6 +665,15 @@ export function CartaoRequisicao({
       className="rounded-xl border border-borda bg-white"
       classeInterna="gap-0 p-4"
       ocupado={ocupado}
+      processando={
+        arquivando
+          ? permitidas.includes('arquivar')
+            ? 'Arquivando...'
+            : 'Desarquivando...'
+          : acaoEmAndamento
+            ? ROTULO_ANDAMENTO[acaoEmAndamento]
+            : undefined
+      }
       direita={direita}
       esquerda={esquerda}
       limiar={permitidas.includes('autorizar') ? 0.5 : undefined}
@@ -667,6 +725,8 @@ export function CartaoRequisicao({
         ocupado={ocupado}
         onAcao={onAcao}
         onOrganizar={onOrganizar}
+        arquivando={arquivando}
+        acaoEmAndamento={acaoEmAndamento}
         aoRegistrarChecklist={aoRegistrarChecklist}
         motoristas={motoristas}
         motoristaPadrao={motoristaPadrao}
@@ -674,6 +734,7 @@ export function CartaoRequisicao({
       <DialogoDecidir
         acoes={dialogo === 'decidir' ? decisoes : null}
         ocupado={ocupado}
+        acaoEmAndamento={acaoEmAndamento}
         onFechar={() => setDialogo(null)}
         onEscolher={(a) => {
           setDialogo(null);

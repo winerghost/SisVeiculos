@@ -16,6 +16,7 @@ import { ColunasRelatorio } from '@/components/relatorios/colunas';
 import { FiltrosRelatorio } from '@/components/relatorios/filtros';
 import { Previa } from '@/components/relatorios/previa';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -42,6 +43,8 @@ function Conteudo() {
   const [drawer, setDrawer] = React.useState<'email' | 'compartilhar'>('email');
   const [drawerAberto, setDrawerAberto] = React.useState(false);
   const acao = useEnvio();
+  // Qual botão disparou o envio em curso (só ele mostra o spinner; os demais ficam desabilitados).
+  const [clicado, setClicado] = React.useState<string | null>(null);
 
   const dados = cat.dados;
   const relatorio =
@@ -49,7 +52,8 @@ function Conteudo() {
 
   if (cat.carregando) {
     return (
-      <p role="status" className="text-texto-2">
+      <p role="status" className="flex items-center gap-2 text-texto-2">
+        <Spinner />
         Carregando...
       </p>
     );
@@ -71,16 +75,22 @@ function Conteudo() {
   };
 
   async function visualizar() {
+    if (acao.ocupado) return;
     limpar();
+    setClicado('visualizar');
     const r = await acao.executar(() => api.previaRelatorio(relatorio!.tipo, consulta));
+    setClicado(null);
     if (r.ok) setPrevia(r.valor);
   }
 
   async function baixar(formato: FormatoRelatorio) {
+    if (acao.ocupado) return;
     limpar();
+    setClicado(`baixar-${formato}`);
     const r = await acao.executar(() =>
       api.arquivoRelatorio(relatorio!.tipo, formato, 'download', consulta),
     );
+    setClicado(null);
     if (r.ok) {
       salvarArquivo(r.valor.blob, r.valor.nome);
       setMensagem(`Arquivo "${r.valor.nome}" baixado.`);
@@ -99,9 +109,11 @@ function Conteudo() {
       setMensagem('Este aparelho não permite compartilhar arquivos; use Baixar.');
       return;
     }
+    setClicado('compartilhar');
     const r = await acao.executar(() =>
       api.arquivoRelatorio(relatorio!.tipo, formato, 'compartilhar', consulta),
     );
+    setClicado(null);
     if (!r.ok) return;
     const arquivo = new File([r.valor.blob], r.valor.nome, { type: r.valor.blob.type || mime });
     try {
@@ -118,6 +130,7 @@ function Conteudo() {
   async function enviarEmail(formato: FormatoRelatorio, destinatarioId: string) {
     limpar();
     setEnvioEmail(null);
+    setClicado('email');
     const r = await acao.executar(() =>
       api.enviarRelatorioEmail(relatorio!.tipo, {
         formato,
@@ -125,6 +138,7 @@ function Conteudo() {
         destinatario_id: destinatarioId,
       }),
     );
+    setClicado(null);
     if (r.ok) setEnvioEmail(r.valor);
   }
 
@@ -192,10 +206,12 @@ function Conteudo() {
         <Button
           type="button"
           tamanho="cheio"
+          carregando={clicado === 'visualizar'}
           disabled={acao.ocupado}
           onClick={() => void visualizar()}
         >
-          <Eye aria-hidden className="size-5" /> Visualizar
+          {clicado !== 'visualizar' ? <Eye aria-hidden className="size-5" /> : null}{' '}
+          {clicado === 'visualizar' ? 'Visualizando...' : 'Visualizar'}
         </Button>
         <div className="grid grid-cols-2 gap-3">
           {canais.download
@@ -204,10 +220,14 @@ function Conteudo() {
                   key={f.valor}
                   type="button"
                   variante="contorno"
+                  carregando={clicado === `baixar-${f.valor}`}
                   disabled={acao.ocupado}
                   onClick={() => void baixar(f.valor)}
                 >
-                  <Download aria-hidden className="size-5" /> Baixar {f.rotulo}
+                  {clicado !== `baixar-${f.valor}` ? (
+                    <Download aria-hidden className="size-5" />
+                  ) : null}{' '}
+                  {clicado === `baixar-${f.valor}` ? 'Baixando' : 'Baixar'} {f.rotulo}
                 </Button>
               ))
             : null}
@@ -215,33 +235,42 @@ function Conteudo() {
             <Button
               type="button"
               variante="contorno"
+              carregando={clicado === 'email'}
               disabled={acao.ocupado}
               onClick={() => {
                 setDrawer('email');
                 setDrawerAberto(true);
               }}
             >
-              <Mail aria-hidden className="size-5" /> Enviar por e-mail
+              {clicado !== 'email' ? <Mail aria-hidden className="size-5" /> : null}{' '}
+              {clicado === 'email' ? 'Enviando...' : 'Enviar por e-mail'}
             </Button>
           ) : null}
           {canais.whatsapp ? (
             <Button
               type="button"
               variante="contorno"
+              carregando={clicado === 'compartilhar'}
               disabled={acao.ocupado}
               onClick={() => {
                 setDrawer('compartilhar');
                 setDrawerAberto(true);
               }}
             >
-              <Share2 aria-hidden className="size-5" /> Compartilhar
+              {clicado !== 'compartilhar' ? <Share2 aria-hidden className="size-5" /> : null}{' '}
+              {clicado === 'compartilhar' ? 'Gerando...' : 'Compartilhar'}
             </Button>
           ) : null}
         </div>
       </div>
 
       <div aria-live="polite" className="mt-4">
-        {acao.ocupado ? <p className="text-texto-2">Processando...</p> : null}
+        {acao.ocupado ? (
+          <p className="flex items-center gap-2 text-texto-2">
+            <Spinner />
+            Processando...
+          </p>
+        ) : null}
         {mensagem ? (
           <p className="flex gap-3 rounded-xl bg-[#e8ecf2] p-3 text-texto-2">
             <Info aria-hidden className="mt-0.5 size-5 shrink-0" />

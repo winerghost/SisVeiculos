@@ -11,6 +11,7 @@ import { AbasArquivadas } from '@/components/abas-arquivadas';
 import { AvisoOrganizarRegiao } from '@/components/aviso-organizar';
 import { CartaoViagem } from '@/components/cartao-viagem';
 import { Alerta } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 
 // Só agrupamento visual por status devolvido pela API; o que cada viagem permite vem de
 // `acoes_permitidas`.
@@ -64,7 +65,9 @@ function Viagens() {
     <CartaoViagem
       key={v.id}
       viagem={v}
-      ocupado={ocupado}
+      ocupado={acao.ocupado || organizar.processando.has(v.id)}
+      acaoEmAndamento={acao.emAndamento?.id === v.id ? acao.emAndamento.acao : null}
+      arquivando={organizar.processando.has(v.id)}
       onAcao={(req, a, c) => void acao.executar(req, a, c)}
       onOrganizar={(req, a) => void aoOrganizar(req.id, a)}
       aoRegistrarChecklist={lista.recarregar}
@@ -91,7 +94,8 @@ function Viagens() {
         onDesfazer={(id, a) => void aoOrganizar(id, a, false)}
       />
       {lista.dados === null && !lista.erro ? (
-        <p role="status" className="text-texto-2">
+        <p role="status" className="flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : arquivadas ? (

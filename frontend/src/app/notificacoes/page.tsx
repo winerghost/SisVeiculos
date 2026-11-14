@@ -10,8 +10,10 @@ import type { Notificacao } from '@/lib/tipos';
 import { useCarga } from '@/lib/use-carga';
 import { cn } from '@/lib/utils';
 import { AppShell } from '@/components/app-shell';
+import { AtivarPush } from '@/components/ativar-push';
 import { Alerta } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 
 const TAMANHO_PAGINA = 20;
@@ -171,6 +173,7 @@ function Conteudo() {
 
   return (
     <>
+      <AtivarPush />
       <div className="flex items-center justify-between gap-3">
         <span id="rotulo-nao-lidas" className="font-medium">
           Somente não lidas
@@ -190,17 +193,18 @@ function Conteudo() {
           variante="contorno"
           tamanho="cheio"
           className="mt-3"
-          disabled={ocupado}
+          carregando={ocupado}
           onClick={() => void marcarTodas()}
         >
-          Marcar todas como lidas
+          {ocupado ? 'Marcando...' : 'Marcar todas como lidas'}
         </Button>
       ) : null}
 
       {erro ? <Alerta className="mt-4">{erro}</Alerta> : null}
 
       {carregando ? (
-        <p role="status" className="mt-4 text-texto-2">
+        <p role="status" className="mt-4 flex items-center gap-2 text-texto-2">
+          <Spinner />
           Carregando...
         </p>
       ) : itens.length === 0 ? (
@@ -222,10 +226,10 @@ function Conteudo() {
               variante="contorno"
               tamanho="cheio"
               className="mt-4"
-              disabled={maisCarregando}
+              carregando={maisCarregando}
               onClick={() => void maisItens()}
             >
-              Carregar mais
+              {maisCarregando ? 'Carregando...' : 'Carregar mais'}
             </Button>
           ) : null}
         </>

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import ipaddress
 import os
 import re
@@ -35,6 +37,15 @@ SEGURANCAS_EMAIL = ("starttls", "ssl", "none")
 N8N_HMAC_MIN_CARACTERES = 32
 # Prefixo mínimo aceito em TRUSTED_PROXY_CIDRS (redes mais largas confiariam em hosts demais).
 PREFIXO_MINIMO_PROXY = {4: 16, 6: 48}
+# Serviços de push conhecidos (anti-SSRF: o servidor faz POST no endpoint da inscrição). Itens
+# iniciados por "." valem como sufixo de domínio; os demais, como host exato.
+PUSH_HOSTS_PADRAO = [
+    "fcm.googleapis.com",
+    "updates.push.services.mozilla.com",
+    "web.push.apple.com",
+    ".push.apple.com",
+    ".notify.windows.com",
+]
 # Provedores públicos: qualquer pessoa abre conta, então não são "institucionais".
 DOMINIOS_PUBLICOS = frozenset(
     {
@@ -57,6 +68,83 @@ DOMINIOS_PUBLICOS = frozenset(
 )
 # Nome de domínio (DNS) com ao menos um ponto; sem curinga, esquema ou caminho.
 RE_DOMINIO = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def _b64url_bytes(valor: str, tamanho: int) -> bytes | None:
+    try:
+        bruto = base64.urlsafe_b64decode(valor.rstrip("=") + "=" * (-len(valor.rstrip("=")) % 4))
+    except (binascii.Error, ValueError):
+        return None
+    return bruto if len(bruto) == tamanho else None
+
+
+def vapid_valido(publica: str, privada: str, subject: str) -> bool:
+    """Par VAPID P-256 (pública 65 bytes não comprimida, privada 32 bytes) e subject
+    `mailto:`/`https://`. Só devolve bool: nunca ecoa valores."""
+    if not (publica and privada and subject):
+        return False
+    pub = _b64url_bytes(publica, 65)
+    if pub is None or pub[0] != 4 or _b64url_bytes(privada, 32) is None:
+        return False
+    s = subject.strip()
+    corpo = (
+        s[7:]
+        if s.lower().startswith("mailto:")
+        else s[8:] if s.lower().startswith("https://") else ""
+    )
+    return bool(corpo) and not any(c.isspace() for c in s)
+
+
+def normalizar_origem_webauthn(origem: str) -> str | None:
+    """Origem canônica (`esquema://host[:porta]`, minúsculas, sem porta padrão) ou None se inválida.
+
+    Só `https`; `http` apenas para `localhost` (desenvolvimento). Sem credenciais, caminho,
+    query nem fragmento. Nunca ecoa o valor."""
+    try:
+        partes = urlsplit(origem.strip())
+        host = (partes.hostname or "").lower()
+        porta = partes.port
+    except ValueError:
+        return None
+    if (
+        not host
+        or partes.username is not None
+        or partes.password is not None
+        or partes.path not in ("", "/")
+        or partes.query
+        or partes.fragment
+        or origem.strip().endswith("?")
+        or origem.strip().endswith("#")
+    ):
+        return None
+    esquema = partes.scheme.lower()
+    if esquema == "http" and host == "localhost":
+        padrao = 80
+    elif esquema == "https":
+        padrao = 443
+    else:
+        return None
+    if host != "localhost" and not RE_DOMINIO.fullmatch(host):
+        return None
+    sufixo = f":{porta}" if porta not in (None, padrao) else ""
+    return f"{esquema}://{host}{sufixo}"
+
+
+def webauthn_valido(rp_id: str, rp_name: str, origens: list[str]) -> bool:
+    """RP ID (domínio, sem esquema/porta/caminho) e nome presentes, ao menos uma origem e todas
+    coerentes: https (http só em localhost) e host igual ao RP ID ou subdomínio dele."""
+    if not (rp_id and rp_name.strip() and origens):
+        return False
+    if rp_id != rp_id.lower() or (rp_id != "localhost" and not RE_DOMINIO.fullmatch(rp_id)):
+        return False
+    for origem in origens:
+        norma = normalizar_origem_webauthn(origem)
+        if norma is None:
+            return False
+        host = urlsplit(norma).hostname or ""
+        if host != rp_id and not host.endswith("." + rp_id):
+            return False
+    return True
 
 
 def validar_dominios_relatorio(dominios: list[str]) -> None:
@@ -123,6 +211,19 @@ class Config:
     limite_notificacoes_escrita: str = "60 per minute"  # POST .../lida e .../lidas, por usuário
     email_notif_intervalo_segundos: int = 30  # pausa entre ciclos do despachante
     email_notif_max_por_hora: int = 20  # teto de e-mails de notificação por hora (processo)
+    # Web Push (VAPID). A chave privada só vem do ambiente e nunca aparece em repr/log.
+    vapid_public_key: str = ""
+    vapid_private_key: str = field(default="", repr=False)
+    vapid_subject: str = ""
+    push_endpoint_hosts: list[str] = field(default_factory=lambda: list(PUSH_HOSTS_PADRAO))
+    push_intervalo_segundos: int = 10  # pausa entre ciclos do despachante de push
+    limite_push: str = "10 per minute"  # POST/DELETE /api/push/inscricoes, por usuário
+    # Passkeys (WebAuthn). Sem as três variáveis coerentes o recurso fica indisponível mesmo ligado.
+    # O RP ID não pode mudar sem invalidar as passkeys já cadastradas. Nada aqui é segredo.
+    webauthn_rp_id: str = ""
+    webauthn_rp_name: str = ""
+    webauthn_origins: list[str] = field(default_factory=list)
+    limite_passkeys: str = "10 per minute"  # opções/confirmação/revogação, por usuário
     testing: bool = False
     # Página do frontend que recebe o convite (o token vai na query `convite`). Vazio = convites
     # desativados: o admin não consegue convidar até a variável ser configurada.
@@ -156,6 +257,17 @@ class Config:
             n8n_allowed_hosts=[h.lower() for h in _lista(os.environ.get("N8N_ALLOWED_HOSTS"))],
             trusted_proxy_cidrs=_lista(os.environ.get("TRUSTED_PROXY_CIDRS"))
             or list(PROXIES_CONFIAVEIS_PADRAO),
+            vapid_public_key=os.environ.get("VAPID_PUBLIC_KEY", "").strip(),
+            vapid_private_key=os.environ.get("VAPID_PRIVATE_KEY", "").strip(),
+            vapid_subject=os.environ.get("VAPID_SUBJECT", "").strip(),
+            push_endpoint_hosts=[h.lower() for h in _lista(os.environ.get("PUSH_ENDPOINT_HOSTS"))]
+            or list(PUSH_HOSTS_PADRAO),
+            push_intervalo_segundos=_inteiro(
+                os.environ.get("PUSH_INTERVALO_SEGUNDOS"), 10, 1, 3600
+            ),
+            webauthn_rp_id=os.environ.get("WEBAUTHN_RP_ID", "").strip().lower(),
+            webauthn_rp_name=os.environ.get("WEBAUTHN_RP_NAME", "").strip(),
+            webauthn_origins=_lista(os.environ.get("WEBAUTHN_ORIGINS")),
             email_dominios_relatorio=[
                 d.lstrip("@").lower() for d in _lista(os.environ.get("EMAIL_DOMINIOS_RELATORIO"))
             ],
@@ -177,6 +289,19 @@ class Config:
                 os.environ.get("EMAIL_NOTIF_MAX_POR_HORA"), 20, 1, 1000
             ),
         )
+
+    def vapid_valido(self) -> bool:
+        """Chaves e subject completos e bem formados (sem eco de valores)."""
+        return vapid_valido(self.vapid_public_key, self.vapid_private_key, self.vapid_subject)
+
+    def webauthn_configurado(self) -> bool:
+        """As três variáveis WEBAUTHN_* presentes e coerentes (sem eco de valores)."""
+        return webauthn_valido(self.webauthn_rp_id, self.webauthn_rp_name, self.webauthn_origins)
+
+    def origens_webauthn(self) -> list[str]:
+        """Origens canônicas aceitas (a comparação com o clientDataJSON é por igualdade)."""
+        norm = (normalizar_origem_webauthn(o) for o in self.webauthn_origins)
+        return [o for o in norm if o]
 
     def validar_producao(self) -> None:
         """Falha cedo se faltar configuração obrigatória (sem revelar valores)."""
@@ -259,5 +384,35 @@ class Config:
             ]
             if ausentes:
                 raise RuntimeError("Variáveis de e-mail ausentes: " + ", ".join(ausentes))
+        for h in self.push_endpoint_hosts:
+            rotulos = h.lstrip(".").split(".")
+            if len(rotulos) < 2 or not all(rotulos) or "*" in h or "/" in h or ":" in h:
+                raise RuntimeError(
+                    "PUSH_ENDPOINT_HOSTS deve listar nomes de host ou sufixos com 2+ rótulos."
+                )
+        if (self.vapid_public_key or self.vapid_private_key or self.vapid_subject) and (
+            not self.vapid_valido()
+        ):
+            raise RuntimeError(
+                "Configuração VAPID inválida: confira VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY "
+                "(base64url, gerados por scripts/gerar-vapid.py) e VAPID_SUBJECT "
+                "(mailto: ou https://)."
+            )
+        if (self.webauthn_rp_id or self.webauthn_rp_name or self.webauthn_origins) and (
+            not self.webauthn_configurado()
+        ):
+            raise RuntimeError(
+                "Configuração WebAuthn inválida: defina WEBAUTHN_RP_ID (domínio, sem esquema), "
+                "WEBAUTHN_RP_NAME e WEBAUTHN_ORIGINS (https://, host igual ou subdomínio do RP ID)."
+            )
+        # localhost e http só valem fora de produção (validar_producao não roda em dev/teste).
+        origens_norm = self.origens_webauthn()
+        if self.webauthn_rp_id == "localhost" or any(
+            o.startswith("http://") or urlsplit(o).hostname == "localhost" for o in origens_norm
+        ):
+            raise RuntimeError(
+                "Configuração WebAuthn inválida em produção: WEBAUTHN_RP_ID não pode ser "
+                "localhost e WEBAUTHN_ORIGINS deve usar https:// com domínio real."
+            )
         if any(o.strip() == "*" for o in self.cors_origins):
             raise RuntimeError("CORS_ORIGINS não pode conter '*'.")

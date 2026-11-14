@@ -6,7 +6,7 @@ import atexit
 import logging
 import os
 
-from flask import Flask
+from flask import Flask, Request
 from flask_cors import CORS
 
 from app.auth.jwt import VerificadorJWT
@@ -24,6 +24,35 @@ from app.repositorios.base import Repositorio
 from app.saudacao.repositorio import RepositorioSaudacoes, SupabaseRepositorioSaudacoes
 from app.services.notificacoes import registrar_falha_sistema
 from app.services.registro_acessos import RegistradorAcessos
+
+ROTA_IMPORTAR_DADOS = "/api/admin/dados/importar"
+
+
+class RequisicaoApi(Request):
+    """Teto de corpo por rota: o global é pequeno (16 KB); só a importação de dados aceita o
+    arquivo inteiro (`DADOS_MAX_BYTES`). Funciona em qualquer Flask (sem depender do setter)."""
+
+    @property  # type: ignore[override]
+    def max_content_length(self) -> int | None:
+        if self.path == ROTA_IMPORTAR_DADOS:
+            return int(self.app_dados_max_bytes)
+        return self._max_global  # type: ignore[no-any-return]
+
+    @max_content_length.setter
+    def max_content_length(self, valor: int | None) -> None:  # chamado só pelo Flask >= 3.1
+        pass
+
+    @property
+    def _max_global(self) -> int | None:
+        from flask import current_app
+
+        return current_app.config.get("MAX_CONTENT_LENGTH")  # type: ignore[no-any-return]
+
+    @property
+    def app_dados_max_bytes(self) -> int:
+        from flask import current_app
+
+        return int(current_app.config["DADOS_MAX_BYTES"])
 
 
 def create_app(
@@ -115,6 +144,8 @@ def create_app(
         )
 
     app = Flask(__name__)
+    app.request_class = RequisicaoApi
+    app.config["DADOS_MAX_BYTES"] = cfg.dados_max_bytes
     app.extensions["saudacoes_repo"] = repo_saudacoes
     app.config["MAX_CONTENT_LENGTH"] = cfg.max_content_length
     app.config["TESTING"] = cfg.testing

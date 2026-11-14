@@ -188,6 +188,10 @@ class Config:
     limite_foto_perfil_ip: str = "30 per minute"
     max_emissoes_foto_perfil: int = 10
     limite_dashboards: str = "60 per minute"  # GET /api/dashboards*: RPCs agregadas, por usuário
+    # Exportar/importar dados (admin): arquivo JSON inteiro em memória; limites por usuário.
+    dados_max_bytes: int = 10 * 1024 * 1024
+    limite_dados_exportar: str = "3 per minute"
+    limite_dados_importar: str = "5 per minute"
     limite_busca_usuarios: str = "30 per minute"  # GET /api/admin/usuarios com `q` (varredura)
     # Relatórios: teto de linhas por relatório (o banco aceita até 5001 por consulta: limite + 1).
     relatorio_max_linhas: int = 5000
@@ -287,6 +291,9 @@ class Config:
             ),
             email_notif_max_por_hora=_inteiro(
                 os.environ.get("EMAIL_NOTIF_MAX_POR_HORA"), 20, 1, 1000
+            ),
+            dados_max_bytes=_inteiro(
+                os.environ.get("DADOS_MAX_BYTES"), 10 * 1024 * 1024, 1024, 100 * 1024 * 1024
             ),
         )
 

@@ -6,6 +6,7 @@ import { admin } from '@/lib/api';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { AdminShell } from '@/components/admin-shell';
+import { SecaoDados } from '@/components/secao-dados';
 import { SecaoIA } from '@/components/secao-ia';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
@@ -86,6 +87,7 @@ function Conteudo() {
       </p>
 
       <SecaoIA />
+      <SecaoDados />
     </>
   );
 }

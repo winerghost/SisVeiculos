@@ -57,7 +57,7 @@ COLUNAS_REQ = (
     "id,usuario_id,nome_solicitante,unidade,hora_saida,trajeto,observacao,veiculo_id,status,"
     "autorizado_por,autorizado_em,saida_real_em,chegada_real_em,saida_registrada_por,"
     "chegada_registrada_por,cancelada_por,cancelada_em,km_saida,km_chegada,motorista_id,"
-    "criado_em,atualizado_em"
+    "motorista_alterado_por,criado_em,atualizado_em"
 )
 
 COLUNAS_REQ_SET = frozenset(COLUNAS_REQ.split(","))
@@ -328,6 +328,11 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return RequisicaoInvalida(MSG_CHECKLIST_INVALIDO, "checklist_invalido")
     if codigo == "22P02" and "nivel_combustivel" in texto:
         return RequisicaoInvalida("Nível de combustível inválido.", "checklist_invalido")
+    if codigo in ("AG060", "AG061"):  # dados: arquivo/estrutura inválida (texto fixo do banco)
+        return RequisicaoInvalida(
+            str(getattr(e, "message", "") or "Arquivo de dados inválido.")[:200],
+            "arquivo_invalido",
+        )
     if codigo == "AG050":  # passkey: parâmetros inválidos (mensagem fixa, sem eco)
         return RequisicaoInvalida("Dados da passkey inválidos.", "passkey_invalida")
     if codigo == "AG051":  # passkey: perfil inexistente ou inativo
@@ -550,6 +555,24 @@ class SupabaseRepositorio:
             .eq("id", requisicao_id)
             .limit(1)
             .execute()
+        )
+        return res.data[0] if res.data else None
+
+    def obter_requisicao_completa(self, requisicao_id: str) -> Requisicao | None:
+        """Linha INTEIRA (select *): só para o webhook n8n de saída/chegada; nunca vai à API."""
+        res = _exec(
+            lambda: self._c.table("requisicoes")
+            .select("*")
+            .eq("id", requisicao_id)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+    def obter_veiculo_completo(self, veiculo_id: str) -> dict[str, Any] | None:
+        """Linha INTEIRA do veículo (select *): só para o webhook n8n; nunca vai à API."""
+        res = _exec(
+            lambda: self._c.table("veiculos").select("*").eq("id", veiculo_id).limit(1).execute()
         )
         return res.data[0] if res.data else None
 
@@ -1672,6 +1695,39 @@ class SupabaseRepositorio:
             repetir_lock=True,
             admin=True,
         )
+
+    # -- exportar/importar dados (admin). A RPC importar_dados é atômica (transação única) ------
+    def exportar_dados(self, *, admin_id: str) -> dict[str, Any]:
+        """RPC `exportar_dados(p_admin)`: {tabelas, contagens} num único snapshot. A auditoria
+        `dados_exportados` (só contagens) sai na MESMA transação: sem trilha, sem dados."""
+        res = _exec(
+            lambda: self._c.rpc("exportar_dados", {"p_admin": admin_id}).execute(),
+            admin=True,
+        )
+        if not isinstance(res.data, dict) or not isinstance(res.data.get("tabelas"), dict):
+            log.error("erro_banco resposta_exportar_dados_invalida")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return res.data
+
+    def importar_dados(
+        self, payload: dict[str, Any], *, admin_id: str, confirmar: bool
+    ) -> dict[str, Any]:
+        """RPC `importar_dados(p_payload, p_admin, p_confirmar)`: prévia (não grava) ou mescla
+        atômica; `payload` é o envelope {versao, tabelas}. Devolve {resumo, erros, erros_total,
+        aplicado, politica_conflito}; havendo erro, nada é gravado. Audita `dados_importados`
+        na própria transação."""
+        res = _exec(
+            lambda: self._c.rpc(
+                "importar_dados",
+                {"p_payload": payload, "p_admin": admin_id, "p_confirmar": confirmar},
+            ).execute(),
+            repetir_lock=True,
+            admin=True,
+        )
+        if not isinstance(res.data, dict):
+            log.error("erro_banco resposta_importar_dados_invalida")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        return res.data
 
     # -- histórico de acessos --------------------------------------------------------------
     def registrar_acesso_login(

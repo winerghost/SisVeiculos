@@ -6,15 +6,17 @@ Todas exigem role `admin` (lido de `perfis`, nunca do cliente). A checagem fica 
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request
 
 from app.auth.decoradores import autenticar, tem_segundo_fator
 from app.errors import ErroApi, RequisicaoInvalida
 from app.extensions import chave_usuario, deps, limiter
 from app.services.acessos import ServicoAcessos
 from app.services.admin_configuracoes import ServicoConfiguracoes
+from app.services.admin_dados import ServicoDados
 from app.services.admin_ia import ServicoIAAdmin
 from app.services.admin_usuarios import ServicoUsuarios
 from app.services.admin_veiculos import ServicoVeiculosAdmin
@@ -289,3 +291,44 @@ def testar_ia() -> Any:
 @limiter.limit(_limite_escrita)
 def atualizar_ia() -> Any:
     return jsonify(_ia_admin().atualizar(g.perfil, _corpo()))
+
+
+# ------------------------------------------------------------------------- dados (export/import)
+def _limite_dados_exportar() -> str:
+    return deps().config.limite_dados_exportar
+
+
+def _limite_dados_importar() -> str:
+    return deps().config.limite_dados_importar
+
+
+def _dados() -> ServicoDados:
+    d = deps()
+    return ServicoDados(d.repo, max_bytes=d.config.dados_max_bytes)
+
+
+@admin.get("/dados/exportar")
+@limiter.limit(_limite_dados_exportar, key_func=chave_usuario)
+def exportar_dados() -> Any:
+    """Baixa o JSON versionado (sem fotos, perfis ou senhas). A exportação é auditada."""
+    arquivo, nome = _dados().exportar(g.perfil)
+    resp = Response(
+        json.dumps(arquivo, ensure_ascii=False, separators=(",", ":")),
+        mimetype="application/json",
+    )
+    resp.headers["Content-Disposition"] = f'attachment; filename="{nome}"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@admin.post("/dados/importar")
+@limiter.limit(_limite_dados_importar, key_func=chave_usuario)
+def importar_dados() -> Any:
+    """Prévia (`?modo=previa`, não grava) ou confirmação (`?modo=confirmar`) da importação.
+
+    O corpo é o arquivo JSON da exportação. O teto de tamanho vale só aqui (ver `RequisicaoApi`:
+    o global é pequeno); acima dele a resposta é 413 `payload_grande`.
+    """
+    servico = _dados()
+    bruto = request.get_data(cache=False)  # acima do teto: 413 `payload_grande`
+    return jsonify(servico.importar(g.perfil, bruto, request.args.get("modo")))

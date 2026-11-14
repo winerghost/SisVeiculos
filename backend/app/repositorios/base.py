@@ -36,6 +36,15 @@ class Repositorio(Protocol):
 
     def obter_requisicao(self, requisicao_id: str) -> Requisicao | None: ...
 
+    def obter_requisicao_completa(self, requisicao_id: str) -> Requisicao | None:
+        """Todas as colunas da linha (inclusive futuras). Só para o webhook n8n de saída/chegada,
+        que passa pela denylist; nunca devolver em resposta da API."""
+        ...
+
+    def obter_veiculo_completo(self, veiculo_id: str) -> dict[str, Any] | None:
+        """Todas as colunas do veículo. Só para o webhook n8n; nunca devolver na API."""
+        ...
+
     def listar_requisicoes(
         self,
         *,
@@ -611,4 +620,17 @@ class Repositorio(Protocol):
 
     def purgar_webauthn(self) -> int:
         """Remove desafios e reautenticações vencidos há mais de 1 dia."""
+        ...
+
+    # -- exportar/importar dados (admin; fotos, perfis e auditoria ficam fora) -------------------
+    def exportar_dados(self, *, admin_id: str) -> dict[str, Any]:
+        """RPC `exportar_dados`: {tabelas:{...}, contagens:{...}}; audita `dados_exportados`."""
+        ...
+
+    def importar_dados(
+        self, payload: dict[str, Any], *, admin_id: str, confirmar: bool
+    ) -> dict[str, Any]:
+        """RPC `importar_dados`: {resumo:{tabela:{novos,existentes,conflitos}}, erros:[{tabela,
+        indice,mensagem}]}. `confirmar=False` não grava. Mescla, nunca apaga; com erro, nada grava.
+        """
         ...

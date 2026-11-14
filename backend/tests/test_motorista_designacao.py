@@ -70,8 +70,9 @@ def test_autorizar_com_motorista_envia_o_autorizador_do_jwt(client, auth, repo, 
     r = autorizar(client, auth, c.aut, rid, motorista_id=m.a.id, motorista_alterado_por=c.adm.id)
     assert r.status_code == 200, r.get_json()
     assert repo.requisicoes[rid]["motorista_id"] == m.a.id
-    assert "motorista_alterado_por" not in repo.requisicoes[rid]  # nunca persiste
-    assert "motorista_alterado_por" not in r.get_json()
+    # A coluna existe (agora em COLUNAS_REQ), mas o trigger sempre a zera: nunca persiste.
+    assert repo.requisicoes[rid].get("motorista_alterado_por") is None
+    assert r.get_json().get("motorista_alterado_por") is None
     (ev,) = designacoes(repo)
     assert ev["ator_id"] == c.aut.id and ev["para"] == m.a.id and ev["de"] is None
 

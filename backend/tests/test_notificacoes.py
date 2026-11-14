@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 import uuid
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -690,7 +691,7 @@ def test_toda_chave_da_requisicao_vai_em_detalhes_menos_denylist(client_n, auth,
     from app.services.requisicoes import DENYLIST_WEBHOOK_REQ
 
     # Sem recursos opcionais ligados, km e motorista saem da linha por regra de flag (ver abaixo).
-    por_flag = {"km_saida", "km_chegada", "motorista_id"}
+    por_flag = {"km_saida", "km_chegada", "motorista_id", "motorista_alterado_por"}
 
     _fluxo_ate_chegada(client_n, auth, cen)
     vistos = 0
@@ -704,11 +705,62 @@ def test_toda_chave_da_requisicao_vai_em_detalhes_menos_denylist(client_n, auth,
 
 
 def test_coluna_nova_passa_sozinha_ao_webhook(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    # O fake emula o select(COLUNAS_REQ) da API: a coluna futura só chega pelo select('*') do
+    # webhook (`obter_requisicao_completa`), nunca pela resposta da API.
     rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
     acao(client_n, auth, cen.aut, rid, "autorizar")
     repo.requisicoes[rid]["coluna_futura"] = "valor-novo"
-    acao(client_n, auth, cen.aut, rid, "saida")
+    r = acao(client_n, auth, cen.aut, rid, "saida")
+    assert r.status_code == 200 and "coluna_futura" not in r.get_json()
+    assert "coluna_futura" not in grav.chamadas[-1][1]  # linha da API (allowlist)
     assert dict(grav.detalhes)["requisicao.saida"]["requisicao"]["coluna_futura"] == "valor-novo"
+    dono = client_n.get(f"/api/requisicoes/{rid}", headers=auth(cen.sol.id)).get_json()
+    assert "coluna_futura" not in dono
+
+
+def test_motorista_alterado_por_vai_ao_webhook_e_nao_vaza_ao_solicitante(  # type: ignore[no-untyped-def]
+    client_n, auth, cen, grav, repo
+):
+    repo.config = replace(repo.ler_configuracoes(), motorista=True)
+    rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
+    acao(client_n, auth, cen.aut, rid, "autorizar")
+    acao(client_n, auth, cen.aut, rid, "saida")
+    assert "motorista_alterado_por" in dict(grav.detalhes)["requisicao.saida"]["requisicao"]
+    repo.requisicoes[rid]["motorista_alterado_por"] = cen.aut.id  # cenário defensivo
+    dono = client_n.get(f"/api/requisicoes/{rid}", headers=auth(cen.sol.id)).get_json()
+    assert "motorista_alterado_por" not in dono
+
+
+def test_motorista_alterado_por_e_codigo_publico_omitidos_com_recurso_desligado(  # type: ignore[no-untyped-def]
+    client_n, auth, cen, grav, repo
+):
+    repo.config = replace(repo.ler_configuracoes(), motorista=False, leitor_qr_veiculos=False)
+    repo.veiculos[cen.veiculo]["codigo_publico"] = "cod-qr"
+    _fluxo_ate_chegada(client_n, auth, cen)
+    for evento in ("requisicao.saida", "requisicao.chegada"):
+        d = dict(grav.detalhes)[evento]
+        assert "motorista_alterado_por" not in d["requisicao"]
+        assert "codigo_publico" not in d["veiculo"]
+
+
+def test_veiculo_vai_completo_ao_webhook_menos_denylist(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    repo.config = replace(repo.ler_configuracoes(), leitor_qr_veiculos=True)
+    repo.veiculos[cen.veiculo].update(
+        {
+            "placa": "ABC1D23",
+            "modelo": "Sedan",
+            "codigo_publico": "cod-qr",
+            "foto_url": "https://x/v.png",
+            "coluna_futura_veiculo": 7,
+        }
+    )
+    _fluxo_ate_chegada(client_n, auth, cen)
+    for evento in ("requisicao.saida", "requisicao.chegada"):
+        v = dict(grav.detalhes)[evento]["veiculo"]
+        assert v["id"] == cen.veiculo and v["descricao"] == "Carro"
+        assert v["placa"] == "ABC1D23" and v["modelo"] == "Sedan"
+        assert v["codigo_publico"] == "cod-qr" and v["coluna_futura_veiculo"] == 7
+        assert v["ativo"] is True and "foto_url" not in v
 
 
 def test_falha_ao_montar_detalhes_nao_quebra_resposta(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mockarApi } from './mock-api';
 import { mockarRelatorios, type OpcoesRelatorios } from './mock-relatorios';
 
@@ -322,6 +322,104 @@ test('seletor de colunas: ordem, exige flag, restaurar padrão e prévia', async
   await page.getByRole('button', { name: 'Visualizar' }).click();
   await expect(page.getByRole('columnheader')).toHaveText(['Data', 'Solicitante', 'Situação']);
   expect(rel.consultas.at(-1)!.query.colunas).toBeUndefined();
+});
+
+/** Arrasta a alça de uma coluna até o ponto `destinoY` (passos intermediários geram pointermove). */
+async function arrastarAlca(
+  page: Page,
+  chave: string,
+  destino: (caixaAlvo: { y: number; height: number }) => number,
+  alvoChave: string,
+  soltar = true,
+) {
+  const alca = page.getByTestId(`alca-coluna-${chave}`);
+  const origem = (await alca.boundingBox())!;
+  const alvo = (await page.getByTestId(`alca-coluna-${alvoChave}`).boundingBox())!;
+  const x = origem.x + origem.width / 2;
+  await page.mouse.move(x, origem.y + origem.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, origem.y + origem.height / 2 - 6, { steps: 3 });
+  await page.mouse.move(x, destino(alvo), { steps: 12 });
+  if (soltar) await page.mouse.up();
+}
+
+async function ordemMarcadas(gaveta: Locator) {
+  return gaveta.getByRole('checkbox').evaluateAll((els) =>
+    els.map((el) => (el.closest('li')?.textContent ?? '').trim()),
+  );
+}
+
+test('seletor de colunas: arrastar a alça reordena e Aplicar envia a nova ordem', async ({
+  page,
+}) => {
+  const rel = await abrir(page, 'autorizador', { selecaoColunas: true });
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  const gaveta = page.getByRole('dialog');
+  const alca = gaveta.getByTestId('alca-coluna-situacao');
+  await expect(alca).toHaveAttribute('aria-label', 'Arrastar Situação');
+  const caixa = (await alca.boundingBox())!;
+  expect(caixa.width).toBeGreaterThanOrEqual(44);
+  expect(caixa.height).toBeGreaterThanOrEqual(44);
+  expect(await alca.evaluate((el) => getComputedStyle(el).touchAction)).toBe('none');
+
+  // 3ª coluna (Situação) solta acima da 1ª (Data).
+  await arrastarAlca(page, 'situacao', (a) => a.y + 2, 'data');
+  expect((await ordemMarcadas(gaveta)).slice(0, 3)).toEqual([
+    expect.stringContaining('Situação'),
+    expect.stringContaining('Data'),
+    expect.stringContaining('Solicitante'),
+  ]);
+
+  await gaveta.getByRole('button', { name: 'Aplicar' }).click();
+  await expect(page.getByLabel('Colunas aplicadas')).toHaveText('Situação · Data · Solicitante');
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(page.getByRole('columnheader')).toHaveText(['Situação', 'Data', 'Solicitante']);
+  expect(rel.consultas.at(-1)!.query.colunas).toBe('situacao,data,solicitante');
+});
+
+test('seletor de colunas: setas e teclado na alça continuam funcionando', async ({ page }) => {
+  const rel = await abrir(page, 'autorizador', { selecaoColunas: true });
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  const gaveta = page.getByRole('dialog');
+
+  await gaveta.getByRole('button', { name: 'Subir Situação' }).click();
+  await gaveta.getByRole('button', { name: 'Descer Data' }).click();
+  // Ordem final conferida contra o que a tela aplicou (setas e teclado só trocam posições).
+  const alca = gaveta.getByTestId('alca-coluna-solicitante');
+  await alca.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(gaveta.locator('[aria-live]').filter({ hasText: /\S/ }).first()).toContainText(
+    /Solicitante/,
+  );
+  await gaveta.getByRole('button', { name: 'Aplicar' }).click();
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  const colunas = rel.consultas.at(-1)!.query.colunas as string;
+  expect(colunas.split(',').sort()).toEqual(['data', 'situacao', 'solicitante']);
+  expect(colunas).toBe(
+    (await page.getByLabel('Colunas aplicadas').innerText())
+      .split(' · ')
+      .map((r) => ({ Data: 'data', Solicitante: 'solicitante', 'Situação': 'situacao' })[r])
+      .join(','),
+  );
+});
+
+test('seletor de colunas: Escape durante o arraste cancela e restaura a ordem', async ({
+  page,
+}) => {
+  const rel = await abrir(page, 'autorizador', { selecaoColunas: true });
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  const gaveta = page.getByRole('dialog');
+  const antes = await ordemMarcadas(gaveta);
+
+  await arrastarAlca(page, 'situacao', (a) => a.y + 2, 'data', false);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  expect(await ordemMarcadas(gaveta)).toEqual(antes);
+  // Escape cancela o arraste; a gaveta segue aberta e Aplicar envia a ordem original.
+  await expect(gaveta).toBeVisible();
+  await gaveta.getByRole('button', { name: 'Aplicar' }).click();
+  await page.getByRole('button', { name: 'Visualizar' }).click();
+  expect(rel.consultas.at(-1)!.query.colunas).toBe('data,solicitante,situacao');
 });
 
 test('seletor de colunas: mostra a mensagem 400 da API', async ({ page }) => {

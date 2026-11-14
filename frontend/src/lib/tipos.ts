@@ -749,3 +749,35 @@ export interface CredencialSerializada {
   clientExtensionResults?: Record<string, unknown>;
   authenticatorAttachment?: string | null;
 }
+
+/** Contagens por tabela da prévia de importação (calculadas pela API). */
+export interface ResumoTabelaImportacao {
+  novos: number;
+  existentes: number;
+  conflitos: number;
+}
+
+export interface ErroImportacao {
+  tabela: string;
+  indice: number;
+  mensagem: string;
+}
+
+/** Flag de Configurações que a importação alteraria (só booleanos; calculado pela API). */
+export interface ConfiguracaoAlterada {
+  chave: string;
+  /** Rótulo pt-BR da configuração, vindo da API. */
+  rotulo: string;
+  de: boolean;
+  para: boolean;
+}
+
+/** Resposta de POST /admin/dados/importar (prévia ou confirmação). */
+export interface RespostaImportacao {
+  resumo: Record<string, ResumoTabelaImportacao>;
+  erros: ErroImportacao[];
+  configuracoes_alteradas: ConfiguracaoAlterada[];
+  /** Só é true quando a confirmação gravou de fato; a prévia devolve false. */
+  aplicado: boolean;
+  acoes_permitidas: string[];
+}

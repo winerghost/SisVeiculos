@@ -67,6 +67,21 @@ export function mover(itens: ItemColuna[], indice: number, delta: -1 | 1): ItemC
   });
 }
 
+/**
+ * Arraste vertical: dado o deslocamento `dy` da linha arrastada, diz se ela cruzou o meio do
+ * vizinho de cima (-1), do de baixo (1) ou nenhum (0). As alturas incluem o espaçamento entre
+ * linhas; `null` indica que não há vizinho daquele lado. Função pura, só geometria de UX.
+ */
+export function trocaPorArraste(
+  dy: number,
+  alturaCima: number | null,
+  alturaBaixo: number | null,
+): -1 | 0 | 1 {
+  if (alturaBaixo !== null && dy > alturaBaixo / 2) return 1;
+  if (alturaCima !== null && dy < -alturaCima / 2) return -1;
+  return 0;
+}
+
 /** Corpo JSON do envio por e-mail: bool vai como booleano; os demais como texto. */
 export function paraCorpo(
   filtros: FiltroRelatorio[],

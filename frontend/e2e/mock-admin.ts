@@ -159,7 +159,13 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     reenvios: number;
     /** IDs de usuário cuja foto foi removida pelo admin. */
     fotosRemovidas: string[];
+    /** Modo (query) e texto do corpo de cada POST /api/admin/dados/importar. */
+    importacoes: { modo: string | null; corpo: string }[];
+    /** Quantidade de GET /api/admin/dados/exportar. */
+    exportacoes: number;
   } = {
+    importacoes: [],
+    exportacoes: 0,
     fotosRemovidas: [],
     consultas: [],
     acessos: [],
@@ -525,6 +531,66 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           acoes_permitidas: acoesColecao,
         },
       });
+    }
+
+    if (recurso === 'dados') {
+      if (id === 'exportar' && m === 'GET') {
+        corpos.exportacoes += 1;
+        return route.fulfill({
+          contentType: 'application/json',
+          headers: { 'Content-Disposition': 'attachment; filename="sisveiculos-dados.json"' },
+          body: JSON.stringify({ versao: 1, tabelas: {} }),
+        });
+      }
+      if (id === 'importar' && m === 'POST') {
+        const modo = url.searchParams.get('modo');
+        const corpo = req.postData() ?? '';
+        corpos.importacoes.push({ modo, corpo });
+        // Corpo com "conflito": a API devolve erro de linha e não oferece `confirmar`.
+        if (corpo.includes('conflito')) {
+          return route.fulfill({
+            json: {
+              resumo: { requisicoes: { novos: 0, existentes: 0, conflitos: 1 } },
+              erros: [
+                {
+                  tabela: 'requisicoes',
+                  indice: 2,
+                  mensagem: 'Veículo ocupado por outra requisição.',
+                },
+              ],
+              configuracoes_alteradas: [],
+              aplicado: false,
+              acoes_permitidas: [],
+            },
+          });
+        }
+        // Corpo com "corrida": a prévia passa, mas a confirmação não grava (aplicado=false + erro).
+        if (corpo.includes('corrida') && modo === 'confirmar') {
+          return route.fulfill({
+            json: {
+              resumo: { requisicoes: { novos: 0, existentes: 0, conflitos: 1 } },
+              erros: [
+                { tabela: 'requisicoes', indice: 0, mensagem: 'Veículo passou a estar ocupado.' },
+              ],
+              configuracoes_alteradas: [],
+              aplicado: false,
+              acoes_permitidas: ['confirmar'],
+            },
+          });
+        }
+        return route.fulfill({
+          json: {
+            resumo: {
+              veiculos: { novos: 1, existentes: 2, conflitos: 0 },
+              requisicoes: { novos: 5, existentes: 0, conflitos: 0 },
+            },
+            erros: [],
+            configuracoes_alteradas: [{ chave: 'checklist', rotulo: 'Checklist', de: false, para: true }],
+            aplicado: modo === 'confirmar',
+            acoes_permitidas: modo === 'previa' ? ['confirmar'] : [],
+          },
+        });
+      }
     }
 
     if (recurso === 'configuracoes') {

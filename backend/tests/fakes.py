@@ -15,8 +15,10 @@ from typing import Any
 
 from app.errors import VeiculoOcupado
 from app.modelos import ESTADOS_ABERTOS, Configuracoes, Perfil, Requisicao
+from app.repositorios.supabase_repo import filtrar_colunas
 from tests.fakes_admin import ANTES, AdminMemoria, erro_db
 from tests.fakes_checklist import ChecklistMemoria
+from tests.fakes_dados import DadosMemoria
 from tests.fakes_dashboards import DashboardsMemoria
 from tests.fakes_foto import FotoPerfilMemoria
 from tests.fakes_notificacoes import NotificacoesMemoria
@@ -37,6 +39,7 @@ class RepoMemoria(
     ChecklistMemoria,
     FotoPerfilMemoria,
     DashboardsMemoria,
+    DadosMemoria,
     RelatoriosMemoria,
     NotificacoesMemoria,
     PushMemoria,
@@ -46,6 +49,7 @@ class RepoMemoria(
         self._init_checklist()
         self._init_foto()
         self._init_dashboards()
+        self._init_dados()
         self._init_relatorios()
         self._init_notificacoes()
         self._init_push()
@@ -135,6 +139,7 @@ class RepoMemoria(
                 "km_saida": None,
                 "km_chegada": None,
                 "motorista_id": None,
+                "motorista_alterado_por": None,  # coluna de transporte: o trigger sempre zera
                 "criado_em": agora,
                 "atualizado_em": agora,
                 **dados,
@@ -145,7 +150,15 @@ class RepoMemoria(
 
     def obter_requisicao(self, requisicao_id: str) -> Requisicao | None:
         r = self.requisicoes.get(requisicao_id)
-        return dict(r) if r else None
+        return filtrar_colunas(r) if r else None  # como o select(COLUNAS_REQ) real
+
+    def obter_requisicao_completa(self, requisicao_id: str) -> Requisicao | None:
+        r = self.requisicoes.get(requisicao_id)
+        return dict(r) if r else None  # como o select('*') real: colunas futuras inclusas
+
+    def obter_veiculo_completo(self, veiculo_id: str) -> dict[str, Any] | None:
+        v = self.veiculos.get(veiculo_id)
+        return dict(v) if v else None
 
     def listar_requisicoes(
         self,
@@ -289,7 +302,7 @@ class RepoMemoria(
             )
         r.update(campos)
         r[CARIMBOS[campos["status"]]] = datetime.now(UTC).isoformat()
-        return dict(r)
+        return filtrar_colunas(r)  # como o RETURNING com COLUNAS_REQ real
 
     def _trigger_autodecisao(self, r: Requisicao, campos: dict[str, Any]) -> None:
         """Emula AG040: autorizar/negar a própria requisição com a flag desligada."""

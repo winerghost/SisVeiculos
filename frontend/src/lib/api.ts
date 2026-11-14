@@ -7,6 +7,7 @@ import type {
   ListaSaudacoes,
   RespostaSaudacao,
   ResumoGerado,
+  RespostaImportacao,
   StatusSaudacao,
   ResultadoTesteIA,
   ConfiguracoesAdmin,
@@ -218,6 +219,14 @@ export const admin = {
   configuracoes: () => chamar<ConfiguracoesAdmin>('/admin/configuracoes'),
   atualizarConfiguracoes: (d: Record<string, boolean>) =>
     chamar<ConfiguracoesAdmin>('/admin/configuracoes', { method: 'PUT', body: JSON.stringify(d) }),
+  /** Exportação de dados (JSON versionado, sem fotos nem usuários); o arquivo vem pronto da API. */
+  exportarDados: () => chamarArquivo('/admin/dados/exportar', 'dados.json'),
+  /** O texto do arquivo vai como está no corpo; a API valida tudo. `previa` não grava. */
+  importarDados: (texto: string, modo: 'previa' | 'confirmar') =>
+    chamar<RespostaImportacao>(`/admin/dados/importar${query({ modo })}`, {
+      method: 'POST',
+      body: texto,
+    }),
   ia: () => chamar<ConfiguracaoIA>('/admin/ia'),
   atualizarIA: (d: CorpoIA) =>
     chamar<ConfiguracaoIA>('/admin/ia', { method: 'PUT', body: JSON.stringify(d) }),

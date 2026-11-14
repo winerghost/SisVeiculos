@@ -501,3 +501,71 @@ test('admin: erro 409 da API na troca de foto aparece no alerta sem alteração'
   expect(mock.corpos.confirmarFoto).toHaveLength(0);
   await expect(page.getByRole('button', { name: 'Enviar foto' })).toBeEnabled();
 });
+
+test('admin: dados exporta e importa com prévia; Confirmar só com acoes_permitidas', async ({
+  page,
+}) => {
+  const mock = await entrarAdmin(page);
+  await page.goto('/admin/configuracoes');
+
+  const secao = page.getByRole('region', { name: 'Dados' });
+  await expect(secao).toBeVisible();
+  for (const b of [
+    secao.getByRole('button', { name: 'Exportar dados' }),
+    secao.getByRole('button', { name: 'Selecionar arquivo' }),
+  ]) {
+    const caixa = await b.boundingBox();
+    expect(caixa?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+
+  const download = page.waitForEvent('download');
+  await secao.getByRole('button', { name: 'Exportar dados' }).click();
+  expect((await download).suggestedFilename()).toBe('sisveiculos-dados.json');
+  expect(mock.corpos.exportacoes).toBe(1);
+
+  // Arquivo com conflito: a API devolve erro de linha e não oferece Confirmar.
+  await secao.getByTestId('arquivo-importacao').setInputFiles({
+    name: 'ruim.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"conflito":true}'),
+  });
+  await expect(secao.getByText('Veículo ocupado por outra requisição.')).toBeVisible();
+  await expect(secao.getByText(/Requisições, linha 3/)).toBeVisible();
+  await expect(secao.getByRole('button', { name: 'Confirmar importação' })).toHaveCount(0);
+
+  // Aviso LGPD junto ao Exportar.
+  await expect(secao.getByText(/dados pessoais de servidores/)).toBeVisible();
+
+  // Confirmação que a API não aplicou: mostra o erro, não conclui e mantém o Confirmar.
+  await secao.getByTestId('arquivo-importacao').setInputFiles({
+    name: 'corrida.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"corrida":true}'),
+  });
+  await secao.getByRole('button', { name: 'Confirmar importação' }).click();
+  await expect(secao.getByText('Veículo passou a estar ocupado.')).toBeVisible();
+  await expect(secao.getByText('Importação concluída')).toHaveCount(0);
+  await expect(secao.getByText('corrida.json')).toBeVisible();
+
+  // Arquivo válido: prévia com resumo e Confirmar liberado pela API.
+  const bom = '{"versao":1,"tabelas":{}}';
+  await secao.getByTestId('arquivo-importacao').setInputFiles({
+    name: 'bom.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(bom),
+  });
+  await expect(secao.getByText('5 novos · 0 existentes · 0 conflitos')).toBeVisible();
+  await expect(secao.getByText('Checklist', { exact: true }).last()).toBeVisible();
+  await expect(secao.getByText(/desligado → ligado/)).toBeVisible();
+  await secao.getByRole('button', { name: 'Confirmar importação' }).click();
+  await expect(secao.getByText('Importação concluída')).toBeVisible();
+  await expect(secao.getByRole('button', { name: 'Confirmar importação' })).toHaveCount(0);
+  expect(mock.corpos.importacoes.map((i) => i.modo)).toEqual([
+    'previa',
+    'previa',
+    'confirmar',
+    'previa',
+    'confirmar',
+  ]);
+  expect(mock.corpos.importacoes[4]?.corpo).toBe(bom);
+});

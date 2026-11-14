@@ -130,9 +130,11 @@ EVENTO_POR_ACAO = {
     "cancelar": "requisicao.cancelada",
 }
 
-# Webhook n8n em saída/chegada: a linha da requisição vai INTEIRA (colunas novas passam sozinhas).
-# Só chaves cujo NOME contenha um destes trechos (segredo, acesso, contato) ficam de fora, em
-# qualquer nível de aninhamento. Não é allowlist: chave nova e inofensiva passa sozinha.
+# Webhook n8n em saída/chegada: a linha da requisição e a do veículo vão INTEIRAS, lidas com
+# select('*') por métodos próprios do repositório (`obter_requisicao_completa`,
+# `obter_veiculo_completo`), então coluna nova no banco chega sem mexer em COLUNAS_REQ. Os filtros
+# finos ficam no n8n (decisão do dono do projeto). Só chaves cujo NOME contenha um destes trechos
+# (segredo, acesso, contato) ficam de fora, em qualquer nível de aninhamento. Não é allowlist.
 DENYLIST_WEBHOOK_REQ = re.compile(
     r"email|e_mail|token|senha|password|secret|key|caminho|path|url|cpf|telefone|celular",
     re.IGNORECASE,
@@ -604,7 +606,8 @@ class ServicoRequisicoes:
         visivel = {
             k: v
             for k, v in r.items()
-            if k not in CAMPOS_ATORES + ("cancelada_por",) or v == r.get("usuario_id")
+            if k not in CAMPOS_ATORES + ("cancelada_por", "motorista_alterado_por")
+            or v == r.get("usuario_id")
         }
         if perfil is not None and perfil.role == "vigilante" and r.get("usuario_id") != perfil.id:
             visivel.pop("observacao", None)
@@ -837,7 +840,9 @@ class ServicoRequisicoes:
             ids.add(checklist["registrado_por"])
         nomes = self._repo.nomes_perfis(ids) if ids else {}
         veiculo_id = req.get("veiculo_id")
-        descricoes = self._repo.descricoes_veiculos({veiculo_id}) if veiculo_id else {}
+        # Linhas INTEIRAS do banco (colunas futuras inclusas); a denylist é aplicada abaixo.
+        linha = self._repo.obter_requisicao_completa(req["id"]) or req
+        veiculo = (self._repo.obter_veiculo_completo(veiculo_id) if veiculo_id else None) or {}
 
         def pessoa(pid: str | None) -> dict[str, Any]:
             return {"id": pid, "nome": nomes.get(pid) if pid else None}
@@ -847,13 +852,15 @@ class ServicoRequisicoes:
         if not config.quilometragem:
             omitir |= {"km_saida", "km_chegada"}
         if not config.motorista:
-            omitir.add("motorista_id")
+            omitir |= {"motorista_id", "motorista_alterado_por"}
+        if not config.leitor_qr_veiculos:
+            veiculo = {k: v for k, v in veiculo.items() if k != "codigo_publico"}
         detalhes: dict[str, Any] = {
             "momento": momento,
             "requisicao": filtrar_denylist_webhook(
-                {k: v for k, v in req.items() if k not in omitir}
+                {k: v for k, v in linha.items() if k not in omitir}
             ),
-            "veiculo": {"id": veiculo_id, "descricao": descricoes.get(veiculo_id or "")},
+            "veiculo": filtrar_denylist_webhook({"id": veiculo_id, "descricao": None, **veiculo}),
             **{papel: pessoa(pid) for papel, pid in papeis.items()},
             "saida_real_em": req.get("saida_real_em"),
             "chegada_real_em": req.get("chegada_real_em"),

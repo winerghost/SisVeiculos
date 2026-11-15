@@ -344,9 +344,9 @@ async function arrastarAlca(
 }
 
 async function ordemMarcadas(gaveta: Locator) {
-  return gaveta.getByRole('checkbox').evaluateAll((els) =>
-    els.map((el) => (el.closest('li')?.textContent ?? '').trim()),
-  );
+  return gaveta
+    .getByRole('checkbox')
+    .evaluateAll((els) => els.map((el) => (el.closest('li')?.textContent ?? '').trim()));
 }
 
 test('seletor de colunas: arrastar a alça reordena e Aplicar envia a nova ordem', async ({
@@ -398,7 +398,7 @@ test('seletor de colunas: setas e teclado na alça continuam funcionando', async
   expect(colunas).toBe(
     (await page.getByLabel('Colunas aplicadas').innerText())
       .split(' · ')
-      .map((r) => ({ Data: 'data', Solicitante: 'solicitante', 'Situação': 'situacao' })[r])
+      .map((r) => ({ Data: 'data', Solicitante: 'solicitante', Situação: 'situacao' })[r])
       .join(','),
   );
 });

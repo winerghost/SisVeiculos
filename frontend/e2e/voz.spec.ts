@@ -175,14 +175,14 @@ async function entrar(
 
 async function irParaNova(page: Page) {
   await page.getByRole('link', { name: 'Nova requisição' }).click();
-  await expect(page.getByLabel('Trajeto')).toBeVisible();
+  await expect(page.locator('#trajeto')).toBeVisible();
 }
 
 const MIC = (page: Page) => page.getByRole('button', { name: 'Falar para preencher o campo' });
 const OUVINDO = (page: Page) => page.getByRole('status').filter({ hasText: 'Ouvindo...' });
 const CONSENTIMENTO = (page: Page) =>
   page.getByRole('dialog', { name: 'Usar reconhecimento de voz?' });
-const OBSERVACAO = (page: Page) => page.getByLabel('Observação');
+const OBSERVACAO = (page: Page) => page.locator('#observacao');
 const REVISAO = (page: Page) => page.getByLabel('Texto reconhecido');
 
 /** Clica em Falar (modo local, sem consentimento) e espera o indicador. */
@@ -229,7 +229,7 @@ test.describe('disponibilidade', () => {
     await page.getByLabel('Veículo', { exact: true }).selectOption({ index: 1 });
     await page.getByRole('button', { name: /Escolha o dia e o horário/ }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Confirmar' }).click();
-    await page.getByLabel('Trajeto').fill('Sede -> Fórum');
+    await page.locator('#trajeto').fill('Sede -> Fórum');
     await page.getByRole('button', { name: 'Enviar requisição' }).click();
     await expect(page).toHaveURL(/\/requisicoes\/detalhe/);
     expect(mock.corpos).toHaveLength(1);
@@ -498,7 +498,7 @@ test.describe('captura e revisão', () => {
     await page.getByLabel('Veículo', { exact: true }).selectOption({ index: 1 });
     await page.getByRole('button', { name: /Escolha o dia e o horário/ }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Confirmar' }).click();
-    await page.getByLabel('Trajeto').fill('Sede -> Fórum');
+    await page.locator('#trajeto').fill('Sede -> Fórum');
 
     expect(postsApi(rede)).toHaveLength(0);
     expect(mock.corpos).toHaveLength(0);
@@ -520,7 +520,7 @@ test.describe('captura e revisão', () => {
     await page.getByLabel('Veículo', { exact: true }).selectOption({ index: 1 });
     await page.getByRole('button', { name: /Escolha o dia e o horário/ }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Confirmar' }).click();
-    await page.getByLabel('Trajeto').fill('Sede -> Fórum');
+    await page.locator('#trajeto').fill('Sede -> Fórum');
     await page.getByRole('button', { name: 'Enviar requisição' }).click();
     await expect(page).toHaveURL(/\/requisicoes\/detalhe/);
     expect(JSON.stringify(mock.corpos)).not.toContain('não deve ser enviado');
@@ -631,7 +631,7 @@ test.describe('parada automática', () => {
     await OBSERVACAO(page).focus();
     await comecarAOuvir(page);
     await OBSERVACAO(page).focus();
-    await page.getByLabel('Trajeto').focus();
+    await page.locator('#trajeto').focus();
     await expect.poll(async () => (await estadoVoz(page)).stops).toBe(1);
   });
 });
@@ -756,5 +756,207 @@ test.describe('viewport mobile', () => {
       () => document.documentElement.scrollWidth <= window.innerWidth,
     );
     expect(largura).toBe(true);
+  });
+});
+
+// ---- destino do texto falado ---------------------------------------------------------------
+test.describe('destino do texto falado', () => {
+  // Com a revisão aberta, os radios também se chamam "Trajeto" e "Observação": os campos são
+  // localizados pelo id para não colidir com getByLabel.
+  const CAMPO_TRAJETO = (page: Page) => page.locator('#trajeto');
+  const CAMPO_OBS = (page: Page) => page.locator('#observacao');
+  const DESTINOS = (page: Page) => page.getByRole('group', { name: 'Onde colocar o texto?' });
+  const RADIO = (page: Page, rotulo: string) =>
+    DESTINOS(page).getByRole('radio', { name: rotulo, exact: true });
+  const INSERIR = (page: Page) => page.getByRole('button', { name: 'Inserir no fim do campo' });
+  const SUBSTITUIR = (page: Page) => page.getByRole('button', { name: 'Substituir', exact: true });
+  const CONFIRMAR = (page: Page) =>
+    page.getByRole('alertdialog', { name: 'Confirmar substituição' });
+
+  async function abrirNova(page: Page) {
+    await entrar(page, { vozCampos: true }, 'local');
+    await irParaNova(page);
+  }
+
+  test('Trajeto continua sem botão Falar: um só microfone, abaixo da Observação', async ({
+    page,
+  }) => {
+    await abrirNova(page);
+    await expect(MIC(page)).toHaveCount(1);
+    const doTrajeto = CAMPO_TRAJETO(page).locator('xpath=..');
+    await expect(doTrajeto.getByRole('button', { name: /Falar/ })).toHaveCount(0);
+    const doObs = page.locator('div', { has: CAMPO_OBS(page) }).last();
+    await expect(doObs.getByRole('button', { name: /Falar/ })).toHaveCount(1);
+    const obs = await CAMPO_OBS(page).boundingBox();
+    const mic = await MIC(page).boundingBox();
+    expect(mic!.y).toBeGreaterThanOrEqual(obs!.y + obs!.height - 1);
+  });
+
+  test('revisão mostra os radios Trajeto e Observação, com Observação marcada', async ({
+    page,
+  }) => {
+    await abrirNova(page);
+    await ditar(page, 'texto qualquer');
+
+    await expect(DESTINOS(page)).toBeVisible();
+    await expect(DESTINOS(page).getByRole('radio')).toHaveCount(2);
+    await expect(RADIO(page, 'Trajeto')).toBeVisible();
+    await expect(RADIO(page, 'Observação')).toBeVisible();
+    await expect(RADIO(page, 'Observação')).toBeChecked();
+    await expect(RADIO(page, 'Trajeto')).not.toBeChecked();
+    // Radios nativos do mesmo grupo.
+    const nomes = await DESTINOS(page)
+      .locator('input[type="radio"]')
+      .evaluateAll((els) => els.map((e) => (e as HTMLInputElement).name));
+    expect(new Set(nomes).size).toBe(1);
+    expect(nomes[0]).toMatch(/-destino$/);
+    // A escolha aparece antes dos botões.
+    const grupo = await DESTINOS(page).boundingBox();
+    const botao = await INSERIR(page).boundingBox();
+    expect(grupo!.y).toBeLessThan(botao!.y);
+    // Alvo de toque >= 44px em cada opção.
+    for (const rotulo of ['Trajeto', 'Observação']) {
+      const opcao = DESTINOS(page).locator('label', { hasText: rotulo });
+      expect((await opcao.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  test('escolher Trajeto e Inserir preenche o Trajeto e não altera a Observação', async ({
+    page,
+  }) => {
+    await abrirNova(page);
+    await CAMPO_TRAJETO(page).fill('Sede');
+    await CAMPO_OBS(page).fill('Obs intacta');
+    await ditar(page, 'Fórum Central');
+
+    await RADIO(page, 'Trajeto').check();
+    await expect(RADIO(page, 'Trajeto')).toBeChecked();
+    await INSERIR(page).click();
+
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Sede Fórum Central');
+    await expect(CAMPO_OBS(page)).toHaveValue('Obs intacta');
+    await expect(REVISAO(page)).toHaveCount(0);
+  });
+
+  test('sem trocar a escolha, Inserir vai para a Observação', async ({ page }) => {
+    await abrirNova(page);
+    await CAMPO_TRAJETO(page).fill('Sede -> Fórum');
+    await ditar(page, 'levar processos');
+    await INSERIR(page).click();
+    await expect(CAMPO_OBS(page)).toHaveValue('levar processos');
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Sede -> Fórum');
+  });
+
+  test('Substituir só aparece quando o destino escolhido tem texto', async ({ page }) => {
+    await abrirNova(page);
+    await CAMPO_TRAJETO(page).fill('Trajeto antigo');
+    // Observação (padrão) vazia: sem Substituir.
+    await ditar(page, 'novo');
+    await expect(RADIO(page, 'Observação')).toBeChecked();
+    await expect(SUBSTITUIR(page)).toHaveCount(0);
+    // Trajeto com texto: Substituir aparece.
+    await RADIO(page, 'Trajeto').check();
+    await expect(SUBSTITUIR(page)).toBeVisible();
+    // Volta para Observação vazia: some de novo.
+    await RADIO(page, 'Observação').check();
+    await expect(SUBSTITUIR(page)).toHaveCount(0);
+  });
+
+  test('Substituir no Trajeto confirma com o rótulo do destino e troca só o Trajeto', async ({
+    page,
+  }) => {
+    await abrirNova(page);
+    await CAMPO_TRAJETO(page).fill('Trajeto antigo');
+    await CAMPO_OBS(page).fill('Obs mantida');
+    await ditar(page, 'Sede -> Tribunal');
+    await RADIO(page, 'Trajeto').check();
+
+    await SUBSTITUIR(page).click();
+    await expect(CONFIRMAR(page)).toBeVisible();
+    await expect(CONFIRMAR(page)).toContainText(
+      'Substituir tudo o que já foi digitado em Trajeto pelo texto reconhecido?',
+    );
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Trajeto antigo');
+
+    await page.getByRole('button', { name: 'Sim, substituir' }).click();
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Sede -> Tribunal');
+    await expect(CAMPO_OBS(page)).toHaveValue('Obs mantida');
+    await expect(REVISAO(page)).toHaveCount(0);
+  });
+
+  test('Substituir na Observação (padrão) confirma com o rótulo Observação', async ({ page }) => {
+    await abrirNova(page);
+    await CAMPO_OBS(page).fill('Obs antiga');
+    await CAMPO_TRAJETO(page).fill('Trajeto mantido');
+    await ditar(page, 'obs nova');
+
+    await SUBSTITUIR(page).click();
+    await expect(CONFIRMAR(page)).toContainText(
+      'Substituir tudo o que já foi digitado em Observação pelo texto reconhecido?',
+    );
+    await page.getByRole('button', { name: 'Sim, substituir' }).click();
+    await expect(CAMPO_OBS(page)).toHaveValue('obs nova');
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Trajeto mantido');
+  });
+
+  test('depois de aplicar, o foco vai ao campo de destino', async ({ page }) => {
+    await abrirNova(page);
+    // Inserir no Trajeto.
+    await ditar(page, 'Sede');
+    await RADIO(page, 'Trajeto').check();
+    await INSERIR(page).click();
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Sede');
+    await expect(CAMPO_TRAJETO(page)).toBeFocused();
+
+    // Inserir na Observação (padrão).
+    await ditar(page, 'nota');
+    await INSERIR(page).click();
+    await expect(CAMPO_OBS(page)).toHaveValue('nota');
+    await expect(CAMPO_OBS(page)).toBeFocused();
+
+    // Substituir no Trajeto também foca o Trajeto.
+    await ditar(page, 'Fórum');
+    await RADIO(page, 'Trajeto').check();
+    await SUBSTITUIR(page).click();
+    await page.getByRole('button', { name: 'Sim, substituir' }).click();
+    await expect(CAMPO_TRAJETO(page)).toHaveValue('Fórum');
+    await expect(CAMPO_TRAJETO(page)).toBeFocused();
+  });
+
+  test('o maxLength e o aviso de corte seguem o destino escolhido (Trajeto)', async ({ page }) => {
+    await abrirNova(page);
+    const limite = Number(await CAMPO_TRAJETO(page).getAttribute('maxlength'));
+    expect(limite).toBeGreaterThan(10);
+    await CAMPO_TRAJETO(page).fill('a'.repeat(limite - 5));
+    await ditar(page, 'bb '.repeat(10).trim());
+    await RADIO(page, 'Trajeto').check();
+    await INSERIR(page).click();
+    const valor = await CAMPO_TRAJETO(page).inputValue();
+    expect(valor).toHaveLength(limite);
+    expect(valor.startsWith('a'.repeat(limite - 5))).toBe(true);
+    await expect(
+      page.getByText(new RegExp(`passou do limite de ${limite} caracteres e foi cortado`)),
+    ).toBeVisible();
+    await expect(CAMPO_OBS(page)).toHaveValue('');
+  });
+
+  test('checklist (avarias) NÃO mostra a escolha de destino e segue igual', async ({ page }) => {
+    await entrar(
+      page,
+      { vozCampos: true, checklist: true, sementes: [{ status: 'autorizada' }] },
+      'local',
+      'autorizador@exemplo.com',
+    );
+    await page.getByRole('link', { name: 'Autorizar' }).click();
+    await page.getByRole('tab', { name: /Autorizadas · 1/ }).click();
+    await page.locator('label', { hasText: 'Há avarias' }).click();
+    await ditar(page, 'risco no para-choque');
+
+    await expect(page.getByText('Onde colocar o texto?')).toHaveCount(0);
+    await expect(DESTINOS(page)).toHaveCount(0);
+    await expect(INSERIR(page)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Descartar' })).toBeVisible();
+    await INSERIR(page).click();
+    await expect(page.getByLabel('Descrição das avarias')).toHaveValue('risco no para-choque');
   });
 });

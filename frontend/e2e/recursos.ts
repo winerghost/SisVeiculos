@@ -1,4 +1,4 @@
-// As 13 chaves de `recursos` que a API devolve em /api/eu (catálogo de Configurações do backend:
+// As 14 chaves de `recursos` que a API devolve em /api/eu (catálogo de Configurações do backend:
 // backend/app/services/admin_configuracoes.py). Todas desligadas por padrão, como no servidor.
 export const CHAVES_RECURSOS = [
   'quilometragem',
@@ -14,11 +14,12 @@ export const CHAVES_RECURSOS = [
   'vigilante_km',
   'autorizador_decide_propria',
   'autorizador_km',
+  'motorista_km',
 ] as const;
 
 export type ChaveRecurso = (typeof CHAVES_RECURSOS)[number];
 
-/** Objeto `recursos` completo (13 chaves); `ligados` sobrepõe os que estiverem ligados. */
+/** Objeto `recursos` completo (14 chaves); `ligados` sobrepõe os que estiverem ligados. */
 export function recursos(ligados: Partial<Record<ChaveRecurso, boolean>> = {}) {
   return Object.fromEntries(CHAVES_RECURSOS.map((c) => [c, ligados[c] === true])) as Record<
     ChaveRecurso,

@@ -120,6 +120,7 @@ ESQUEMA: dict[str, dict[str, Coluna]] = {
             "vigilante_km",
             "autorizador_decide_propria",
             "autorizador_km",
+            "motorista_km",
             "indicador_conectividade",
             "feedback_tatil",
             "leitor_qr_veiculos",

@@ -43,6 +43,7 @@ class Configuracoes:
     vigilante_km: bool = False  # exige `quilometragem`
     autorizador_decide_propria: bool = False  # staff decide a própria requisição
     autorizador_km: bool = False  # exige `quilometragem`; staff lança km
+    motorista_km: bool = False  # exige `quilometragem` e `motorista_registra`
     notificacao_push: bool = False  # Web Push: avisos genéricos (exige VAPID no servidor)
     indicador_conectividade: bool = False  # indicador de conexão (internet e Flask)
     feedback_tatil: bool = False  # vibração curta (Vibration API)
@@ -65,6 +66,7 @@ class Configuracoes:
             "vigilante_km": self.vigilante_km,
             "autorizador_decide_propria": self.autorizador_decide_propria,
             "autorizador_km": self.autorizador_km,
+            "motorista_km": self.motorista_km,
             "notificacao_push": self.notificacao_push,
             "indicador_conectividade": self.indicador_conectividade,
             "feedback_tatil": self.feedback_tatil,

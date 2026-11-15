@@ -411,6 +411,26 @@ class AdminMemoria:
                     raise erro_db("AG010", "O km do vigilante exige a quilometragem ligada.")
                 if novo["autorizador_km"] and not novo["quilometragem"]:
                     raise erro_db("AG010", "O KM do autorizador exige a Quilometragem ligada.")
+                if novo["motorista_km"] and not novo["quilometragem"]:
+                    raise erro_db(
+                        "AG010",
+                        (
+                            "Desligue o KM do motorista antes de desligar a Quilometragem."
+                            if antigo["motorista_km"]
+                            else "O KM do motorista exige a Quilometragem ligada."
+                        ),
+                    )
+                if novo["motorista_km"] and not novo["motorista_registra"]:
+                    raise erro_db(
+                        "AG010",
+                        (
+                            "Desligue o KM do motorista antes de desligar o registro de saída e "
+                            "chegada pelo motorista."
+                            if antigo["motorista_km"]
+                            else "O KM do motorista exige o registro de saída e chegada pelo "
+                            "motorista ligado."
+                        ),
+                    )
                 for k in novo:
                     if novo[k] != antigo[k]:
                         self._audit(

@@ -109,7 +109,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         },
       ]
     : [];
-  // As 13 chaves de recursos da API (todas desligadas no início).
+  // As 14 chaves de recursos da API (todas desligadas no início).
   const config: Record<string, boolean> = { ...recursos() };
   const ia: { mestre: boolean; saudacao: boolean; provedor: unknown; modelo: unknown } = {
     mestre: !!opcoes.saudacaoLigada,
@@ -644,6 +644,41 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
             "'Motorista registra saída e chegada' exige 'Perfil Motorista' ligado.",
           );
         }
+        // Dependência (contrato AG010): 'KM pelo motorista' exige Quilometragem e o registro
+        // de saída e chegada pelo motorista ligados; o caminho inverso também é recusado.
+        const final = { ...config, ...pedido };
+        if (pedido.motorista_km && !final.quilometragem) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            'O KM do motorista exige a Quilometragem ligada.',
+          );
+        }
+        if (pedido.motorista_km && !final.motorista_registra) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            'O KM do motorista exige o registro de saída e chegada pelo motorista ligado.',
+          );
+        }
+        if (pedido.quilometragem === false && final.motorista_km) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            'Desligue o KM do motorista antes de desligar a Quilometragem.',
+          );
+        }
+        if (pedido.motorista_registra === false && final.motorista_km) {
+          return erro(
+            route,
+            409,
+            'dependencia_recurso',
+            'Desligue o KM do motorista antes de desligar o registro de saída e chegada pelo motorista.',
+          );
+        }
         Object.assign(config, pedido);
       }
       const itens = [
@@ -732,6 +767,17 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
           acoes_permitidas: config.quilometragem
             ? [config.autorizador_km ? 'desligar' : 'ligar']
             : [],
+        },
+        {
+          chave: 'motorista_km',
+          rotulo: 'KM pelo motorista',
+          descricao:
+            'O motorista informa o km de saída ao registrar a saída e o km de chegada ao registrar a chegada. Desligado, o motorista registra sem informar km.',
+          habilitado: config.motorista_km,
+          exige: ['quilometragem', 'motorista_registra'],
+          // Estado velho de propósito: a tela oferece "ligar" e quem recusa é a API (AG010).
+          motivo_indisponibilidade: null,
+          acoes_permitidas: [config.motorista_km ? 'desligar' : 'ligar'],
         },
         {
           chave: 'mfa',

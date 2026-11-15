@@ -12,22 +12,38 @@ import { Textarea } from '@/components/ui/input';
 
 type Acao = 'inserir' | 'substituir';
 
+/** Campo que pode receber o texto reconhecido. */
+export type DestinoVoz = {
+  id: string;
+  rotulo: string;
+  valor: string;
+  aoMudar: (novo: string) => void;
+  maxLength?: number;
+};
+
 /** Área de revisão: o texto reconhecido é editável e só entra no campo por ação explícita. */
 function Revisao({
   inicial,
   idBase,
-  temTexto,
+  destinos,
+  destinoInicial,
+  mostrarEscolha,
   aoAplicar,
   aoDescartar,
 }: {
   inicial: string;
   idBase: string;
-  temTexto: boolean;
-  aoAplicar: (texto: string, acao: Acao) => void;
+  destinos: [DestinoVoz, ...DestinoVoz[]];
+  destinoInicial: string;
+  mostrarEscolha: boolean;
+  aoAplicar: (texto: string, acao: Acao, destino: DestinoVoz) => void;
   aoDescartar: () => void;
 }) {
   const [texto, setTexto] = React.useState(inicial);
   const [confirmando, setConfirmando] = React.useState(false);
+  const [destinoId, setDestinoId] = React.useState(destinoInicial);
+  const destino = destinos.find((d) => d.id === destinoId) ?? destinos[0];
+  const temTexto = destino.valor.trim().length > 0;
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-borda bg-fundo p-3">
@@ -41,17 +57,42 @@ function Revisao({
         />
         <p className="mt-1 text-sm text-texto-2">Revise e corrija antes de inserir no campo.</p>
       </div>
+      {mostrarEscolha ? (
+        <fieldset className="flex flex-col gap-1" disabled={confirmando}>
+          <legend className="mb-1 font-medium">Onde colocar o texto?</legend>
+          {destinos.map((d) => (
+            <label
+              key={d.id}
+              htmlFor={`${idBase}-destino-${d.id}`}
+              className="flex min-h-11 cursor-pointer items-center gap-3"
+            >
+              <input
+                type="radio"
+                id={`${idBase}-destino-${d.id}`}
+                name={`${idBase}-destino`}
+                value={d.id}
+                checked={d.id === destino.id}
+                onChange={() => setDestinoId(d.id)}
+                className="size-5 accent-primaria"
+              />
+              {d.rotulo}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
       {confirmando ? (
         <div role="alertdialog" aria-label="Confirmar substituição" className="flex flex-col gap-2">
           <p className="font-medium">
-            Substituir tudo o que já foi digitado no campo pelo texto reconhecido?
+            {mostrarEscolha
+              ? `Substituir tudo o que já foi digitado em ${destino.rotulo} pelo texto reconhecido?`
+              : 'Substituir tudo o que já foi digitado no campo pelo texto reconhecido?'}
           </p>
           <div className="grid grid-cols-2 gap-2">
             <Button
               type="button"
               variante="perigo"
               data-autofocus
-              onClick={() => aoAplicar(texto, 'substituir')}
+              onClick={() => aoAplicar(texto, 'substituir', destino)}
             >
               Sim, substituir
             </Button>
@@ -65,7 +106,7 @@ function Revisao({
           <Button
             type="button"
             disabled={!texto.trim()}
-            onClick={() => aoAplicar(texto, 'inserir')}
+            onClick={() => aoAplicar(texto, 'inserir', destino)}
           >
             Inserir no fim do campo
           </Button>
@@ -99,12 +140,15 @@ export function CampoVoz({
   valor,
   aoMudar,
   maxLength,
+  destinos,
   children,
 }: {
   id: string;
   valor: string;
   aoMudar: (novo: string) => void;
   maxLength?: number;
+  /** Com 2 ou mais itens, a revisão pergunta em qual campo colocar o texto. */
+  destinos?: DestinoVoz[];
   children: React.ReactNode;
 }) {
   const { eu } = useAuth();
@@ -117,25 +161,38 @@ export function CampoVoz({
   const capturando =
     estado === 'pedindo_permissao' || estado === 'ouvindo' || estado === 'processando';
 
-  const aplicar = (texto: string, acao: Acao) => {
+  const proprio: DestinoVoz = {
+    id,
+    rotulo: '',
+    valor,
+    aoMudar,
+    ...(maxLength !== undefined ? { maxLength } : {}),
+  };
+  const [primeiro, ...resto] = destinos ?? [];
+  const mostrarEscolha = primeiro !== undefined && resto.length > 0;
+  const lista: [DestinoVoz, ...DestinoVoz[]] =
+    mostrarEscolha && primeiro ? [primeiro, ...resto] : [proprio];
+
+  const aplicar = (texto: string, acao: Acao, destino: DestinoVoz) => {
     const novo = texto.trim();
+    const atual = destino.valor;
+    const limite = destino.maxLength;
     let final: string;
     if (acao === 'substituir') {
       final = novo;
     } else {
-      const sep = valor && !/\s$/.test(valor) ? ' ' : '';
-      final = `${valor}${sep}${novo}`;
+      const sep = atual && !/\s$/.test(atual) ? ' ' : '';
+      final = `${atual}${sep}${novo}`;
     }
-    if (maxLength !== undefined && final.length > maxLength) {
-      final = final.slice(0, maxLength);
-      setAviso(
-        `O texto passou do limite de ${maxLength} caracteres e foi cortado. Confira o campo.`,
-      );
+    if (limite !== undefined && final.length > limite) {
+      final = final.slice(0, limite);
+      setAviso(`O texto passou do limite de ${limite} caracteres e foi cortado. Confira o campo.`);
     } else {
       setAviso(null);
     }
-    aoMudar(final);
+    destino.aoMudar(final);
     voz.limparResultado();
+    if (mostrarEscolha) document.getElementById(destino.id)?.focus();
   };
 
   return (
@@ -223,7 +280,9 @@ export function CampoVoz({
           key={voz.resultado}
           inicial={voz.resultado}
           idBase={id}
-          temTexto={valor.trim().length > 0}
+          destinos={lista}
+          destinoInicial={id}
+          mostrarEscolha={mostrarEscolha}
           aoAplicar={aplicar}
           aoDescartar={voz.limparResultado}
         />

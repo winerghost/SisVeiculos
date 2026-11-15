@@ -185,6 +185,7 @@ function Formulario() {
         <Label htmlFor="trajeto">Trajeto</Label>
         <Textarea
           id="trajeto"
+          maxLength={500}
           required
           value={trajeto}
           onChange={(e) => setTrajeto(e.target.value)}
@@ -196,9 +197,30 @@ function Formulario() {
         <Label htmlFor="observacao">
           Observação <span className="font-normal text-texto-2">(opcional)</span>
         </Label>
-        <CampoVoz id="observacao" valor={observacao} aoMudar={setObservacao}>
+        <CampoVoz
+          id="observacao"
+          valor={observacao}
+          aoMudar={setObservacao}
+          destinos={[
+            {
+              id: 'trajeto',
+              rotulo: 'Trajeto',
+              valor: trajeto,
+              aoMudar: setTrajeto,
+              maxLength: 500,
+            },
+            {
+              id: 'observacao',
+              rotulo: 'Observação',
+              valor: observacao,
+              aoMudar: setObservacao,
+              maxLength: 500,
+            },
+          ]}
+        >
           <Textarea
             id="observacao"
+            maxLength={500}
             value={observacao}
             onChange={(e) => setObservacao(e.target.value)}
           />

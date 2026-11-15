@@ -171,7 +171,103 @@ def test_autorizador_km_exige_quilometragem_nos_dois_sentidos(client, auth, repo
     assert repo.config.quilometragem is True
 
 
-@pytest.mark.parametrize("chave", ["autorizador_decide_propria", "autorizador_km"])
+MOTORISTA_REGISTRA = {"motorista": True, "motorista_registra": True}
+
+
+def test_motorista_km_no_catalogo_com_as_duas_dependencias(client, auth, repo, c):  # type: ignore[no-untyped-def]
+    itens = {
+        i["chave"]: i
+        for i in get(client, auth, c.adm, "/api/admin/configuracoes").get_json()["itens"]
+    }
+    item = itens["motorista_km"]
+    assert item["rotulo"] == "KM pelo motorista"
+    assert item["descricao"] == (
+        "O motorista informa o km de saída ao registrar a saída e o km de chegada ao registrar "
+        "a chegada. Desligado, o motorista registra sem informar km."
+    )
+    assert item["exige"] == ["quilometragem", "motorista_registra"]
+    assert item["habilitado"] is False and item["acoes_permitidas"] == []
+    chaves = list(itens)
+    assert chaves.index("motorista_km") == chaves.index("autorizador_km") + 1
+
+
+@pytest.mark.parametrize(
+    "corpo",
+    [
+        {"motorista_km": True},
+        {"motorista_km": True, "quilometragem": True},  # falta o registro pelo motorista
+        {"motorista_km": True, **MOTORISTA_REGISTRA},  # falta a Quilometragem
+    ],
+)
+def test_motorista_km_exige_quilometragem_e_registro(client, auth, repo, c, corpo):  # type: ignore[no-untyped-def]
+    r = put(client, auth, c.adm, **corpo)
+    assert r.status_code == 409 and cod(r) == "dependencia_recurso"
+    assert repo.config == Configuracoes() and repo.eventos_de("configuracao_alterada") == []
+
+
+def test_motorista_km_liga_audita_e_bloqueia_o_caminho_inverso(client, auth, repo, c):  # type: ignore[no-untyped-def]
+    tudo = {"quilometragem": True, **MOTORISTA_REGISTRA, "motorista_km": True}
+    assert put(client, auth, c.adm, **tudo).status_code == 200
+    assert repo.config.motorista_km is True
+    ev = repo.eventos_de("configuracao_alterada")
+    assert ("motorista_km", "false", "true", c.adm.id) in [
+        (e["detalhes"]["recurso"], e["de"], e["para"], e["ator_id"]) for e in ev
+    ]
+    itens = {
+        i["chave"]: i
+        for i in get(client, auth, c.adm, "/api/admin/configuracoes").get_json()["itens"]
+    }
+    for dep in ("quilometragem", "motorista_registra"):
+        assert itens[dep]["acoes_permitidas"] == []
+        assert "KM pelo motorista" in itens[dep]["motivo_indisponibilidade"]
+    for desligar in ({"quilometragem": False}, {"motorista_registra": False}, {"motorista": False}):
+        r = put(client, auth, c.adm, **desligar)
+        assert r.status_code == 409 and cod(r) == "dependencia_recurso"
+    assert all(repo.config.como_dict()[k] for k in tudo)  # nada mudou
+    # na ordem certa passa, e desligar não apaga dados
+    assert put(client, auth, c.adm, motorista_km=False).status_code == 200
+    r = put(client, auth, c.adm, quilometragem=False, motorista_registra=False)
+    assert r.status_code == 200
+    assert repo.eventos_de("configuracao_alterada")[-1]["ator_id"] == c.adm.id
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        (
+            "O KM do motorista exige a Quilometragem ligada.",
+            "O KM do motorista exige a Quilometragem ligada.",
+        ),
+        (
+            "O KM do motorista exige o registro de saída e chegada pelo motorista ligado.",
+            "O KM do motorista exige o registro de saída e chegada pelo motorista ligado.",
+        ),
+        (
+            "Desligue o KM do motorista antes de desligar a Quilometragem.",
+            "Desligue o KM do motorista antes de desligar a Quilometragem.",
+        ),
+        (
+            "Desligue o KM do motorista antes de desligar o registro de saída e chegada pelo "
+            "motorista.",
+            "Desligue o KM do motorista antes de desligar o registro de saída e chegada pelo "
+            "motorista.",
+        ),
+    ],
+)
+def test_dependencia_do_motorista_km_no_banco_vira_mensagem_clara(texto, esperado):  # type: ignore[no-untyped-def]
+    e = erro_db("AG010", texto)
+    assert e.codigo == "dependencia_recurso" and e.mensagem == esperado
+
+
+def test_ck_do_motorista_km_vira_mensagem_clara():
+    e = erro_db(
+        "23514",
+        'violates check constraint "ck_configuracoes_motorista_km_exige_dependencias"',
+    )
+    assert e.codigo == "dependencia_recurso" and "KM do motorista" in e.mensagem
+
+
+@pytest.mark.parametrize("chave", ["autorizador_decide_propria", "autorizador_km", "motorista_km"])
 def test_so_admin_altera_as_flags_novas(client, auth, repo, c, chave):  # type: ignore[no-untyped-def]
     for quem in (c.aut, c.sol):
         assert put(client, auth, quem, **{chave: True}).status_code == 403
@@ -212,6 +308,16 @@ def test_dependencia_do_banco_e_traduzida_para_a_mensagem_clara():
             Configuracoes(quilometragem=True, vigilante_km=True, autorizador_km=True),
             False,
         ),
+        (
+            "motorista",
+            Configuracoes(
+                quilometragem=True, motorista=True, motorista_registra=True, motorista_km=True
+            ),
+            True,
+        ),
+        ("motorista", Configuracoes(motorista_km=True), False),  # sem Quilometragem
+        ("vigilante", Configuracoes(quilometragem=True, motorista_km=True), False),
+        ("autorizador", Configuracoes(quilometragem=True, motorista_km=True), False),
         (
             "solicitante",
             Configuracoes(quilometragem=True, vigilante_km=True, autorizador_km=True),
@@ -270,15 +376,83 @@ def test_saida_sem_km_pelo_vigilante_e_chegada_pelo_staff_exige_os_dois(client, 
     assert client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json=corpo).status_code == 200
 
 
-def test_vigilante_segue_vigilante_km_e_motorista_nunca(client, auth, repo, c, v, m):  # type: ignore[no-untyped-def]
+def test_motorista_sem_motorista_km_nao_pede_km(client, auth, repo, c, v, m):  # type: ignore[no-untyped-def]
+    """`vigilante_km` (e `autorizador_km`) ligadas não alcançam o motorista: só `motorista_km`."""
     repo.config = Configuracoes(
-        quilometragem=True, vigilante_km=True, motorista=True, motorista_registra=True
+        quilometragem=True,
+        vigilante_km=True,
+        autorizador_km=True,
+        motorista=True,
+        motorista_registra=True,
     )
     rid = levar_a(client, auth, repo, c, "autorizada", motorista=m.a)
     jv = get(client, auth, v.vig, f"/api/requisicoes/{rid}").get_json()
     assert jv["campos_acao"]["registrar_saida"]["campos_obrigatorios"] == ["km_saida"]
     jm = get(client, auth, m.a, f"/api/motorista/viagens/{rid}").get_json()
     assert "registrar_saida" not in jm["campos_acao"]
+    h = auth(m.a.id)  # corpo com km é ignorado (sem erro) e nada é gravado
+    r = client.post(f"/api/requisicoes/{rid}/saida", headers=h, json={"km_saida": 100})
+    assert r.status_code == 200 and repo.requisicoes[rid]["km_saida"] is None
+    r = client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json={"km_chegada": 150})
+    assert r.status_code == 200 and repo.requisicoes[rid]["km_chegada"] is None
+
+
+def test_motorista_com_motorista_km_pede_e_valida_km(client, auth, repo, c, m):  # type: ignore[no-untyped-def]
+    repo.config = Configuracoes(
+        quilometragem=True, motorista=True, motorista_registra=True, motorista_km=True
+    )
+    rid = levar_a(client, auth, repo, c, "autorizada", motorista=m.a)
+    base = f"/api/motorista/viagens/{rid}"
+    jm = get(client, auth, m.a, base).get_json()
+    assert jm["campos_acao"]["registrar_saida"]["campos_obrigatorios"] == ["km_saida"]
+    h = auth(m.a.id)
+    r = client.post(f"/api/requisicoes/{rid}/saida", headers=h, json=None)
+    assert r.status_code == 400 and repo.requisicoes[rid]["status"] == "autorizada"
+    r = client.post(f"/api/requisicoes/{rid}/saida", headers=h, json={"km_saida": 50})
+    assert r.status_code == 200 and repo.requisicoes[rid]["km_saida"] == 50
+    jm = get(client, auth, m.a, base).get_json()
+    assert jm["campos_acao"]["registrar_chegada"]["campos_obrigatorios"] == ["km_chegada"]
+    assert client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json=None).status_code == 400
+    r = client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json={"km_chegada": 10})
+    assert r.status_code == 400 and repo.requisicoes[rid]["status"] == "em_uso"
+    r = client.post(f"/api/requisicoes/{rid}/chegada", headers=h, json={"km_chegada": 80})
+    assert r.status_code == 200
+    assert repo.requisicoes[rid]["km_chegada"] == 80
+    assert repo.requisicoes[rid]["status"] == "concluida"
+
+
+def test_motorista_km_chegada_sem_km_de_saida_exige_os_dois(client, auth, repo, c, v, m):  # type: ignore[no-untyped-def]
+    repo.config = Configuracoes(
+        quilometragem=True, motorista=True, motorista_registra=True, motorista_km=True
+    )
+    rid = levar_a(client, auth, repo, c, "autorizada", motorista=m.a)
+    assert acao(client, auth, v.vig, rid, "saida").status_code == 200  # vigilante sem km
+    assert repo.requisicoes[rid]["km_saida"] is None
+    jm = get(client, auth, m.a, f"/api/motorista/viagens/{rid}").get_json()
+    assert jm["campos_acao"]["registrar_chegada"]["campos_obrigatorios"] == [
+        "km_saida",
+        "km_chegada",
+    ]
+    h = auth(m.a.id)
+    url = f"/api/requisicoes/{rid}/chegada"
+    assert client.post(url, headers=h, json={"km_chegada": 9}).status_code == 400
+    corpo = {"km_saida": 5, "km_chegada": 9}
+    assert client.post(url, headers=h, json=corpo).status_code == 200
+    assert repo.requisicoes[rid]["km_saida"] == 5 and repo.requisicoes[rid]["km_chegada"] == 9
+
+
+def test_motorista_km_outro_motorista_nao_lanca_km_alheio(client, auth, repo, c, m):  # type: ignore[no-untyped-def]
+    """Anti-IDOR: com motorista_km ligada, só o motorista designado registra (e lança km)."""
+    repo.config = Configuracoes(
+        quilometragem=True, motorista=True, motorista_registra=True, motorista_km=True
+    )
+    rid = levar_a(client, auth, repo, c, "autorizada", motorista=m.a)
+    hb = auth(m.b.id)
+    r = client.post(f"/api/requisicoes/{rid}/saida", headers=hb, json={"km_saida": 50})
+    assert r.status_code == 404
+    assert repo.requisicoes[rid]["status"] == "autorizada"
+    assert repo.requisicoes[rid]["km_saida"] is None
+    assert get(client, auth, m.b, f"/api/motorista/viagens/{rid}").status_code == 404
 
 
 # ===================================================================== cancelar / negar pela equipe

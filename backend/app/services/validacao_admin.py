@@ -36,6 +36,7 @@ RECURSOS = (
     "vigilante_km",
     "autorizador_decide_propria",
     "autorizador_km",
+    "motorista_km",
     "notificacao_push",
     "indicador_conectividade",
     "feedback_tatil",

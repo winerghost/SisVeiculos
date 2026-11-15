@@ -498,13 +498,16 @@ class ServicoRequisicoes:
     @staticmethod
     def _pede_km(perfil: Perfil, config: Configuracoes) -> bool:
         """Km por perfil, sempre com a Quilometragem ligada: vigilante com `vigilante_km`;
-        autorizador/admin com `autorizador_km`; motorista e solicitante nunca lançam km."""
+        autorizador/admin com `autorizador_km`; motorista com `motorista_km` (que o banco só
+        aceita com `motorista_registra` ligado); solicitante nunca lança km."""
         if not config.quilometragem:
             return False
         if perfil.role == "vigilante":
             return config.vigilante_km
         if perfil.role in STAFF:
             return config.autorizador_km
+        if perfil.role == "motorista":
+            return config.motorista_km
         return False
 
     def apresentar(self, perfil: Perfil, req: Requisicao) -> dict[str, Any]:
@@ -1025,7 +1028,7 @@ class ServicoRequisicoes:
         if acao not in {"registrar_saida", "registrar_chegada"}:
             return {}
         if not self._pede_km(perfil, self._repo.ler_configuracoes()):
-            return {}  # vigilante sem `vigilante_km`: o corpo é ignorado
+            return {}  # perfil sem a flag de km dele (ex.: `motorista_km`): o corpo é ignorado
         if corpo is None:
             corpo = {}
         if not isinstance(corpo, dict):

@@ -15,6 +15,8 @@ interface Viagem {
   hora_saida: string;
   saida_real_em: string | null;
   chegada_real_em: string | null;
+  km_saida?: number | null;
+  km_chegada?: number | null;
 }
 
 export interface OpcoesMotorista {
@@ -24,6 +26,11 @@ export interface OpcoesMotorista {
   recursoDesligado?: boolean;
   /** Recurso `motorista_localizacao` ligado: a API pede latitude/longitude em campos_acao. */
   localizacao?: boolean;
+  /**
+   * Recurso `motorista_km` ligado (com Quilometragem e `motorista_registra`): a API pede km_saida
+   * na saída e km_chegada na chegada (mais km_saida se a saída ficou sem km) em campos_acao.
+   */
+  km?: boolean;
   /** A API inclui `atribuir_motorista` em acoes_permitidas (viagem não concluída). */
   trocarMotorista?: boolean;
   /** Dados de GET /api/admin/requisicoes/<id>/localizacoes; sem isto a API responde 403. */
@@ -76,12 +83,21 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
     if (v.status === 'em_uso') return ['registrar_chegada', ...troca, ...local];
     return [...local, arquivadas.has(v.id) ? 'desarquivar' : 'arquivar'];
   };
+  // Regra da API (só no teste): quais campos cada ação pede, conforme os recursos ligados.
+  const camposDe = (v: Viagem): string[] => {
+    const local = opcoes.localizacao ? ['latitude', 'longitude'] : [];
+    if (v.status === 'autorizada') return [...(opcoes.km ? ['km_saida'] : []), ...local];
+    if (v.status === 'em_uso') {
+      const km = opcoes.km ? [...(v.km_saida == null ? ['km_saida'] : []), 'km_chegada'] : [];
+      return [...km, ...local];
+    }
+    return [];
+  };
   const camposAcao = (v: Viagem) => {
-    if (!opcoes.localizacao) return {};
-    const local = { campos_obrigatorios: ['latitude', 'longitude'] };
-    if (v.status === 'autorizada') return { registrar_saida: local };
-    if (v.status === 'em_uso') return { registrar_chegada: local };
-    return {};
+    const campos = camposDe(v);
+    if (campos.length === 0) return {};
+    const acao = v.status === 'autorizada' ? 'registrar_saida' : 'registrar_chegada';
+    return { [acao]: { campos_obrigatorios: campos } };
   };
   const etapa = (chave: string, rotulo: string, situacao: string, em: string | null) => ({
     chave,
@@ -123,8 +139,8 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
       cancelada_em: null,
       criado_em: v.hora_saida,
       atualizado_em: v.hora_saida,
-      km_saida: null,
-      km_chegada: null,
+      km_saida: v.km_saida ?? null,
+      km_chegada: v.km_chegada ?? null,
       autorizado_por_nome: 'Ana Souza',
       saida_registrada_por_nome: null,
       chegada_registrada_por_nome: null,
@@ -184,11 +200,12 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
             unidades: ['PU', 'PF', 'CJU', 'UEA'],
             role: 'motorista',
             permissoes: ['ver_viagens_atribuidas'],
-            recursos: recursos(
-              opcoes.localizacao
-                ? { motorista: true, motorista_registra: true, motorista_localizacao: true }
-                : { motorista: true },
-            ),
+            recursos: recursos({
+              motorista: true,
+              ...(opcoes.localizacao || opcoes.km ? { motorista_registra: true } : {}),
+              ...(opcoes.localizacao ? { motorista_localizacao: true } : {}),
+              ...(opcoes.km ? { quilometragem: true, motorista_km: true } : {}),
+            }),
             foto_url: null,
           },
         })
@@ -255,6 +272,18 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
       (typeof corpo.latitude !== 'number' || typeof corpo.longitude !== 'number')
     ) {
       return erro(route, 400, 'localizacao_obrigatoria', 'A localização é obrigatória.');
+    }
+    // Com `motorista_km` ligado, os km pedidos em campos_acao são obrigatórios; desligado, o
+    // corpo de km é ignorado (comportamento atual).
+    const kmFaltando = camposDe(v).filter(
+      (c) => c.startsWith('km_') && typeof corpo[c] !== 'number',
+    );
+    if (kmFaltando.length > 0) {
+      return erro(route, 400, 'km_obrigatorio', 'Informe o km para registrar.');
+    }
+    if (opcoes.km) {
+      if (typeof corpo.km_saida === 'number') v.km_saida = corpo.km_saida;
+      if (typeof corpo.km_chegada === 'number') v.km_chegada = corpo.km_chegada;
     }
     acoesRecebidas.push(acao);
     corposAcao.push({ acao, corpo });

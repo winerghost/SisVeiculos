@@ -124,6 +124,40 @@ test('configurações: interruptores do Perfil Motorista seguem acoes_permitidas
   expect(mock.corpos.config).toEqual([{ motorista: true }, { motorista_registra: true }]);
 });
 
+test('KM pelo motorista: com campos_acao pedindo km, saída e chegada enviam o km digitado', async ({
+  page,
+}) => {
+  const mock = await entrarMotorista(page, { km: true });
+
+  const kmSaida = page.getByLabel('Km de saída');
+  await expect(kmSaida).toBeVisible();
+  await kmSaida.fill('12345');
+  await page.getByRole('button', { name: 'Registrar saída' }).click();
+  await expect(page.getByRole('heading', { name: /Em andamento · 1/ })).toBeVisible();
+
+  // A saída já tem km: a API só pede o km de chegada.
+  await expect(page.getByLabel('Km de saída')).toHaveCount(0);
+  await page.getByLabel('Km de chegada').fill('12400');
+  await page.getByRole('button', { name: 'Registrar chegada agora' }).click();
+  await expect(page.getByRole('heading', { name: /Concluídas · 2/ })).toBeVisible();
+
+  expect(mock.corposAcao).toEqual([
+    { acao: 'saida', corpo: { km_saida: 12345 } },
+    { acao: 'chegada', corpo: { km_chegada: 12400 } },
+  ]);
+});
+
+test('KM pelo motorista: sem a flag a API não pede km e nenhum campo aparece', async ({ page }) => {
+  const mock = await entrarMotorista(page);
+  await expect(page.getByRole('button', { name: 'Registrar saída' })).toBeVisible();
+  await expect(page.getByLabel('Km de saída')).toHaveCount(0);
+  await expect(page.getByLabel('Km de chegada')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Registrar saída' }).click();
+  await expect(page.getByRole('heading', { name: /Em andamento · 1/ })).toBeVisible();
+  await expect(page.getByLabel('Km de chegada')).toHaveCount(0);
+  expect(mock.corposAcao[0]).toEqual({ acao: 'saida', corpo: {} });
+});
+
 const LOCAL = { latitude: -15.7939, longitude: -47.8828 };
 const ID_AUTORIZADA = '44444444-4444-4444-8444-444444444441';
 const ID_CONCLUIDA = '44444444-4444-4444-8444-444444444442';

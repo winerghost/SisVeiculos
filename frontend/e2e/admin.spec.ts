@@ -109,6 +109,45 @@ test('admin: configurações exibem 409 dependencia_recurso como veio e respeita
   ]);
 });
 
+test('admin: KM pelo motorista aparece e ligar sem as dependências mostra a mensagem da API', async ({
+  page,
+}) => {
+  const mock = await entrarAdmin(page);
+  await page.goto('/admin/configuracoes');
+
+  const kmMotorista = page.getByRole('switch', { name: 'KM pelo motorista', exact: true });
+  await expect(kmMotorista).toBeVisible();
+  await expect(
+    page.getByText(
+      'O motorista informa o km de saída ao registrar a saída e o km de chegada ao registrar a chegada. Desligado, o motorista registra sem informar km.',
+    ),
+  ).toBeVisible();
+
+  // Sem Quilometragem: a API recusa (AG010) e a tela mostra a mensagem como veio.
+  await kmMotorista.click();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'O KM do motorista exige a Quilometragem ligada.' }),
+  ).toBeVisible();
+  await expect(kmMotorista).toHaveAttribute('aria-checked', 'false');
+
+  // Com Quilometragem, mas sem o registro pelo motorista: a segunda dependência é recusada.
+  const km = page.getByRole('switch', { name: 'Quilometragem', exact: true });
+  await km.click();
+  await expect(km).toHaveAttribute('aria-checked', 'true');
+  await kmMotorista.click();
+  await expect(
+    page.getByRole('alert').filter({
+      hasText: 'O KM do motorista exige o registro de saída e chegada pelo motorista ligado.',
+    }),
+  ).toBeVisible();
+  await expect(kmMotorista).toHaveAttribute('aria-checked', 'false');
+  expect(mock.corpos.config).toEqual([
+    { motorista_km: true },
+    { quilometragem: true },
+    { motorista_km: true },
+  ]);
+});
+
 test('admin: IA mostra um botão de teste por provedor em testes_disponiveis', async ({ page }) => {
   await entrarAdmin(page, { testesIA: ['anthropic', 'openai'] });
   await page.goto('/admin/configuracoes');

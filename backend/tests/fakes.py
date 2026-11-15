@@ -496,7 +496,8 @@ class RepoMemoria(
 
     def _lancamento_sem_km(self, r: Requisicao, campos: dict[str, Any]) -> bool:
         """KM obrigatório por papel do ator (migration 20261119120200): vigilante com
-        `vigilante_km`; autorizador/admin com `autorizador_km`; motorista e demais, nunca."""
+        `vigilante_km`; autorizador/admin com `autorizador_km`; motorista com `motorista_km`;
+        demais, nunca."""
         ator = self.perfis.get(
             str(campos.get("saida_registrada_por") or campos.get("chegada_registrada_por") or "")
         )
@@ -506,6 +507,8 @@ class RepoMemoria(
             return not self.config.vigilante_km
         if ator.role in {"autorizador", "admin"}:
             return not self.config.autorizador_km
+        if ator.role == "motorista":
+            return not self.config.motorista_km
         return True
 
     @staticmethod

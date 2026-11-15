@@ -71,7 +71,7 @@ MSG_VEICULO_OCUPADO = (
 COLUNAS_CONFIG = (
     "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
     "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao,"
-    "vigilante_km,autorizador_decide_propria,autorizador_km,notificacao_push,"
+    "vigilante_km,autorizador_decide_propria,autorizador_km,motorista_km,notificacao_push,"
     "indicador_conectividade,feedback_tatil,leitor_qr_veiculos,voz_campos,passkeys"
 )
 
@@ -133,6 +133,7 @@ def _configuracoes(r: dict[str, Any]) -> Configuracoes:
         vigilante_km=bool(r.get("vigilante_km")),
         autorizador_decide_propria=bool(r.get("autorizador_decide_propria")),
         autorizador_km=bool(r.get("autorizador_km")),
+        motorista_km=bool(r.get("motorista_km")),
         notificacao_push=bool(r.get("notificacao_push")),
         indicador_conectividade=bool(r.get("indicador_conectividade")),
         feedback_tatil=bool(r.get("feedback_tatil")),
@@ -214,6 +215,37 @@ MSG_DEP_AUTORIZADOR_KM = "'KM pelo autorizador' exige a Quilometragem ligada."
 MSG_DEP_AUTORIZADOR_KM_DESLIGAR = (
     "Desligue 'KM pelo autorizador' antes de desligar a Quilometragem."
 )
+MSG_DEP_MOTORISTA_KM_QUILOMETRAGEM = "O KM do motorista exige a Quilometragem ligada."
+MSG_DEP_MOTORISTA_KM_REGISTRA = (
+    "O KM do motorista exige o registro de saída e chegada pelo motorista ligado."
+)
+MSG_DEP_MOTORISTA_KM_DESLIGAR_QUILOMETRAGEM = (
+    "Desligue o KM do motorista antes de desligar a Quilometragem."
+)
+MSG_DEP_MOTORISTA_KM_DESLIGAR_REGISTRA = (
+    "Desligue o KM do motorista antes de desligar o registro de saída e chegada pelo motorista."
+)
+# CK (corrida entre dois admins): não dá para saber o sentido; cita as duas dependências.
+MSG_DEP_MOTORISTA_KM_CK = (
+    "O KM do motorista exige a Quilometragem e o registro de saída e chegada pelo motorista "
+    "ligados. Desligue o KM do motorista antes de desligar qualquer um deles."
+)
+
+
+def _dep_motorista_km(texto: str) -> DependenciaRecurso:
+    """AG010 do KM do motorista: escolhe a mensagem fixa pelo sentido e pela dependência."""
+    t = texto.lower()
+    quilometragem = "quilometragem" in t
+    if "desligue" in t:
+        return DependenciaRecurso(
+            MSG_DEP_MOTORISTA_KM_DESLIGAR_QUILOMETRAGEM
+            if quilometragem
+            else MSG_DEP_MOTORISTA_KM_DESLIGAR_REGISTRA
+        )
+    return DependenciaRecurso(
+        MSG_DEP_MOTORISTA_KM_QUILOMETRAGEM if quilometragem else MSG_DEP_MOTORISTA_KM_REGISTRA
+    )
+
 
 MSG_CHECKLIST_SAIDA = "O checklist de saída é obrigatório antes de registrar a saída."
 MSG_CHECKLIST_CHEGADA = "O checklist de chegada é obrigatório antes de registrar a chegada."
@@ -397,6 +429,10 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return SemPermissao(MSG_DECIDIR_PROPRIA)
     if codigo == "AG041":  # arquivar requisição ainda aberta (mensagem fixa)
         return TransicaoInvalida(MSG_ARQUIVAR_ABERTA)
+    if codigo == "23514" and "ck_configuracoes_motorista_km" in texto:
+        return DependenciaRecurso(MSG_DEP_MOTORISTA_KM_CK)
+    if codigo == "AG010" and "km do motorista" in texto.lower():
+        return _dep_motorista_km(texto)
     if codigo == "23514" and "ck_configuracoes_vigilante" in texto:
         return DependenciaRecurso(MSG_DEP_VIGILANTE_KM_DESLIGAR)
     if codigo == "AG010" and "vigilante" in texto.lower():

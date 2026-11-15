@@ -2,7 +2,7 @@
 
 Fonte da verdade é a tabela `configuracoes`; a auditoria (`configuracao_alterada`, uma linha por
 recurso) sai do trigger do banco quando `alterado_por` é o admin. Desligar nunca apaga dados:
-aqui só se gravam flags. A lógica de km/checklist nas requisições NÃO existe ainda.
+aqui só se gravam flags. Quem aplica cada flag (km, checklist etc.) é o serviço de requisições.
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
     ),
     "motorista_registra": (
         "Motorista registra saída e chegada",
-        "O motorista passa a registrar a saída e a chegada das próprias viagens (km e "
-        "checklist continuam obrigatórios quando ligados).",
+        "O motorista passa a registrar a saída e a chegada das próprias viagens (o checklist "
+        'continua obrigatório quando ligado; o km depende de "KM pelo motorista").',
         ("motorista",),
     ),
     "motorista_localizacao": (
@@ -89,6 +89,12 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "Autorizadores e administradores informam o km de saída e o de chegada ao registrar a "
         "saída e a chegada. Desligado, registram sem informar km.",
         ("quilometragem",),
+    ),
+    "motorista_km": (
+        "KM pelo motorista",
+        "O motorista informa o km de saída ao registrar a saída e o km de chegada ao registrar "
+        "a chegada. Desligado, o motorista registra sem informar km.",
+        ("quilometragem", "motorista_registra"),
     ),
     "notificacao_push": (
         "Notificações push",

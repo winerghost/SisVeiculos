@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Limpeza geral antes da produção — Controle de Veículos (AGU)</title>
+<!--
+  Fonte do guia em PDF. Gerar: (em frontend/) node scripts/gerar-pdf-limpeza.mjs
+  Saída: docs/limpeza-geral-producao.pdf. Sem segredos, e-mails ou dados pessoais.
+  Coerente com docs/limpeza-pre-lancamento.md e supabase/ops/README.md: mudou um, mude os três.
+-->
+<style>
+  @font-face {
+    font-family: 'Inter';
+    font-weight: 100 900;
+    src: url('../frontend/node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2');
+  }
+  @page { size: A4; margin: 20mm 18mm 20mm 18mm; }
+  :root {
+    --primaria: #0F3D75;
+    --foco: #1A5FB4;
+    --erro: #B3261E;
+    --borda: #8493AB;
+    --texto: #1B2430;
+    --suave: #F4F6F9;
+    --raio: 8px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0;
+    font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: var(--texto);
+  }
+  h1, h2, h3 { color: var(--primaria); line-height: 1.25; break-after: avoid; }
+  h2 {
+    font-size: 17pt; margin: 0 0 10pt; padding-bottom: 5pt;
+    border-bottom: 2.5pt solid var(--primaria);
+  }
+  h3 { font-size: 12pt; margin: 16pt 0 5pt; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 8pt; padding-left: 18pt; }
+  li { margin-bottom: 3pt; }
+  a { color: var(--foco); text-decoration: none; }
+  code, pre {
+    font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+    font-size: 9pt;
+  }
+  code { background: var(--suave); border-radius: 4px; padding: 0 3pt; }
+  pre {
+    background: #0B2A52; color: #FFFFFF; border-radius: var(--raio);
+    padding: 7pt 10pt; margin: 4pt 0 8pt; white-space: pre-wrap; word-break: break-all;
+    break-inside: avoid;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  .secao { break-before: page; }
+
+  /* Capa */
+  .capa {
+    height: 255mm; display: flex; flex-direction: column; justify-content: center;
+    border-left: 8pt solid var(--primaria); padding-left: 18pt;
+  }
+  .capa .orgao { font-size: 11pt; font-weight: 600; letter-spacing: .5pt; color: var(--foco); text-transform: uppercase; }
+  .capa h1 { font-size: 30pt; margin: 8pt 0 6pt; }
+  .capa .sub { font-size: 14pt; color: #3A4757; margin-bottom: 20pt; }
+  .capa .meta { font-size: 10pt; color: #3A4757; }
+  .capa .meta div { margin-bottom: 3pt; }
+
+  /* Sumário */
+  .sumario ol { list-style: none; padding: 0; counter-reset: s; }
+  .sumario > ol > li {
+    counter-increment: s; font-weight: 600; font-size: 11.5pt;
+    padding: 6pt 0; border-bottom: 1px solid #D5DBE5;
+  }
+  .sumario > ol > li::before { content: counter(s) ". "; color: var(--primaria); }
+  .sumario ol ol { padding-left: 16pt; margin-top: 4pt; }
+  .sumario ol ol li { font-weight: 400; font-size: 10pt; padding: 1pt 0; border: 0; }
+
+  /* Tabelas */
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 10pt; font-size: 9.5pt; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  th {
+    background: var(--primaria); color: #FFFFFF; text-align: left; font-weight: 600;
+    padding: 5pt 6pt; border: 1px solid var(--primaria);
+  }
+  td { padding: 5pt 6pt; border: 1px solid var(--borda); vertical-align: top; }
+  tbody tr:nth-child(even) td { background: var(--suave); }
+  .sim { color: #1E6B34; font-weight: 600; }
+  .nao { color: var(--erro); font-weight: 600; }
+
+  /* Caixas */
+  .caixa {
+    border: 1.5pt solid var(--borda); border-left-width: 6pt; border-radius: var(--raio);
+    padding: 7pt 10pt; margin: 8pt 0 10pt; break-inside: avoid; background: #FFFFFF;
+  }
+  .caixa > strong:first-child { display: block; margin-bottom: 3pt; letter-spacing: .3pt; }
+  .caixa p:last-child, .caixa ul:last-child { margin-bottom: 0; }
+  .atencao { border-color: var(--erro); background: #FCEEEE; }
+  .atencao > strong:first-child { color: var(--erro); }
+  .dica { border-color: var(--foco); background: #EEF4FC; }
+  .dica > strong:first-child { color: var(--foco); }
+
+  /* Passos */
+  .passo { break-inside: avoid-page; margin-bottom: 12pt; }
+  .passo h3 { display: flex; align-items: center; gap: 8pt; margin-top: 12pt; }
+  .num {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 22pt; height: 22pt; border-radius: 50%;
+    background: var(--primaria); color: #FFFFFF; font-size: 11pt; font-weight: 700;
+  }
+  .onde { font-size: 9pt; font-weight: 600; color: var(--foco); text-transform: uppercase; letter-spacing: .3pt; }
+  .esperado { border-left: 3pt solid #1E6B34; background: #EEF7F0; padding: 5pt 9pt; border-radius: 4px; margin: 4pt 0 6pt; }
+  .esperado strong { color: #1E6B34; }
+
+  /* Checklist */
+  table.compacta { font-size: 8.8pt; line-height: 1.35; }
+  table.compacta th, table.compacta td { padding: 3.5pt 5pt; }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { padding-left: 20pt; position: relative; margin-bottom: 5pt; }
+  ul.check li::before {
+    content: ""; position: absolute; left: 0; top: 2pt; width: 10pt; height: 10pt;
+    border: 1.5pt solid var(--primaria); border-radius: 2pt;
+  }
+  ul.nunca { list-style: none; padding-left: 0; }
+  ul.nunca li { padding-left: 20pt; position: relative; margin-bottom: 6pt; }
+  ul.nunca li::before { content: "✕"; position: absolute; left: 2pt; color: var(--erro); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<!-- ============================== CAPA ============================== -->
+<section class="capa">
+  <div class="orgao">Advocacia-Geral da União · Controle de Veículos</div>
+  <h1>Limpeza geral antes da produção</h1>
+  <div class="sub">Guia passo a passo para apagar os dados de teste e deixar o sistema pronto para o uso real</div>
+  <div class="meta">
+    <div><strong>Para quem:</strong> quem vai operar a limpeza (não precisa ser técnico)</div>
+    <div><strong>Projeto Supabase:</strong> <code>ofwvoztarroglekfwohs</code></div>
+    <div><strong>Ferramentas:</strong> <code>supabase/ops/limpar_dados_de_teste.sql</code> e <code>app.ops.limpar_storage</code></div>
+    <div><strong>Versão do guia:</strong> 15/11/2026</div>
+  </div>
+</section>
+
+<!-- ============================== SUMÁRIO ============================== -->
+<section class="secao sumario">
+  <h2>Sumário</h2>
+  <ol>
+    <li><a href="#faz">O que a limpeza faz</a></li>
+    <li><a href="#modos">O que é apagado e o que fica</a>
+      <ol><li>Modo A (manter usuários) x Modo B (só admins)</li><li>Arquivos (Storage)</li></ol>
+    </li>
+    <li><a href="#preparar">Checklist do que preparar</a></li>
+    <li><a href="#passos">Passo a passo</a>
+      <ol>
+        <li><a href="#p1">1. Backup</a></li>
+        <li><a href="#p2">2. Aplicar as migrations pendentes (db push)</a></li>
+        <li><a href="#p3">3. Atualizar a VPS (--build)</a></li>
+        <li><a href="#p4">4. Parar o backend</a></li>
+        <li><a href="#p5">5. Ensaio do SQL</a></li>
+        <li><a href="#p6">6. Execução do SQL</a></li>
+        <li><a href="#p7">7. Religar o backend</a></li>
+        <li><a href="#p8">8. Ensaio do Storage</a></li>
+        <li><a href="#p9">9. Execução do Storage</a></li>
+        <li><a href="#p10">10. Conferência</a></li>
+        <li><a href="#p11">11. Lacre</a></li>
+        <li><a href="#p12">12. Apagar os snippets do Studio</a></li>
+      </ol>
+    </li>
+    <li><a href="#erros">Erros e o que fazer</a></li>
+    <li><a href="#nunca">O que nunca fazer</a></li>
+  </ol>
+</section>
+
+<!-- ============================== 1 ============================== -->
+<section class="secao" id="faz">
+  <h2>1. O que a limpeza faz</h2>
+  <p>Durante os testes, o sistema foi usado com dados fictícios: requisições, checklists, fotos, notificações, localizações, auditoria. Antes do uso real, esses dados precisam sair, para que o sistema comece limpo.</p>
+  <p>A limpeza tem <strong>duas ferramentas</strong>, sempre nesta ordem:</p>
+  <ol>
+    <li><strong>SQL</strong> (<code>supabase/ops/limpar_dados_de_teste.sql</code>): colado no <em>SQL Editor</em> do painel do Supabase. Apaga as <strong>linhas do banco</strong>. Não mexe em arquivos.</li>
+    <li><strong>Storage</strong> (<code>python -m app.ops.limpar_storage</code>): rodado dentro do container do backend, na VPS. Apaga os <strong>arquivos</strong> (fotos de checklist e fotos de perfil).</li>
+  </ol>
+  <p>As duas são <strong>seguras por padrão</strong>:</p>
+  <ul>
+    <li>Começam em <strong>ensaio</strong>: mostram quantos itens seriam apagados e <strong>não apagam nada</strong>.</li>
+    <li>Só apagam quando você digita uma <strong>frase de confirmação</strong> exata, que inclui o identificador do projeto (<code>ofwvoztarroglekfwohs</code>).</li>
+    <li>O SQL ainda exige o <strong>número</strong> que o ensaio mostrou. Se qualquer dado mudar entre o ensaio e a execução, ele recusa.</li>
+    <li>O SQL roda numa <strong>transação única</strong>: ou apaga tudo, ou não apaga nada.</li>
+    <li>Depois do <strong>lacre</strong> (passo 11), as duas ferramentas recusam para sempre neste banco.</li>
+    <li>As mensagens mostram só <strong>contagens</strong>, nunca nomes, e-mails ou outros dados pessoais.</li>
+  </ul>
+  <div class="caixa atencao">
+    <strong>ATENÇÃO</strong>
+    <p>Use <strong>somente antes do uso real</strong>. Depois que houver dados verdadeiros, <strong>nunca</strong> rode estas ferramentas. Depois da execução real <strong>não há desfazer</strong> pelo script; só o backup (passo 1) recupera.</p>
+  </div>
+  <div class="caixa dica">
+    <strong>Por que é uma exceção</strong>
+    <p>O sistema normalmente proíbe apagar registros e trata a auditoria como "só acrescenta". Esta limpeza é uma <strong>exceção única, pré-lançamento</strong>, aplicada sobre dados fictícios. As proteções do banco são desligadas só durante a transação, religadas do mesmo jeito e conferidas no fim.</p>
+  </div>
+</section>
+
+<!-- ============================== 2 ============================== -->
+<section class="secao" id="modos">
+  <h2>2. O que é apagado e o que fica</h2>
+  <p>Antes de começar, escolha <strong>um</strong> dos dois modos. O modo vale para o SQL <strong>e</strong> para o Storage, e tem de ser o mesmo no ensaio e na execução.</p>
+  <ul>
+    <li><strong>Modo A, manter usuários</strong> (padrão): as contas criadas nos testes já são das pessoas reais e devem continuar.</li>
+    <li><strong>Modo B, só admins</strong>: as contas de teste devem sumir; ficam só os administradores ativos. Os usuários reais são convidados depois.</li>
+  </ul>
+
+  <h3>Banco de dados (SQL)</h3>
+  <table>
+    <thead><tr><th style="width:42%">Dado</th><th>Modo A: manter usuários</th><th>Modo B: só admins</th></tr></thead>
+    <tbody>
+      <tr><td>Requisições e requisições arquivadas</td><td class="nao">Apagadas</td><td class="nao">Apagadas</td></tr>
+      <tr><td>Checklists e fotos de checklist (registros)</td><td class="nao">Apagados</td><td class="nao">Apagados</td></tr>
+      <tr><td>Notificações</td><td class="nao">Apagadas</td><td class="nao">Apagadas</td></tr>
+      <tr><td>Localizações de viagem</td><td class="nao">Apagadas</td><td class="nao">Apagadas</td></tr>
+      <tr><td>Envios de relatório por e-mail, uso de IA</td><td class="nao">Apagados</td><td class="nao">Apagados</td></tr>
+      <tr><td>Acessos de login</td><td class="nao">Apagados</td><td class="nao">Apagados</td></tr>
+      <tr><td>Desafios e reautenticações de passkey</td><td class="nao">Apagados</td><td class="nao">Apagados</td></tr>
+      <tr><td>Auditoria</td><td class="nao">Apagada (padrão)*</td><td class="nao">Apagada (padrão)*</td></tr>
+      <tr><td>Contas (perfis e Supabase Auth)</td><td class="sim">Todas ficam</td><td>Ficam <strong>só os admins ativos</strong></td></tr>
+      <tr><td>Convites</td><td class="sim">Ficam</td><td class="nao">Todos apagados</td></tr>
+      <tr><td>Fotos de perfil, push, passkeys (registros)</td><td class="sim">Ficam</td><td>Ficam só as dos admins ativos</td></tr>
+      <tr><td>Veículos (inclusive o km atual)</td><td class="sim">Ficam</td><td class="sim">Ficam</td></tr>
+      <tr><td>Configurações, configurações da IA, saudações</td><td class="sim">Ficam</td><td class="sim">Ficam</td></tr>
+    </tbody>
+  </table>
+  <p>* Depois da limpeza, a auditoria fica com <strong>1 linha</strong>: o registro da própria limpeza (só contagens). No modo A é possível <strong>manter</strong> a auditoria inteira (<code>v_apagar_auditoria := false</code>); nesse caso nada sai da auditoria e ela só ganha a linha da limpeza.</p>
+  <div class="caixa atencao">
+    <strong>ATENÇÃO: modo B</strong>
+    <ul>
+      <li>É preciso haver <strong>pelo menos 1 admin ativo</strong>; senão o script recusa (LD008).</li>
+      <li>No modo B, <strong>deixe a auditoria ser apagada</strong> (o padrão). Se você a mantiver, ela aponta para as contas de teste e o script recusa (LD009).</li>
+      <li>Contas apagadas não voltam. Confira no ensaio quantas contas ficam: deve ser o número de admins reais.</li>
+    </ul>
+  </div>
+
+  <h3>Arquivos (Storage)</h3>
+  <table>
+    <thead><tr><th style="width:42%">Bucket</th><th>Modo A: manter usuários</th><th>Modo B: só admins</th></tr></thead>
+    <tbody>
+      <tr><td><code>checklists</code> (fotos de checklist)</td><td class="nao">Esvaziado</td><td class="nao">Esvaziado</td></tr>
+      <tr><td><code>avatares</code> (fotos de perfil)</td><td>Fica só a <strong>foto atual</strong> de cada pessoa; somem fotos trocadas, removidas, órfãs e envios incompletos</td><td>Fica só a foto atual dos <strong>admins ativos</strong>; o resto some</td></tr>
+      <tr><td>Qualquer outro bucket</td><td class="sim">Só contado, nunca apagado</td><td class="sim">Só contado, nunca apagado</td></tr>
+    </tbody>
+  </table>
+  <p>Não são tocados: tarefas agendadas do banco, as funções de expurgo automático e as proteções contra esvaziar tabelas.</p>
+</section>
+
+<!-- ============================== 3 ============================== -->
+<section class="secao" id="preparar">
+  <h2>3. Checklist do que preparar</h2>
+  <p>Marque cada item antes do passo 1.</p>
+  <ul class="check">
+    <li><strong>Acesso ao painel do Supabase</strong> do projeto <code>ofwvoztarroglekfwohs</code>, com permissão de dono (SQL Editor e Database &gt; Backups).</li>
+    <li><strong>Acesso à VPS</strong> (terminal na pasta do projeto) para rodar <code>git pull</code> e <code>docker compose</code>.</li>
+    <li><strong>Quem mantém o sistema</strong> disponível para rodar o <code>supabase db push</code> pelo pipeline (passo 2).</li>
+    <li><strong>Modo escolhido</strong>: A (manter usuários) ou B (só admins). Anote aqui: ______</li>
+    <li>No modo B: <strong>pelo menos 1 admin real ativo</strong>, que consegue entrar no sistema.</li>
+    <li><strong>Horário sem uso</strong> do sistema (avise os usuários). O backend ficará parado alguns minutos.</li>
+    <li><strong>Backup</strong> recente disponível ou forma de fazer uma cópia do banco.</li>
+    <li>Papel ou bloco de notas para <strong>anotar o número do ensaio</strong> e os resultados. Ou faça capturas de tela.</li>
+    <li>Este guia aberto e o arquivo <code>supabase/ops/limpar_dados_de_teste.sql</code> à mão (do repositório atualizado).</li>
+  </ul>
+  <div class="caixa dica">
+    <strong>Dica</strong>
+    <p>Faça tudo de uma vez, na ordem, sem pular passos. Se algo parecer errado em qualquer momento, <strong>pare</strong>: até o passo 6 nada foi apagado.</p>
+  </div>
+</section>
+
+<!-- ============================== 4 ============================== -->
+<section class="secao" id="passos">
+  <h2>4. Passo a passo</h2>
+
+  <div class="passo" id="p1">
+    <h3><span class="num">1</span> Backup</h3>
+    <p class="onde">Onde: painel do Supabase</p>
+    <ol>
+      <li>Abra <code>supabase.com/dashboard/project/ofwvoztarroglekfwohs</code>. Confira o ref no endereço. Se for outro projeto, <strong>pare</strong>.</li>
+      <li>Vá em <strong>Database &gt; Backups</strong> e confira se há um backup recente (backup diário só existe em plano pago).</li>
+      <li>Sem backup no painel: peça a quem mantém o sistema uma cópia do banco (pg_dump/export) e guarde-a em local seguro.</li>
+    </ol>
+    <div class="esperado"><strong>Deve aparecer:</strong> um backup com data de hoje ou de ontem, ou a confirmação de que a cópia foi feita.</div>
+  </div>
+
+  <div class="passo" id="p2">
+    <h3><span class="num">2</span> Aplicar as migrations pendentes (db push)</h3>
+    <p class="onde">Onde: computador de quem mantém o sistema (pipeline). Nunca pela VPS.</p>
+    <pre><code>supabase db push --dry-run
+supabase db push</code></pre>
+    <p>Precisam estar aplicadas, entre outras:</p>
+    <ul>
+      <li><code>20261127120000_km_percorrido</code></li>
+      <li><code>20261128120000_perfis_telefone</code>, <code>20261128120100_convites_telefone</code>, <code>20261128120200_convites_telefone_expurgo</code></li>
+      <li><code>20261129120000_ops_banco_lacrado</code> (permite ao Storage conferir o lacre)</li>
+    </ul>
+    <div class="esperado"><strong>Deve aparecer:</strong> o <code>--dry-run</code> lista as migrations pendentes; o <code>db push</code> termina sem erro. Rodando o <code>--dry-run</code> de novo, nada fica pendente.</div>
+  </div>
+
+  <div class="passo" id="p3">
+    <h3><span class="num">3</span> Atualizar a VPS (--build)</h3>
+    <p class="onde">Onde: terminal da VPS, na pasta do projeto</p>
+    <pre><code>git pull
+docker compose up -d --build
+docker compose ps</code></pre>
+    <p>O <code>--build</code> é necessário porque a ferramenta de Storage vem dentro da imagem nova do backend.</p>
+    <div class="esperado"><strong>Deve aparecer:</strong> no <code>docker compose ps</code>, <code>backend</code> e <code>frontend</code> como <code>running</code> e <code>(healthy)</code>.</div>
+  </div>
+
+  <div class="passo" id="p4">
+    <h3><span class="num">4</span> Parar o backend</h3>
+    <p class="onde">Onde: terminal da VPS</p>
+    <pre><code>docker compose stop backend</code></pre>
+    <p>O SQL trava as tabelas por instantes (o ensaio também). Com o backend parado, ninguém grava nada no meio. O backend fica parado só durante os passos 5 e 6.</p>
+    <div class="esperado"><strong>Deve aparecer:</strong> <code>Container sisveiculos-backend-1 Stopped</code> (o nome pode variar). O site mostra erro ao tentar entrar: é o esperado por alguns minutos.</div>
+  </div>
+
+  <div class="passo" id="p5">
+    <h3><span class="num">5</span> Ensaio do SQL</h3>
+    <p class="onde">Onde: painel do Supabase &gt; SQL Editor</p>
+    <ol>
+      <li>Clique em <strong>SQL Editor</strong> &gt; <strong>New query</strong>.</li>
+      <li>Abra <code>supabase/ops/limpar_dados_de_teste.sql</code>, copie <strong>tudo</strong> e cole.</li>
+      <li><strong>Modo A:</strong> não mude nada. <strong>Modo B:</strong> mude só esta linha:
+        <pre><code>v_manter_usuarios  boolean := false;</code></pre></li>
+      <li>Clique em <strong>Run</strong>.</li>
+    </ol>
+    <div class="esperado"><strong>Deve aparecer:</strong> uma mensagem de <strong>erro</strong> que começa com <code>ENSAIO: nada foi apagado.</code> É assim mesmo: o ensaio usa o erro para desfazer tudo. Na mensagem:
+      <ul>
+        <li><code>*** COPIE ESTE NUMERO PARA v_confere_total: N ***</code> (anote o N);</li>
+        <li><code>MODO:</code> o modo escolhido e se a auditoria será apagada;</li>
+        <li>uma tabela com <code>ANTES</code> e <code>APAGADAS</code> por tabela;</li>
+        <li><code>MANTIDAS (nao mudam)</code>: veículos, configurações etc.;</li>
+        <li><code>CONTAS:</code> quantos admins ativos ficam e quantas contas seriam apagadas no modo B;</li>
+        <li><code>Arquivos por bucket</code>: quantos arquivos há (o SQL não os apaga).</li>
+      </ul>
+    </div>
+    <p><strong>Copie ou fotografe a mensagem.</strong> Confira se os números fazem sentido. Se algo parecer errado, <strong>pare</strong> e religue o backend (passo 7).</p>
+  </div>
+
+  <div class="passo" id="p6">
+    <h3><span class="num">6</span> Execução do SQL</h3>
+    <p class="onde">Onde: o mesmo SQL Editor, na mesma consulta</p>
+    <p>Mantenha o modo do ensaio e mude <strong>somente</strong> estas três linhas (N é o número do ensaio):</p>
+    <pre><code>v_executar         boolean := true;
+v_confirmacao      text    := 'FRASE DA TABELA ABAIXO';
+v_confere_total    int     := N;</code></pre>
+    <table>
+      <thead><tr><th>Modo</th><th>Auditoria</th><th>Frase exata</th></tr></thead>
+      <tbody>
+        <tr><td>A</td><td>apagar (padrão)</td><td><code>APAGAR DADOS DE TESTE ofwvoztarroglekfwohs E AUDITORIA</code></td></tr>
+        <tr><td>A</td><td>manter</td><td><code>APAGAR DADOS DE TESTE ofwvoztarroglekfwohs</code></td></tr>
+        <tr><td>B</td><td>apagar (padrão)</td><td><code>APAGAR DADOS DE TESTE ofwvoztarroglekfwohs E AUDITORIA E USUARIOS</code></td></tr>
+      </tbody>
+    </table>
+    <p>Clique em <strong>Run</strong>. Se o painel avisar sobre <code>DELETE</code>, confirme.</p>
+    <div class="esperado"><strong>Deve aparecer:</strong> nenhum erro e uma tabela de resultado com as colunas <code>tabela</code>, <code>linhas</code>, <code>apagadas_agora</code> e <code>situacao</code>:
+      <ul>
+        <li><strong>0</strong> nas tabelas sempre apagadas (requisições, checklists, notificações etc.);</li>
+        <li><code>auditoria</code> com <strong>1</strong> (ou as linhas de antes + 1, se manteve a auditoria);</li>
+        <li>veículos, configurações e saudações com o mesmo número do ensaio;</li>
+        <li>modo B: <code>perfis</code> e <code>auth.users</code> com o número de admins ativos e <code>convites</code> com 0.</li>
+      </ul>
+    </div>
+    <p><strong>Copie ou fotografe o resultado.</strong></p>
+    <div class="caixa atencao">
+      <strong>ATENÇÃO</strong>
+      <p>Depois deste passo, os dados <strong>não voltam</strong> sem o backup. Não deixe <code>v_lacrar := true</code> a menos que esta seja a limpeza final e o lançamento seja imediato.</p>
+    </div>
+  </div>
+
+  <div class="passo" id="p7">
+    <h3><span class="num">7</span> Religar o backend</h3>
+    <p class="onde">Onde: terminal da VPS</p>
+    <pre><code>docker compose start backend
+docker compose ps</code></pre>
+    <p>A ferramenta de Storage roda <strong>dentro</strong> do backend, por isso ele precisa estar no ar.</p>
+    <div class="esperado"><strong>Deve aparecer:</strong> <code>backend</code> como <code>running</code> e, depois de alguns segundos, <code>(healthy)</code>.</div>
+  </div>
+
+  <div class="passo" id="p8">
+    <h3><span class="num">8</span> Ensaio do Storage</h3>
+    <p class="onde">Onde: terminal da VPS, na pasta do projeto</p>
+    <p><strong>Modo A:</strong></p>
+    <pre><code>docker compose exec backend python -m app.ops.limpar_storage</code></pre>
+    <p><strong>Modo B:</strong></p>
+    <pre><code>docker compose exec backend python -m app.ops.limpar_storage --apagar-usuarios</code></pre>
+    <div class="esperado"><strong>Deve aparecer:</strong> <code>ENSAIO (nada foi apagado). Modo: ...</code> e uma linha por bucket, por exemplo:
+      <pre><code>  avatares: 12 arquivo(s); apagar 9; manter 3
+  checklists: 40 arquivo(s); apagar 40; manter 0</code></pre>
+      e, no fim, <code>Para executar: --executar e a frase "APAGAR ARQUIVOS ofwvoztarroglekfwohs".</code> Nada é apagado. Não aparecem nomes de arquivo, links ou senhas.</div>
+    <p>Se aparecer <code>AVISO: não foi possível ler o lacre do banco</code>, a migration <code>20261129120000</code> não foi aplicada: volte ao passo 2.</p>
+  </div>
+
+  <div class="passo" id="p9">
+    <h3><span class="num">9</span> Execução do Storage</h3>
+    <p class="onde">Onde: terminal da VPS</p>
+    <p>O mesmo comando do mesmo modo, com <code>--executar</code>:</p>
+    <pre><code>docker compose exec backend python -m app.ops.limpar_storage --executar</code></pre>
+    <pre><code>docker compose exec backend python -m app.ops.limpar_storage --executar --apagar-usuarios</code></pre>
+    <p>(o primeiro para o modo A, o segundo para o modo B). Ele mostra o <code>PLANO</code> e pede:</p>
+    <pre><code>Digite exatamente: APAGAR ARQUIVOS ofwvoztarroglekfwohs</code></pre>
+    <p>Digite a frase (a mesma nos dois modos) e tecle <strong>Enter</strong>.</p>
+    <div class="esperado"><strong>Deve aparecer:</strong> <code>CONCLUÍDO. Situação atual:</code> com <code>apagar 0</code> em <code>avatares</code> e <code>checklists</code>.</div>
+    <div class="caixa atencao">
+      <strong>ATENÇÃO</strong>
+      <p>Rode o Storage sempre <strong>depois</strong> do SQL. Arquivos apagados não voltam (o backup do banco não guarda arquivos).</p>
+    </div>
+  </div>
+
+  <div class="passo" id="p10">
+    <h3><span class="num">10</span> Conferência</h3>
+    <p class="onde">Onde: sistema (navegador) e terminal da VPS</p>
+    <ol>
+      <li>Entre no sistema com o <strong>administrador real</strong>.</li>
+      <li>A lista de requisições deve estar <strong>vazia</strong> e o veículo, <strong>livre</strong>.</li>
+      <li>Modo A: confira que uma conta real consegue entrar. Modo B: só os admins existem; convide os usuários reais a partir de agora.</li>
+      <li>Rode de novo o ensaio do Storage (passo 8).</li>
+    </ol>
+    <div class="esperado"><strong>Deve aparecer:</strong> <code>apagar 0</code> em <code>checklists</code> e <code>avatares</code>.</div>
+    <p>É normal surgirem linhas novas em acessos de login, notificações e auditoria por causa do seu login. Por isso um novo ensaio do SQL não mostrará tudo zerado.</p>
+  </div>
+
+  <div class="passo" id="p11">
+    <h3><span class="num">11</span> Lacre</h3>
+    <p class="onde">Onde: painel do Supabase &gt; SQL Editor &gt; New query</p>
+    <p>O lacre faz o banco <strong>recusar</strong> as duas ferramentas daí em diante. Grave-o no lançamento, antes de entrar qualquer dado real.</p>
+    <ol>
+      <li>Cole o conteúdo de <code>supabase/ops/lacrar_producao.sql</code>.</li>
+      <li>Mude a linha da confirmação para:
+        <pre><code>v_confirmacao  text := 'LACRAR PRODUCAO ofwvoztarroglekfwohs';</code></pre></li>
+      <li>Clique em <strong>Run</strong>.</li>
+    </ol>
+    <div class="esperado"><strong>Deve aparecer:</strong> <code>sisveiculos:lacrado</code> e o comentário anterior que foi substituído.</div>
+    <p>Para conferir depois (por exemplo, após restaurar um backup):</p>
+    <pre><code>select shobj_description(oid, 'pg_database') from pg_database where datname = current_database();</code></pre>
+    <div class="caixa dica">
+      <strong>Limites do lacre</strong>
+      <p>Protege contra erro e esquecimento, não contra má-fé: o dono do banco pode desfazê-lo. Também pode se perder num restore de backup ou na recriação do projeto. Desfazer o lacre só antes de haver dado real, por decisão consciente do dono do banco.</p>
+    </div>
+  </div>
+
+  <div class="passo" id="p12">
+    <h3><span class="num">12</span> Apagar os snippets do Studio</h3>
+    <p class="onde">Onde: painel do Supabase &gt; SQL Editor</p>
+    <p>O SQL Editor guarda as consultas usadas. Uma consulta salva com <code>v_executar := true</code> e a frase, rodada por engano no futuro, seria recusada pelo número e pelo lacre, mas não deixe esse risco.</p>
+    <ol>
+      <li>Na lista de consultas, abra o menu (<strong>⋯</strong>) de cada consulta usada nos passos 5, 6 e 11.</li>
+      <li>Clique em <strong>Delete</strong> e confirme.</li>
+    </ol>
+    <div class="esperado"><strong>Deve aparecer:</strong> nenhuma consulta com a limpeza ou o lacre na lista do SQL Editor.</div>
+  </div>
+</section>
+
+<!-- ============================== 5 ============================== -->
+<section class="secao" id="erros">
+  <h2>5. Erros e o que fazer</h2>
+  <p>O SQL é uma transação única: qualquer erro <strong>desfaz tudo</strong>. As mensagens trazem só contagens. Em caso de dúvida, copie a mensagem inteira e envie a quem mantém o sistema.</p>
+  <table class="compacta">
+    <thead><tr><th style="width:36%">Mensagem</th><th style="width:30%">O que quer dizer</th><th>O que fazer</th></tr></thead>
+    <tbody>
+      <tr><td><code>ENSAIO: nada foi apagado</code></td><td>Normal: é o resultado do ensaio.</td><td>Anote o número e siga para o passo 6.</td></tr>
+      <tr><td><code>RECUSADO: ... LACRADO</code> (LD002)</td><td>O banco já está lacrado.</td><td>Não rode. A limpeza não vale mais aqui.</td></tr>
+      <tr><td><code>RECUSADO: ... v_confirmacao ...</code> (LD003)</td><td>A frase não está exata ou não combina com o modo.</td><td>Copie a frase da tabela do passo 6 (maiúsculas, espaços, ref).</td></tr>
+      <tr><td><code>RECUSADO: parametro nulo</code> (LD003)</td><td>Algum parâmetro do topo ficou sem valor.</td><td>Cole o arquivo de novo e mude só as linhas indicadas.</td></tr>
+      <tr><td><code>ESTRUTURA INESPERADA</code> ou <code>SEM PERMISSAO</code> (LD004)</td><td>Falta migration, existe tabela que o script não conhece ou o usuário não é dono.</td><td>Faça o passo 2. Se continuar, não force: envie a mensagem.</td></tr>
+      <tr><td><code>VERIFICACAO FALHOU</code> (LD005)</td><td>O script achou algo estranho no fim e desfez tudo.</td><td>Envie a mensagem. Nada foi apagado.</td></tr>
+      <tr><td><code>RECUSADO: ... comentario proprio</code> (LD006)</td><td>O lacre não pode ser gravado neste banco.</td><td>Use <code>v_lacrar := false</code> e avise.</td></tr>
+      <tr><td><code>RECUSADO: ... v_confere_total ...</code> (LD007)</td><td>O número não bate: algo mudou desde o ensaio, ou o modo é outro.</td><td>Confira se o backend está parado, refaça o ensaio no mesmo modo e use o número novo.</td></tr>
+      <tr><td><code>RECUSADO: nao ha nenhum admin ativo</code> (LD008)</td><td>Nenhum admin ativo ficaria.</td><td>Cadastre ou reative um admin real antes. Não continue.</td></tr>
+      <tr><td><code>RECUSADO: linhas que ficam apontam para contas...</code> (LD009)</td><td>Modo B com auditoria mantida (ou algo que fica aponta para conta de teste).</td><td>Volte <code>v_apagar_auditoria := true</code>, use a frase com <code>E AUDITORIA E USUARIOS</code> e refaça o ensaio; ou use o modo A.</td></tr>
+      <tr><td><code>lock timeout</code></td><td>Alguém estava usando o sistema.</td><td>Pare o backend (passo 4) e tente de novo.</td></tr>
+      <tr><td>Storage: <code>AVISO: não foi possível ler o lacre do banco</code></td><td>Falta a migration <code>20261129120000</code>. O ensaio funciona; a execução recusa.</td><td>Volte ao passo 2.</td></tr>
+      <tr><td>Storage: <code>RECUSADO: ... Nada foi apagado.</code></td><td>Frase errada, banco lacrado, lacre não conferido ou variáveis do backend ausentes.</td><td>Leia o motivo na mensagem, corrija e rode de novo (ensaio primeiro).</td></tr>
+      <tr><td>Storage: <code>FALHA ...</code> ou <code>ATENÇÃO: N arquivo(s) ainda deveriam ter sido apagados</code></td><td>Erro no meio da remoção; uma parte pode ter sido apagada.</td><td>Rode o ensaio (passo 8) e depois a execução de novo. Ele só apaga o que sobrou.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== 6 ============================== -->
+<section class="secao" id="nunca">
+  <h2>6. O que nunca fazer</h2>
+  <ul class="nunca">
+    <li><strong>Nunca</strong> rode a limpeza depois que houver dados reais no sistema.</li>
+    <li><strong>Nunca</strong> rode sem backup (passo 1).</li>
+    <li><strong>Nunca</strong> pule o ensaio nem reaproveite o número de um ensaio antigo ou de outro modo.</li>
+    <li><strong>Nunca</strong> mude outras linhas do SQL além das indicadas neste guia.</li>
+    <li><strong>Nunca</strong> rode o <code>supabase db push</code> pela VPS nem edite arquivos na VPS: lá só <code>git pull</code> e <code>docker compose</code>.</li>
+    <li><strong>Nunca</strong> rode o Storage antes do SQL.</li>
+    <li><strong>Nunca</strong> apague os buckets em si, nem arquivos à mão, nem usuários pelo painel do Auth fora deste procedimento.</li>
+    <li><strong>Nunca</strong> desative nem apague a conta do administrador real.</li>
+    <li><strong>Nunca</strong> desfaça o lacre depois do lançamento.</li>
+    <li><strong>Nunca</strong> cole senhas, chaves ou o conteúdo do <code>.env</code> em mensagens, prints ou no SQL Editor.</li>
+    <li><strong>Nunca</strong> deixe snippets da limpeza ou do lacre salvos no Studio (passo 12).</li>
+    <li><strong>Nunca</strong> force um erro de "estrutura inesperada" desligando proteções do banco: envie a mensagem a quem mantém o sistema.</li>
+  </ul>
+  <div class="caixa dica">
+    <strong>Referências</strong>
+    <p>Detalhes técnicos: <code>supabase/ops/README.md</code>. Versão em texto deste guia: <code>docs/limpeza-pre-lancamento.md</code>.</p>
+  </div>
+</section>
+
+</body>
+</html>

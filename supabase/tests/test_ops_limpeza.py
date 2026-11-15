@@ -2,10 +2,12 @@
 
 Somente banco local/dev DESCARTAVEL (TEST_DATABASE_URL + TEST_DATABASE_CONFIRM=descartavel + marcador
 `comment on database ... is 'sisveiculos:descartavel'`; sem eles os testes sao pulados). Ver dbhelpers.py.
-ATENCAO: estes testes EXECUTAM a limpeza de verdade: apagam requisicoes, checklists, notificacoes,
-localizacoes, envios de e-mail, uso de IA, fotos de perfil, acessos de login e auditoria de TODO o banco
-de teste (perfis, veiculos, configuracoes, ia_configuracoes e convites ficam). Exige TODAS as migrations
-(inclusive 20261114120000). Os outros testes criam os proprios dados com ids unicos e nao dependem de dados antigos.
+ATENCAO: estes testes EXECUTAM a limpeza de verdade em TODO o banco de teste: apagam o dado operacional
+(requisicoes, arquivadas, checklists, notificacoes, localizacoes, envios, IA, acessos, desafios e
+reautenticacoes WebAuthn) e a auditoria; os testes do modo "so admins" apagam tambem TODAS as contas que
+nao sao admin ativo (perfis + auth.users) e todos os convites. veiculos, configuracoes, ia_configuracoes e
+saudacoes ficam. Exige TODAS as migrations (inclusive 20261127120000 e 20261128120000/120100/120200).
+Os outros testes criam os proprios dados com ids unicos e nao dependem de dados antigos.
 Alguns testes trocam o comentario do banco (lacre) e o restauram no fim. Sem paralelismo.
 
     pytest supabase/tests/test_ops_limpeza.py -m db_local -p no:xdist
@@ -38,43 +40,68 @@ _OPS = Path(__file__).resolve().parents[1] / "ops"
 SCRIPT = (_OPS / "limpar_dados_de_teste.sql").read_text(encoding="utf-8")
 LACRAR = (_OPS / "lacrar_producao.sql").read_text(encoding="utf-8")
 
-FRASE = "APAGAR DADOS DE TESTE ofwvoztarroglekfwohs"
-FRASE_AUD = FRASE + " E AUDITORIA"
-FRASE_LACRE = "LACRAR PRODUCAO ofwvoztarroglekfwohs"
-ESCOPO = (
+REF = "ofwvoztarroglekfwohs"
+FRASE = "APAGAR DADOS DE TESTE " + REF
+FRASE_LACRE = "LACRAR PRODUCAO " + REF
+
+
+def frase(*, apagar_auditoria: bool = True, manter_usuarios: bool = True) -> str:
+    """Frase exata do modo: base + ' E AUDITORIA' (auditoria apagada) + ' E USUARIOS' (so admins)."""
+    return FRASE + (" E AUDITORIA" if apagar_auditoria else "") + ("" if manter_usuarios else " E USUARIOS")
+
+
+# Classificacao das 21 tabelas de public (+ auth.users), igual ao script.
+SEMPRE = (
     "checklist_fotos",
     "checklists",
     "notificacoes",
     "localizacoes_viagem",
+    "requisicoes_arquivadas",
     "requisicoes",
-    "perfil_fotos",
     "acessos_login",
     "envios_email",
     "ia_uso",
-    "auditoria",
+    "desafios_webauthn",
+    "reautenticacoes_webauthn",
 )
-MANTIDAS = ("perfis", "veiculos", "configuracoes", "ia_configuracoes", "convites")
+POR_USUARIO = ("perfil_fotos", "push_inscricoes", "credenciais_webauthn")  # coluna usuario_id
+CONTAS = ("convites", *POR_USUARIO, "perfis", "auth.users")
+MANTIDAS = ("veiculos", "configuracoes", "ia_configuracoes", "saudacoes")
+TODAS = (*SEMPRE, "auditoria", *CONTAS, *MANTIDAS)
 GATILHOS_DESLIGADOS = {
     "checklist_fotos": "trg_checklist_fotos_imutavel",
     "checklists": "trg_checklists_imutavel",
     "notificacoes": "trg_notificacoes_proteger",
     "localizacoes_viagem": "trg_localizacoes_viagem_imutavel",
     "requisicoes": "trg_requisicoes_sem_delete",
-    "perfil_fotos": "trg_perfil_fotos_sem_delete",
     "acessos_login": "trg_acessos_login_imutavel",
     "envios_email": "trg_envios_email_sem_delete",
     "ia_uso": "trg_ia_uso_imutavel",
+    "desafios_webauthn": "trg_desafios_webauthn_proteger",
+    "reautenticacoes_webauthn": "trg_reautenticacoes_webauthn_proteger",
+    "convites": "trg_convites_sem_delete",
+    "perfil_fotos": "trg_perfil_fotos_sem_delete",
+    "push_inscricoes": "trg_push_inscricoes_proteger",
+    "credenciais_webauthn": "trg_credenciais_webauthn_proteger",
     "auditoria": "trg_auditoria_append_only",
+    "perfis": "trg_perfis_sem_delete",
 }
 # Gatilhos que NUNCA podem ser tocados pela limpeza (TRUNCATE segue bloqueado).
 GATILHOS_TRUNCATE = (
     ("notificacoes", "trg_notificacoes_sem_truncate"),
     ("localizacoes_viagem", "trg_localizacoes_viagem_sem_truncate"),
     ("auditoria", "trg_auditoria_sem_truncate"),
+    ("perfis", "trg_perfis_sem_truncate"),
+    ("push_inscricoes", "trg_push_inscricoes_sem_truncate"),
+    ("credenciais_webauthn", "trg_credenciais_webauthn_sem_truncate"),
 )
 LIGADOS = ("A", "O")  # ENABLE ALWAYS ou ENABLE padrao (envios_email/ia_uso nasceram em 'O')
 ANCORA = "-- >>> RELIGAR"
 PADRAO = "default administrative connection database"
+P256 = "B" * 87
+AUTH = "a" * 22
+CHAVE = "pQECAyYgASFYIK" + "A" * 60
+_UUID_OU_EMAIL = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}|@")
 
 
 # --- runner do script --------------------------------------------------------------------------
@@ -124,30 +151,35 @@ def _rodar_texto(texto: str, papel: str | None = None) -> Resultado:
     return r
 
 
+def _b(v: bool) -> str:
+    return "true" if v else "false"
+
+
 def rodar(
     *,
     executar: bool = False,
-    confirmacao: str = "",
+    confirmacao: str | None = None,
     apagar_auditoria: bool = True,
+    manter_usuarios: bool = True,
     lacrar: bool = False,
     antes_de_religar: str | None = None,
     confere: int | str | None = "auto",
     papel: str | None = None,
-    frase_exata: bool = False,
+    script: str = SCRIPT,
 ) -> Resultado:
-    """frase_exata=False: com apagar_auditoria e a frase basica, completa com ' E AUDITORIA' (DB-04).
-    confere: 'auto' = total atual das 10 tabelas do escopo; None = deixa o padrao (-1); int = esse valor."""
-    t = SCRIPT
-    if apagar_auditoria and confirmacao == FRASE and not frase_exata:
-        confirmacao = FRASE_AUD
-    t = _param(t, "v_executar", "boolean", "true" if executar else "false")
+    """confirmacao None = a frase certa do modo. confere: 'auto' = total atual do modo;
+    None = deixa o padrao (-1); int = esse valor."""
+    if confirmacao is None:
+        confirmacao = frase(apagar_auditoria=apagar_auditoria, manter_usuarios=manter_usuarios) if executar else ""
+    t = _param(script, "v_executar", "boolean", _b(executar))
     t = _param(t, "v_confirmacao", "text", _lit(confirmacao))
     if confere == "auto":
-        confere = sum(contagens(ESCOPO).values())
+        confere = total_modo(manter_usuarios=manter_usuarios, apagar_auditoria=apagar_auditoria)
     if confere is not None:
         t = _param(t, "v_confere_total", "int", str(confere))
-    t = _param(t, "v_apagar_auditoria", "boolean", "true" if apagar_auditoria else "false")
-    t = _param(t, "v_lacrar", "boolean", "true" if lacrar else "false")
+    t = _param(t, "v_manter_usuarios", "boolean", _b(manter_usuarios))
+    t = _param(t, "v_apagar_auditoria", "boolean", _b(apagar_auditoria))
+    t = _param(t, "v_lacrar", "boolean", _b(lacrar))
     if antes_de_religar is not None:
         assert ANCORA in t
         t = t.replace(ANCORA, antes_de_religar + "\n" + ANCORA, 1)
@@ -160,12 +192,39 @@ def rodar_lacre(confirmacao: str) -> Resultado:
 
 
 # --- estado do banco ----------------------------------------------------------------------------
-def contagens(tabelas: tuple[str, ...] = ESCOPO + MANTIDAS) -> dict[str, int]:
+def _ident(tabela: str) -> sql.Identifier:
+    esquema, _, nome = tabela.rpartition(".")
+    return sql.Identifier(esquema or "public", nome)
+
+
+def contagens(tabelas: tuple[str, ...] = TODAS) -> dict[str, int]:
     with h.conectar() as c:
         return {
-            t: int(c.execute(sql.SQL("select count(*) from public.{}").format(sql.Identifier(t))).fetchone()[0])  # type: ignore[index]
+            t: int(c.execute(sql.SQL("select count(*) from {}").format(_ident(t))).fetchone()[0])  # type: ignore[index]
             for t in tabelas
         }
+
+
+def admins() -> list[uuid.UUID]:
+    with h.conectar() as c:
+        return [r[0] for r in c.execute("select id from public.perfis where role = 'admin' and ativo order by id")]
+
+
+def _nao_admin(tabela: str, coluna: str, ids: list[uuid.UUID]) -> int:
+    with h.conectar() as c:
+        q = sql.SQL("select count(*) from {} where not ({} = any (%s))").format(_ident(tabela), sql.Identifier(coluna))
+        return int(c.execute(q, (ids,)).fetchone()[0])  # type: ignore[index]
+
+
+def total_modo(*, manter_usuarios: bool = True, apagar_auditoria: bool = True) -> int:
+    """Total de linhas que o modo apaga (o numero do ensaio)."""
+    cont = contagens((*SEMPRE, "auditoria", "convites"))
+    total = sum(cont[t] for t in SEMPRE) + (cont["auditoria"] if apagar_auditoria else 0)
+    if not manter_usuarios:
+        ids = admins()
+        total += cont["convites"] + sum(_nao_admin(t, "usuario_id", ids) for t in POR_USUARIO)
+        total += _nao_admin("perfis", "id", ids) + _nao_admin("auth.users", "id", ids)
+    return total
 
 
 def snapshot_gatilhos() -> list[tuple]:
@@ -218,6 +277,7 @@ class Mundo:
     solicitante: uuid.UUID
     veiculo: uuid.UUID
     ocupada: uuid.UUID  # requisicao em_uso (ocupa o veiculo)
+    orfao: uuid.UUID  # conta do Auth sem perfil (convite nao consumido)
 
 
 def _flag_checklist(ligado: bool, por: uuid.UUID) -> None:
@@ -249,6 +309,32 @@ def _acesso(uid: uuid.UUID) -> None:
 def _foto(uid: uuid.UUID) -> None:
     with h.conectar() as c:
         c.execute("select public.trocar_foto_perfil(%s, %s, 'image/png', 1000)", (uid, uuid.uuid4()))
+
+
+def _push(uid: uuid.UUID) -> None:
+    """Cria uma inscricao de push (regex corrigido em 20261130120000; erro aqui e regressao)."""
+    with h.conectar() as c:
+        c.execute(
+            "select public.registrar_inscricao_push(%s, %s, %s, %s)",
+            (uid, f"https://fcm.googleapis.com/fcm/send/{uuid.uuid4().hex}", P256, AUTH),
+        )
+
+
+def _passkey(uid: uuid.UUID) -> None:
+    """Cria uma passkey (regex corrigido em 20261130120000; erro aqui e regressao)."""
+    cid = "C" + uuid.uuid4().hex + uuid.uuid4().hex[:7]
+    with h.conectar() as c:
+        c.execute(
+            "select public.registrar_credencial_webauthn(%s, %s, %s, 0, %s, 'Notebook')",
+            (uid, cid, CHAVE, ["internal"]),
+        )
+
+
+def _webauthn_transitorio(uid: uuid.UUID) -> None:
+    """Um desafio e uma reautenticacao (recentes: o expurgo do sistema nao os apagaria)."""
+    with h.conectar() as c:
+        c.execute("select public.criar_desafio_webauthn(%s, 'registro')", (uid,))
+        c.execute("select public.registrar_reautenticacao_webauthn(%s, %s)", (uid, "sess-" + uuid.uuid4().hex))
 
 
 _FLAGS_MOTORISTA = (
@@ -320,10 +406,11 @@ def _envio_e_uso_ia(admin: uuid.UUID, sol: uuid.UUID) -> None:
 
 
 def popular() -> Mundo:
-    """Dados ficticios completos: usuarios, veiculo, requisicoes em varios estados, checklists com
-    fotos, fotos de perfil (uma removida), acessos de login, convite, auditoria, notificacoes (nascem
-    por gatilho), localizacao de motorista, envio de e-mail e uso de IA. Tudo RECENTE (< 30 dias),
-    abaixo dos pisos de expurgo do sistema: so o script de limpeza consegue apagar."""
+    """Dados ficticios completos em TODAS as tabelas apagaveis: usuarios, veiculo, requisicoes em varios
+    estados (uma arquivada), checklists com fotos, fotos de perfil (uma removida), acessos de login,
+    convite, auditoria, notificacoes (nascem por gatilho), localizacao de motorista, envio de e-mail, uso
+    de IA, push, passkey, desafio e reautenticacao WebAuthn, e uma conta do Auth sem perfil. O admin tambem
+    tem foto, push e passkey (devem ficar no modo "so admins"). Tudo RECENTE, abaixo dos pisos de expurgo."""
     admin = h.criar_usuario("admin-lmp", "admin")
     aut = h.criar_usuario("aut-lmp", "autorizador")
     sol = h.criar_usuario("sol-lmp")
@@ -352,55 +439,95 @@ def popular() -> Mundo:
         h.iniciar(ocupada, aut)
     finally:
         _flag_checklist(original, admin)
+    with h.conectar() as c:
+        c.execute(
+            "insert into public.requisicoes_arquivadas (usuario_id, requisicao_id) values (%s, %s)", (sol, concluida)
+        )
     _foto(sol)
     _foto(sol)  # a primeira fica removida (troca), a segunda ativa
     _foto(aut)
+    _foto(admin)
     _acesso(sol)
     _acesso(aut)
     h.novo_convite(admin, h.email_unico())
     _localizacao(admin, aut, sol, h.criar_usuario("mot-lmp", "motorista"))
     _envio_e_uso_ia(admin, sol)
-    return Mundo(admin, aut, sol, veic, ocupada)
+    for u in (sol, admin):
+        _push(u)
+        _passkey(u)
+    _webauthn_transitorio(sol)
+    orfao = h.criar_auth(h.email_unico())
+    return Mundo(admin, aut, sol, veic, ocupada, orfao)
 
 
 def _confirmar_populado() -> dict[str, int]:
     c = contagens()
-    for t in ESCOPO:
+    for t in (*SEMPRE, "auditoria", *CONTAS):
         assert c[t] > 0, t
     return c
 
 
+def _linha_relatorio(mensagem: str, tabela: str) -> tuple[str, str, str, str]:
+    m = re.search(rf"^{re.escape(tabela)}\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)$", mensagem, re.MULTILINE)
+    assert m, tabela
+    return m.group(1), m.group(2), m.group(3), m.group(4)
+
+
 # --- (a) ensaio ---------------------------------------------------------------------------------
-def test_ensaio_padrao_nao_apaga_e_reporta_contagens() -> None:
+def test_ensaio_padrao_nao_apaga_e_reporta_os_dois_modos() -> None:
     popular()
     antes = _confirmar_populado()
+    ids = admins()
     gat = snapshot_gatilhos()
     r = rodar()
     assert not r.ok and r.sqlstate == "LD001"
     assert "ENSAIO: nada foi apagado" in r.mensagem
+    assert "MODO: mantem usuarios" in r.mensagem and "auditoria apagada" in r.mensagem
     assert contagens() == antes
     assert snapshot_gatilhos() == gat
-    # a tabela do relatorio tem a linha de cada tabela do escopo com ANTES e APAGADAS iguais as reais
-    for t in ESCOPO:
-        m = re.search(rf"^{t}\s+(\d+)\s+(\d+)$", r.mensagem, re.MULTILINE)
-        assert m, t
-        assert (int(m.group(1)), int(m.group(2))) == (antes[t], antes[t]), t
+    for t in (*SEMPRE, "auditoria"):
+        assert _linha_relatorio(r.mensagem, t) == (str(antes[t]),) * 4, t
+    for t in CONTAS:
+        alvo = antes[t] if t == "convites" else _nao_admin(t, "id" if t in ("perfis", "auth.users") else "usuario_id", ids)
+        assert _linha_relatorio(r.mensagem, t) == (str(antes[t]), "mantida", "0", str(alvo)), t
     for t in MANTIDAS:
         assert f"{t}={antes[t]}" in r.mensagem
+    contas = _nao_admin("auth.users", "id", ids)
+    assert f"CONTAS: {len(ids)} admin(s) ativo(s) ficam sempre" in r.mensagem
+    assert f"seriam apagadas {contas} conta(s) do Auth" in r.mensagem
+    assert "Arquivos por bucket" in r.mensagem
+    m = re.search(r"COPIE ESTE NUMERO PARA v_confere_total: (\d+)", r.mensagem)
+    assert m and int(m.group(1)) == total_modo()
+
+
+def test_ensaio_so_admins_nao_apaga_e_mostra_o_total_do_modo() -> None:
+    popular()
+    antes = _confirmar_populado()
+    gat = snapshot_gatilhos()
+    r = rodar(manter_usuarios=False)
+    assert r.sqlstate == "LD001", r.mensagem
+    assert "MODO: so admins ativos" in r.mensagem
+    assert contagens() == antes and snapshot_gatilhos() == gat
+    for t in CONTAS:  # APAGADAS = SO_ADMINS neste modo
+        _, apagadas, manter, so_admins = _linha_relatorio(r.mensagem, t)
+        assert apagadas == so_admins and manter == "0", t
+    m = re.search(r"COPIE ESTE NUMERO PARA v_confere_total: (\d+)", r.mensagem)
+    assert m and int(m.group(1)) == total_modo(manter_usuarios=False) > total_modo()
+    assert not _UUID_OU_EMAIL.search(r.mensagem)  # so contagens (LGPD)
 
 
 def test_ensaio_com_confirmacao_certa_e_executar_false_continua_ensaio() -> None:
     antes = contagens()
-    r = rodar(executar=False, confirmacao=FRASE)
+    r = rodar(executar=False, confirmacao=frase())
     assert r.sqlstate == "LD001" and contagens() == antes
 
 
-# --- (b) travas de confirmacao ------------------------------------------------------------------
+# --- (b) frases ---------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "confirmacao",
-    ["", "APAGAR DADOS DE TESTE", "apagar dados de teste ofwvoztarroglekfwohs", FRASE + " ", FRASE[:-1]],
+    ["", FRASE[:-8], frase().lower(), frase() + " ", frase()[:-1], FRASE, frase(manter_usuarios=False)],
 )
-def test_execucao_real_sem_ou_com_confirmacao_errada_aborta(confirmacao: str) -> None:
+def test_execucao_padrao_sem_ou_com_confirmacao_errada_aborta(confirmacao: str) -> None:
     popular()
     antes, gat = contagens(), snapshot_gatilhos()
     r = rodar(executar=True, confirmacao=confirmacao)
@@ -408,47 +535,75 @@ def test_execucao_real_sem_ou_com_confirmacao_errada_aborta(confirmacao: str) ->
     assert contagens() == antes and snapshot_gatilhos() == gat
 
 
-# --- (c)(d) execucao real -----------------------------------------------------------------------
-def test_execucao_real_apaga_exatamente_o_escopo_e_mantem_o_resto() -> None:
-    popular()
+@pytest.mark.parametrize(
+    ("manter", "aud", "errada"),
+    [
+        (False, True, frase()),  # so admins sem " E USUARIOS"
+        (False, True, FRASE + " E USUARIOS E AUDITORIA"),  # ordem trocada
+        (False, False, frase(manter_usuarios=False)),  # com " E AUDITORIA" sem apagar auditoria
+        (True, False, frase()),  # " E AUDITORIA" com auditoria preservada
+        (True, True, FRASE),  # auditoria apagada exige " E AUDITORIA"
+    ],
+)
+def test_frase_reflete_o_que_sera_apagado(manter: bool, aud: bool, errada: str) -> None:
+    antes = contagens()
+    r = rodar(executar=True, confirmacao=errada, manter_usuarios=manter, apagar_auditoria=aud)
+    assert not r.ok and r.sqlstate == "LD003", r.mensagem
+    assert frase(apagar_auditoria=aud, manter_usuarios=manter) in r.mensagem
+    assert contagens() == antes
+
+
+def test_padroes_do_script_mantem_usuarios_e_apagam_auditoria() -> None:
+    assert "v_manter_usuarios  boolean := true;" in SCRIPT
+    assert "v_apagar_auditoria boolean := true;" in SCRIPT
+    assert "v_executar         boolean := false;" in SCRIPT
+    assert "v_lacrar           boolean := false;" in SCRIPT
+
+
+# --- (c)(d) execucao real, modo padrao (mantem usuarios) ----------------------------------------
+def test_execucao_padrao_apaga_operacional_e_auditoria_e_mantem_contas() -> None:
+    m = popular()
     antes = _confirmar_populado()
     gat = snapshot_gatilhos()
-    r = rodar(executar=True, confirmacao=FRASE)
+    r = rodar(executar=True)
     assert r.ok, r.mensagem
     depois = contagens()
-    for t in ESCOPO[:-1]:
+    for t in SEMPRE:
         assert depois[t] == 0, t
     assert depois["auditoria"] == 1  # o registro da limpeza
-    for t in MANTIDAS:
+    for t in (*CONTAS, *MANTIDAS):
         assert depois[t] == antes[t], t
-    # (d) gatilhos identicos e os nomeados continuam em ENABLE ALWAYS ('A')
+    # (d) gatilhos identicos, nomeados ligados e TRUNCATE intocado
     assert snapshot_gatilhos() == gat
     estados = {(rel, nome): est for rel, nome, est in snapshot_gatilhos()}
     for tabela, gatilho in GATILHOS_DESLIGADOS.items():
         assert estados[(tabela, gatilho)] in LIGADOS, gatilho
-    for tabela, gatilho in GATILHOS_TRUNCATE:  # TRUNCATE nunca foi tocado
-        assert estados[(tabela, gatilho)] == "A", gatilho
-    # resumo final visivel (segunda consulta) com as contagens finais
+    for tabela, gatilho in GATILHOS_TRUNCATE:
+        assert estados[(tabela, gatilho)] in LIGADOS, gatilho
+    # resumo final visivel (segunda consulta)
     final = {linha[0]: linha[1] for linha in r.tabela_final}
     apagadas = {linha[0]: linha[2] for linha in r.tabela_final}
-    for t in ESCOPO[:-1]:
-        assert final[t] == 0
-    assert final["auditoria"] == 1
-    for t in ESCOPO:  # as contagens apagadas saem no resultado final (nao so no NOTICE)
-        assert apagadas[t] == str(antes[t]), t
-    for t in MANTIDAS:
-        assert final[t] == antes[t]
+    for t in SEMPRE:
+        assert final[t] == 0 and apagadas[t] == str(antes[t]), t
+    assert final["auditoria"] == 1 and apagadas["auditoria"] == str(antes["auditoria"])
+    for t in (*CONTAS, *MANTIDAS):
+        assert final[t] == antes[t] and apagadas[t] is None, t
     assert any("LIMPEZA CONCLUIDA" in a for a in r.avisos)
+    # a conta do solicitante continua no Auth e no perfil
+    with h.conectar() as c:
+        assert c.execute("select count(*) from auth.users where id = %s", (m.solicitante,)).fetchone()[0] == 1  # type: ignore[index]
 
 
 def test_depois_da_limpeza_os_gatilhos_de_bloqueio_continuam_bloqueando() -> None:
     m = popular()
-    assert rodar(executar=True, confirmacao=FRASE).ok
+    assert rodar(executar=True).ok
     m2 = popular()
-    for tabela in ESCOPO:
+    excluidas = ("requisicoes_arquivadas", "auth.users")
+    bloqueadas = [t for t in (*SEMPRE, "auditoria", *CONTAS) if t not in excluidas]
+    for tabela in bloqueadas:
         with pytest.raises(psycopg.Error) as exc:
             with h.conectar() as c:
-                c.execute(sql.SQL("delete from public.{} where true").format(sql.Identifier(tabela)))
+                c.execute(sql.SQL("delete from {} where true").format(_ident(tabela)))
         assert h.sqlstate(exc) == "AG003", tabela
     assert m.veiculo != m2.veiculo
 
@@ -458,15 +613,15 @@ def test_dados_recentes_de_notificacoes_e_localizacoes_sao_apagados_e_protecao_p
     normal nao as apagaria; a limpeza as apaga desligando o gatilho nomeado e o religa igual."""
     popular()
     antes = contagens()
-    for t in ("notificacoes", "localizacoes_viagem", "envios_email", "ia_uso"):
+    recentes = ("notificacoes", "localizacoes_viagem", "envios_email", "ia_uso", "desafios_webauthn", "reautenticacoes_webauthn")
+    for t in recentes:
         assert antes[t] > 0, t
     gat = snapshot_gatilhos()
-    assert rodar(executar=True, confirmacao=FRASE).ok
+    assert rodar(executar=True).ok
     depois = contagens()
-    for t in ("notificacoes", "localizacoes_viagem", "envios_email", "ia_uso"):
+    for t in recentes:
         assert depois[t] == 0, t
     assert snapshot_gatilhos() == gat
-    # a funcao de protecao da localizacao continua a nova (retencao de 12 meses) e o piso vale de novo
     with h.conectar() as c:
         fn = c.execute(
             "select p.proname from pg_trigger t join pg_proc p on p.oid = t.tgfoid "
@@ -485,13 +640,11 @@ def test_dados_recentes_de_notificacoes_e_localizacoes_sao_apagados_e_protecao_p
 # --- (e) o sistema volta a funcionar -----------------------------------------------------------
 def test_sistema_funciona_apos_a_limpeza() -> None:
     m = popular()
-    # antes: o veiculo esta ocupado
     with pytest.raises(psycopg.Error) as exc:
         with h.conectar() as c:
             h.inserir_requisicao(c, m.solicitante, m.veiculo)
-    assert h.sqlstate(exc) == "23505"
-    assert rodar(executar=True, confirmacao=FRASE).ok
-    # depois: livre, nova requisicao, checklist de saida, saida real, acesso de login e troca de foto
+    assert h.sqlstate(exc) == "23505"  # antes: veiculo ocupado
+    assert rodar(executar=True).ok
     with h.conectar() as c:
         original = c.execute("select checklist from public.configuracoes").fetchone()[0]  # type: ignore[index]
     _flag_checklist(True, m.admin)
@@ -505,33 +658,130 @@ def test_sistema_funciona_apos_a_limpeza() -> None:
     finally:
         _flag_checklist(bool(original), m.admin)
     _acesso(m.solicitante)
-    _foto(m.solicitante)
     c = contagens()
     assert c["requisicoes"] == 1 and c["checklists"] == 1 and c["checklist_fotos"] == 2
-    assert c["acessos_login"] == 1 and c["perfil_fotos"] == 1 and c["auditoria"] > 1
-    # a auditoria volta a registrar as transicoes
+    assert c["acessos_login"] == 1 and c["auditoria"] > 1
     assert any(a[0] for a in h.auditoria_de("requisicoes", rid))
+
+
+# --- modo so admins (v_manter_usuarios = false) -------------------------------------------------
+def test_execucao_so_admins_apaga_contas_e_mantem_admins_ativos() -> None:
+    m = popular()
+    inativo = h.criar_usuario("admin-inativo-lmp", "admin", ativo=False)
+    antes = _confirmar_populado()
+    ids = admins()
+    assert m.admin in ids and inativo not in ids
+    do_admin = {t: antes[t] - _nao_admin(t, "usuario_id", ids) for t in POR_USUARIO}
+    for t in POR_USUARIO:  # o admin tem foto, push e passkey
+        assert do_admin[t] > 0, t
+    gat = snapshot_gatilhos()
+    r = rodar(executar=True, manter_usuarios=False)
+    assert r.ok, r.mensagem
+    depois = contagens()
+    for t in SEMPRE:
+        assert depois[t] == 0, t
+    assert depois["auditoria"] == 1 and depois["convites"] == 0
+    assert depois["perfis"] == depois["auth.users"] == len(ids) >= 1
+    assert admins() == ids
+    for t in POR_USUARIO:
+        assert depois[t] == do_admin[t] and _nao_admin(t, "usuario_id", ids) == 0, t
+    for t in MANTIDAS:
+        assert depois[t] == antes[t], t
+    assert snapshot_gatilhos() == gat
+    with h.conectar() as c:
+        for u in (m.solicitante, m.autorizador, m.orfao, inativo):
+            assert c.execute("select count(*) from auth.users where id = %s", (u,)).fetchone()[0] == 0  # type: ignore[index]
+        # dependencias em auth.* sairam pelo cascade do Auth
+        assert c.execute(
+            "select count(*) from auth.sessions where user_id = any (%s)", ([m.solicitante, m.autorizador],)
+        ).fetchone()[0] == 0  # type: ignore[index]
+        det = c.execute("select detalhes from public.auditoria where de = 'limpeza_pre_lancamento'").fetchone()[0]  # type: ignore[index]
+    assert det["usuarios_mantidos"] is False and det["auditoria_apagada"] is True
+    assert det["apagadas"]["auth.users"] == antes["auth.users"] - len(ids)
+    assert det["apagadas"]["perfis"] == antes["perfis"] - len(ids)
+    assert not _UUID_OU_EMAIL.search(str(det))
+    final = {linha[0]: linha[1] for linha in r.tabela_final}
+    assert final["perfis"] == final["auth.users"] == len(ids)
+
+
+def test_so_admins_depois_o_perfis_continua_protegido_e_o_sistema_funciona() -> None:
+    popular()
+    assert rodar(executar=True, manter_usuarios=False).ok
+    estados = {(rel, nome): est for rel, nome, est in snapshot_gatilhos()}
+    assert estados[("perfis", "trg_perfis_sem_delete")] in LIGADOS
+    m = popular()  # novas contas, requisicoes etc. funcionam
+    assert h.status_de(m.ocupada) == "em_uso"
+    with pytest.raises(psycopg.Error) as exc:
+        with h.conectar() as c:
+            c.execute("delete from public.perfis where id = %s", (m.solicitante,))
+    assert h.sqlstate(exc) == "AG003"
+
+
+def test_so_admins_idempotente() -> None:
+    popular()
+    assert rodar(executar=True, manter_usuarios=False).ok
+    antes, gat = contagens(), snapshot_gatilhos()
+    assert total_modo(manter_usuarios=False) == 1  # so o registro da limpeza
+    r = rodar(executar=True, manter_usuarios=False)
+    assert r.ok, r.mensagem
+    assert contagens() == antes and snapshot_gatilhos() == gat
+
+
+def test_so_admins_com_auditoria_preservada_recusa_ld009_sem_apagar() -> None:
+    """A auditoria preservada aponta (FK) para contas que seriam apagadas: recusa, nada muda."""
+    popular()
+    antes, gat = contagens(), snapshot_gatilhos()
+    for executar in (False, True):
+        r = rodar(executar=executar, manter_usuarios=False, apagar_auditoria=False)
+        assert not r.ok and r.sqlstate == "LD009", r.mensagem
+        assert "auditoria.ator_id=" in r.mensagem and not _UUID_OU_EMAIL.search(r.mensagem)
+    assert contagens() == antes and snapshot_gatilhos() == gat
+
+
+def test_sem_admin_ativo_recusa_ld008() -> None:
+    """Simula banco sem admin ativo (o guarda do sistema impede chegar a isso de verdade)."""
+    alvo = "from public.perfis p where p.role = 'admin' and p.ativo;"
+    assert SCRIPT.count(alvo) == 1
+    sem_admin = SCRIPT.replace(alvo, alvo[:-1] + " and false;")
+    popular()
+    antes, gat = contagens(), snapshot_gatilhos()
+    for manter in (True, False):
+        r = rodar(executar=True, manter_usuarios=manter, script=sem_admin)
+        assert not r.ok and r.sqlstate == "LD008" and "admin ativo" in r.mensagem
+    assert contagens() == antes and snapshot_gatilhos() == gat
+
+
+def test_total_de_um_modo_nao_vale_no_outro() -> None:
+    popular()
+    n_manter = total_modo()
+    n_admins = total_modo(manter_usuarios=False)
+    assert n_manter != n_admins
+    antes = contagens()
+    assert rodar(executar=True, manter_usuarios=False, confere=n_manter).sqlstate == "LD007"
+    assert rodar(executar=True, confere=n_admins).sqlstate == "LD007"
+    assert rodar(executar=True, apagar_auditoria=False, confere=n_manter).sqlstate == "LD007"
+    assert contagens() == antes
 
 
 # --- (f) idempotencia ---------------------------------------------------------------------------
 def test_idempotente_rodar_de_novo_sem_dados_nao_falha() -> None:
     popular()
-    assert rodar(executar=True, confirmacao=FRASE).ok
+    assert rodar(executar=True).ok
     antes, gat = contagens(), snapshot_gatilhos()
-    r = rodar(executar=True, confirmacao=FRASE)
+    r = rodar(executar=True)
     assert r.ok, r.mensagem
     assert contagens() == antes and snapshot_gatilhos() == gat
-    ens = rodar()
-    assert ens.sqlstate == "LD001"
+    assert rodar().sqlstate == "LD001"
 
 
-# --- (g) falha no meio => rollback total --------------------------------------------------------
-def test_falha_simulada_depois_dos_deletes_desfaz_tudo() -> None:
+# --- (g) falha no meio => rollback total; gatilhos religados -------------------------------------
+@pytest.mark.parametrize("manter", [True, False])
+def test_falha_simulada_depois_dos_deletes_desfaz_tudo(manter: bool) -> None:
     popular()
     antes, gat = _confirmar_populado(), snapshot_gatilhos()
     r = rodar(
         executar=True,
-        confirmacao=FRASE,
+        manter_usuarios=manter,
         antes_de_religar="  raise exception 'falha simulada' using errcode = 'XX999';",
     )
     assert not r.ok and r.sqlstate == "XX999"
@@ -546,44 +796,82 @@ def test_gatilho_de_delete_inesperado_aborta_sem_mudar_nada() -> None:
     antes, gat = contagens(), snapshot_gatilhos()
     with h.conectar() as c:
         c.execute("create function public.zz_noop() returns trigger language plpgsql as $$ begin return old; end $$")
-        c.execute("create trigger zz_extra before delete on public.requisicoes for each row execute function public.zz_noop()")
+        c.execute("create trigger zz_extra before delete on public.requisicoes_arquivadas for each row execute function public.zz_noop()")
     try:
-        r = rodar(executar=True, confirmacao=FRASE)
+        r = rodar(executar=True)
         assert not r.ok and r.sqlstate == "LD004" and "zz_extra" in r.mensagem
         assert contagens() == antes
     finally:
         with h.conectar() as c:
-            c.execute("drop trigger zz_extra on public.requisicoes")
+            c.execute("drop trigger zz_extra on public.requisicoes_arquivadas")
             c.execute("drop function public.zz_noop()")
     assert snapshot_gatilhos() == gat
 
 
-def test_tabela_dependente_fora_do_escopo_aborta() -> None:
+def test_tabela_desconhecida_em_public_aborta() -> None:
     popular()
     antes = contagens()
     with h.conectar() as c:
-        c.execute("create table public.zz_dep (rid uuid references public.requisicoes (id))")
+        c.execute("create table public.zz_nova (id int)")
     try:
-        r = rodar(executar=True, confirmacao=FRASE)
-        assert not r.ok and r.sqlstate == "LD004" and "zz_dep" in r.mensagem
+        for manter in (True, False):
+            r = rodar(manter_usuarios=manter)
+            assert not r.ok and r.sqlstate == "LD004" and "zz_nova" in r.mensagem
+        assert rodar(executar=True).sqlstate == "LD004"
         assert contagens() == antes
     finally:
         with h.conectar() as c:
-            c.execute("drop table public.zz_dep")
+            c.execute("drop table public.zz_nova")
 
 
-def test_gatilho_desligado_aborta() -> None:
+def test_tabela_mantida_dependente_das_apagadas_aborta() -> None:
     popular()
     antes = contagens()
     with h.conectar() as c:
-        c.execute("alter table public.requisicoes disable trigger trg_requisicoes_sem_delete")  # 'D': desligado
+        c.execute("alter table public.saudacoes add column zz_req uuid references public.requisicoes (id)")
     try:
-        r = rodar(executar=True, confirmacao=FRASE)
-        assert not r.ok and r.sqlstate == "LD004"
+        r = rodar(executar=True)
+        assert not r.ok and r.sqlstate == "LD004" and "saudacoes -> requisicoes" in r.mensagem
         assert contagens() == antes
     finally:
         with h.conectar() as c:
-            c.execute("alter table public.requisicoes enable always trigger trg_requisicoes_sem_delete")
+            c.execute("alter table public.saudacoes drop column zz_req")
+
+
+@pytest.mark.parametrize(
+    ("tabela", "gatilho", "manter"),
+    [
+        ("requisicoes", "trg_requisicoes_sem_delete", True),
+        ("desafios_webauthn", "trg_desafios_webauthn_proteger", True),
+        ("perfis", "trg_perfis_sem_delete", False),
+    ],
+)
+def test_gatilho_desligado_aborta(tabela: str, gatilho: str, manter: bool) -> None:
+    popular()
+    antes = contagens()
+    with h.conectar() as c:
+        c.execute(sql.SQL("alter table {} disable trigger {}").format(_ident(tabela), sql.Identifier(gatilho)))
+    try:
+        r = rodar(executar=True, manter_usuarios=manter)
+        assert not r.ok and r.sqlstate == "LD004" and gatilho in r.mensagem
+        assert contagens() == antes
+    finally:
+        with h.conectar() as c:
+            c.execute(sql.SQL("alter table {} enable always trigger {}").format(_ident(tabela), sql.Identifier(gatilho)))
+
+
+def test_gatilho_de_conta_desligado_nao_importa_no_modo_que_mantem_usuarios() -> None:
+    """No modo padrao perfis nao entra: o gatilho dela nem e conferido nem tocado."""
+    popular()
+    with h.conectar() as c:
+        c.execute("alter table public.perfis disable trigger trg_perfis_sem_delete")
+    try:
+        gat = snapshot_gatilhos()
+        assert rodar(executar=True).ok
+        assert snapshot_gatilhos() == gat
+    finally:
+        with h.conectar() as c:
+            c.execute("alter table public.perfis enable always trigger trg_perfis_sem_delete")
 
 
 # --- (h) lacre ----------------------------------------------------------------------------------
@@ -591,7 +879,7 @@ def test_lacrado_recusa_ensaio_e_execucao(marcador: None) -> None:
     popular()
     antes = contagens()
     _definir_comentario("sisveiculos:lacrado")
-    for kw in ({}, {"executar": True, "confirmacao": FRASE}):
+    for kw in ({}, {"executar": True}, {"executar": True, "manter_usuarios": False}):
         r = rodar(**kw)  # type: ignore[arg-type]
         assert not r.ok and r.sqlstate == "LD002" and "LACRADO" in r.mensagem
     assert contagens() == antes
@@ -601,26 +889,24 @@ def test_lacrado_recusa_ensaio_e_execucao(marcador: None) -> None:
 def test_v_lacrar_grava_o_lacre_e_depois_recusa(marcador: None, inicial: str | None) -> None:
     popular()
     _definir_comentario(inicial)  # producao: comentario vazio ou o padrao do Postgres
-    r = rodar(executar=True, confirmacao=FRASE, lacrar=True)
+    r = rodar(executar=True, lacrar=True)
     assert r.ok, r.mensagem
     assert _comentario() == "sisveiculos:lacrado"
     assert any(a[0] == "LACRE do banco" and a[3] == "sisveiculos:lacrado" for a in r.tabela_final)
-    # o comentario substituido aparece no resumo final e no aviso
     anterior = [a for a in r.tabela_final if a[0].startswith("Comentario anterior")][0][3]
     assert anterior == (inicial or "-")
     assert any((inicial or "(vazio)") in a for a in r.avisos)
     popular()
     antes = contagens()
-    r2 = rodar(executar=True, confirmacao=FRASE)
-    assert r2.sqlstate == "LD002" and contagens() == antes
+    assert rodar(executar=True).sqlstate == "LD002" and contagens() == antes
 
 
 def test_desfazer_o_lacre_libera_a_limpeza_de_novo(marcador: None) -> None:
     popular()
     _definir_comentario("sisveiculos:lacrado")
-    assert rodar(executar=True, confirmacao=FRASE).sqlstate == "LD002"
+    assert rodar(executar=True).sqlstate == "LD002"
     _definir_comentario(PADRAO)  # desfazer manual (decisao consciente do dono)
-    assert rodar(executar=True, confirmacao=FRASE).ok
+    assert rodar(executar=True).ok
     assert contagens()["requisicoes"] == 0
 
 
@@ -628,13 +914,13 @@ def test_ensaio_com_lacrar_nao_grava_o_lacre(marcador: None) -> None:
     _definir_comentario(None)
     r = rodar(lacrar=True)
     assert r.sqlstate == "LD001" and "simulado no ensaio" in r.mensagem
-    assert _comentario() in (None, "")  # o comment on database do ensaio foi desfeito
+    assert _comentario() in (None, "")
 
 
 def test_v_lacrar_nao_sobrescreve_o_marcador_descartavel(marcador: None) -> None:
     popular()
     antes = contagens()
-    for kw in ({}, {"executar": True, "confirmacao": FRASE}):
+    for kw in ({}, {"executar": True}):
         r = rodar(lacrar=True, **kw)  # type: ignore[arg-type]
         assert not r.ok and r.sqlstate == "LD006"
     assert _comentario() == h.MARCADOR_BANCO
@@ -643,17 +929,15 @@ def test_v_lacrar_nao_sobrescreve_o_marcador_descartavel(marcador: None) -> None
 
 def test_v_lacrar_nao_sobrescreve_outro_comentario(marcador: None) -> None:
     _definir_comentario("alguma outra coisa")
-    r = rodar(executar=True, confirmacao=FRASE, lacrar=True)
+    r = rodar(executar=True, lacrar=True)
     assert r.sqlstate == "LD006" and _comentario() == "alguma outra coisa"
     assert rodar_lacre(FRASE_LACRE).sqlstate == "LD006" and _comentario() == "alguma outra coisa"
 
 
 @pytest.mark.parametrize("inicial", [None, PADRAO])
 def test_lacrar_producao_script(marcador: None, inicial: str | None) -> None:
-    # banco de teste: recusa e preserva o marcador
     r = rodar_lacre(FRASE_LACRE)
     assert r.sqlstate == "LD006" and _comentario() == h.MARCADOR_BANCO
-    # producao simulada: confirmacao errada recusa; certa lacra; de novo recusa
     _definir_comentario(inicial)
     assert rodar_lacre("").sqlstate == "LD003"
     assert _comentario() == inicial
@@ -663,21 +947,20 @@ def test_lacrar_producao_script(marcador: None, inicial: str | None) -> None:
     assert rodar_lacre(FRASE_LACRE).sqlstate == "LD002"
 
 
-# --- (i) auditoria preservada -------------------------------------------------------------------
-def test_sem_apagar_auditoria_preserva_todas_as_linhas(marcador: None) -> None:
+# --- (i) auditoria preservada (opcional) --------------------------------------------------------
+def test_sem_apagar_auditoria_preserva_todas_as_linhas() -> None:
     popular()
     antes = _confirmar_populado()
     with h.conectar() as c:
         ids = c.execute("select id from public.auditoria order by id").fetchall()
-    r = rodar(executar=True, confirmacao=FRASE, apagar_auditoria=False)
+    r = rodar(executar=True, apagar_auditoria=False)
     assert r.ok, r.mensagem
     depois = contagens()
     assert depois["auditoria"] == antes["auditoria"] + 1  # + o registro da limpeza
-    for t in ESCOPO[:-1]:
+    for t in SEMPRE:
         assert depois[t] == 0
     with h.conectar() as c:
         assert c.execute("select id from public.auditoria order by id").fetchall()[:-1] == ids
-    # o gatilho append-only da auditoria nao foi tocado e continua bloqueando
     estados = {(rel, nome): est for rel, nome, est in snapshot_gatilhos()}
     assert estados[("auditoria", "trg_auditoria_append_only")] == "A"
     with pytest.raises(psycopg.Error) as exc:
@@ -686,46 +969,42 @@ def test_sem_apagar_auditoria_preserva_todas_as_linhas(marcador: None) -> None:
     assert h.sqlstate(exc) == "AG003"
 
 
-# --- A3: segunda confirmacao por contagem (LD007) ------------------------------------------------
+# --- segunda confirmacao por contagem (LD007) ----------------------------------------------------
 def test_ensaio_destaca_o_numero_e_ele_permite_executar() -> None:
     popular()
     ens = rodar()
     m = re.search(r"COPIE ESTE NUMERO PARA v_confere_total: (\d+)", ens.mensagem)
-    assert m and int(m.group(1)) == sum(contagens(ESCOPO).values()) > 0
-    assert rodar(executar=True, confirmacao=FRASE, confere=int(m.group(1))).ok
+    assert m and int(m.group(1)) == total_modo() > 0
+    assert rodar(executar=True, confere=int(m.group(1))).ok
 
 
 @pytest.mark.parametrize("modo", ["padrao", "menos_um", "a_mais", "a_menos", "zero_com_dados"])
 def test_contagem_errada_ou_ausente_aborta_com_ld007(modo: str) -> None:
     popular()
-    n = sum(contagens(ESCOPO).values())
+    n = total_modo()
     confere = {"padrao": None, "menos_um": -1, "a_mais": n + 1, "a_menos": n - 1, "zero_com_dados": 0}[modo]
     antes, gat = contagens(), snapshot_gatilhos()
-    r = rodar(executar=True, confirmacao=FRASE, confere=confere)
+    r = rodar(executar=True, confere=confere)
     assert not r.ok and r.sqlstate == "LD007"
     assert contagens() == antes and snapshot_gatilhos() == gat
 
 
 def test_total_menos_um_e_zero_com_dados_nunca_passam_mesmo_apos_limpar() -> None:
     popular()
-    assert rodar(executar=True, confirmacao=FRASE).ok
-    # sobra 1 linha (o registro da limpeza): o total e 1, nao 0
-    assert sum(contagens(ESCOPO).values()) == 1
+    assert rodar(executar=True).ok
+    assert total_modo() == 1  # sobra o registro da limpeza
     for ruim in (-1, None, 0, 2):
-        assert rodar(executar=True, confirmacao=FRASE, confere=ruim).sqlstate == "LD007"
-    assert rodar(executar=True, confirmacao=FRASE, confere=1).ok
+        assert rodar(executar=True, confere=ruim).sqlstate == "LD007"
+    assert rodar(executar=True, confere=1).ok
 
 
 def test_segunda_confirmacao_por_total_cobre_tabelas_alem_de_requisicoes() -> None:
-    """Com 0 requisicoes mas outras tabelas com dados, o total do ensaio antigo nao vale."""
     popular()
     antes = contagens()
-    total_antigo = sum(antes[t] for t in ESCOPO)
-    # numero que seria o "so requisicoes" ou 0 nao passam
     for ruim in (0, antes["requisicoes"]):
-        assert rodar(executar=True, confirmacao=FRASE, confere=ruim).sqlstate == "LD007"
+        assert rodar(executar=True, confere=ruim).sqlstate == "LD007"
     assert contagens() == antes
-    assert rodar(executar=True, confirmacao=FRASE, confere=total_antigo).ok
+    assert rodar(executar=True, confere=total_modo()).ok
 
 
 def test_ensaio_nao_exige_a_contagem() -> None:
@@ -738,7 +1017,7 @@ def test_confirmacao_com_ponto_e_virgula_e_aspas_nao_quebra_o_helper() -> None:
     assert r.sqlstate == "LD003" and contagens() == antes
 
 
-# --- A2: registro duravel na auditoria ---------------------------------------------------------
+# --- registro duravel na auditoria --------------------------------------------------------------
 @pytest.mark.parametrize("apagar_auditoria", [True, False])
 def test_registro_duravel_na_auditoria_sem_dados_pessoais(apagar_auditoria: bool) -> None:
     popular()
@@ -747,25 +1026,29 @@ def test_registro_duravel_na_auditoria_sem_dados_pessoais(apagar_auditoria: bool
         previas = c.execute(
             "select count(*) from public.auditoria where de = 'limpeza_pre_lancamento'"
         ).fetchone()[0]  # type: ignore[index]
-    assert rodar(executar=True, confirmacao=FRASE, apagar_auditoria=apagar_auditoria).ok
+    assert rodar(executar=True, apagar_auditoria=apagar_auditoria).ok
     with h.conectar() as c:
         linhas = c.execute(
             "select tabela, registro_id, acao, ator_id, de, para, detalhes from public.auditoria "
             "where de = 'limpeza_pre_lancamento' order by id"
         ).fetchall()
-    # apagando a auditoria sobra so o registro desta limpeza; preservando, soma-se as anteriores
     assert len(linhas) == (1 if apagar_auditoria else previas + 1)
     tabela, registro_id, acao, ator_id, de, para, detalhes = linhas[-1]
     assert (tabela, registro_id, acao, ator_id, de, para) == ("perfis", None, "acao_administrativa", None, de, None)
-    esperado = {t: antes[t] for t in ESCOPO if apagar_auditoria or t != "auditoria"}
-    assert detalhes == {"apagadas": esperado, "auditoria_apagada": apagar_auditoria, "lacrado": False}
-    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}|@", str(detalhes))  # sem uuid nem e-mail
+    esperado = {t: antes[t] for t in SEMPRE} | ({"auditoria": antes["auditoria"]} if apagar_auditoria else {})
+    assert detalhes == {
+        "apagadas": esperado,
+        "auditoria_apagada": apagar_auditoria,
+        "usuarios_mantidos": True,
+        "lacrado": False,
+    }
+    assert not _UUID_OU_EMAIL.search(str(detalhes))
 
 
 def test_registro_duravel_registra_lacrado(marcador: None) -> None:
     popular()
     _definir_comentario(None)
-    assert rodar(executar=True, confirmacao=FRASE, lacrar=True).ok
+    assert rodar(executar=True, lacrar=True).ok
     with h.conectar() as c:
         det = c.execute("select detalhes from public.auditoria where de = 'limpeza_pre_lancamento'").fetchone()
     assert det is not None and det[0]["lacrado"] is True
@@ -777,7 +1060,6 @@ def test_ld005_gatilho_extra_desligado_desfaz_tudo() -> None:
     antes, gat = contagens(), snapshot_gatilhos()
     r = rodar(
         executar=True,
-        confirmacao=FRASE,
         antes_de_religar="  alter table public.requisicoes disable trigger trg_requisicoes_validar;",
     )
     assert not r.ok and r.sqlstate == "LD005" and "gatilhos" in r.mensagem
@@ -789,8 +1071,6 @@ def test_ld005_tabela_mantida_alterada_desfaz_tudo() -> None:
     antes, gat = contagens(), snapshot_gatilhos()
     r = rodar(
         executar=True,
-        confirmacao=FRASE,
-        apagar_auditoria=False,  # o insert em veiculos gera auditoria; assim cai na checagem de veiculos
         antes_de_religar=(
             "  insert into public.veiculos (descricao, alterado_por) "
             "select 'zz-ld005', id from public.perfis where role = 'admin' and ativo limit 1;"
@@ -800,8 +1080,19 @@ def test_ld005_tabela_mantida_alterada_desfaz_tudo() -> None:
     assert contagens() == antes and snapshot_gatilhos() == gat
 
 
-# --- storage: caminho de erro NAO coberto: storage.objects pertence a supabase_storage_admin e o papel
-# postgres nao consegue quebra-lo de forma segura; o bloco tem `exception when others` (ver o script).
+def test_ld005_conta_mantida_alterada_desfaz_tudo() -> None:
+    """Uma conta a mais no Auth depois do DELETE (modo padrao, contas mantidas) e pega na verificacao."""
+    popular()
+    antes, gat = contagens(), snapshot_gatilhos()
+    r = rodar(
+        executar=True,
+        antes_de_religar=(
+            "  insert into auth.users (id, email, email_confirmed_at) "
+            "values (gen_random_uuid(), 'zz-ld005@teste.invalid', now());"
+        ),
+    )
+    assert not r.ok and r.sqlstate == "LD005" and "auth.users" in r.mensagem
+    assert contagens() == antes and snapshot_gatilhos() == gat
 
 
 # --- papel que nao e dono ------------------------------------------------------------------------
@@ -831,32 +1122,27 @@ def test_papel_nao_dono_e_recusado_sem_mudar_nada(papel_nao_dono: str, marcador:
     assert _comentario() in (None, "")
 
 
-# --- M3: parametro NULL nao contorna as travas ---------------------------------------------------
-def _rodar_com_nulo(parametro: str) -> Resultado:
-    t = SCRIPT
-    t = _param(t, "v_executar", "boolean", "true")
-    t = _param(t, "v_confirmacao", "text", _lit(FRASE))
-    t = _param(t, "v_confere_total", "int", str(sum(contagens(ESCOPO).values())))
-    tipos = {
-        "v_executar": "boolean",
-        "v_confirmacao": "text",
-        "v_confere_total": "int",
-        "v_apagar_auditoria": "boolean",
-        "v_lacrar": "boolean",
-        "v_ref_esperado": "text",
-    }
-    t = _param(t, parametro, tipos[parametro], "NULL")
-    return _rodar_texto(t)
+# --- parametro NULL nao contorna as travas -------------------------------------------------------
+_TIPOS = {
+    "v_executar": "boolean",
+    "v_confirmacao": "text",
+    "v_confere_total": "int",
+    "v_manter_usuarios": "boolean",
+    "v_apagar_auditoria": "boolean",
+    "v_lacrar": "boolean",
+    "v_ref_esperado": "text",
+}
 
 
-@pytest.mark.parametrize(
-    "parametro",
-    ["v_executar", "v_confirmacao", "v_confere_total", "v_apagar_auditoria", "v_lacrar", "v_ref_esperado"],
-)
+@pytest.mark.parametrize("parametro", list(_TIPOS))
 def test_parametro_nulo_e_recusado_sem_mudar_nada(parametro: str) -> None:
     popular()
     antes, gat = contagens(), snapshot_gatilhos()
-    r = _rodar_com_nulo(parametro)
+    t = _param(SCRIPT, "v_executar", "boolean", "true")
+    t = _param(t, "v_confirmacao", "text", _lit(frase()))
+    t = _param(t, "v_confere_total", "int", str(total_modo()))
+    t = _param(t, parametro, _TIPOS[parametro], "NULL")
+    r = _rodar_texto(t)
     assert not r.ok and r.sqlstate == "LD003" and "nulo" in r.mensagem
     assert contagens() == antes and snapshot_gatilhos() == gat
 
@@ -865,8 +1151,7 @@ def test_v_executar_nulo_com_dados_nao_apaga_nem_comita() -> None:
     """Regressao: `if not NULL` e NULL fazia o ensaio nao abortar e o delete ser comitado."""
     popular()
     antes = _confirmar_populado()
-    t = _param(SCRIPT, "v_executar", "boolean", "NULL")
-    r = _rodar_texto(t)
+    r = _rodar_texto(_param(SCRIPT, "v_executar", "boolean", "NULL"))
     assert not r.ok and r.sqlstate == "LD003"
     assert contagens() == antes
 
@@ -879,20 +1164,6 @@ def test_lacrar_producao_parametro_nulo_recusa(marcador: None, parametro: str) -
     r = _rodar_texto(t)
     assert not r.ok and r.sqlstate == "LD003"
     assert _comentario() in (None, "")
-    # ambos nulos (NULL is not distinct from NULL) tambem recusa
     t2 = _param(_param(LACRAR, "v_confirmacao", "text", "NULL"), "v_ref_esperado", "text", "NULL")
     r2 = _rodar_texto(t2)
     assert r2.sqlstate == "LD003" and _comentario() in (None, "")
-
-
-def test_db04_padrao_do_script_e_nao_apagar_auditoria() -> None:
-    assert "v_apagar_auditoria boolean := false;" in SCRIPT
-
-
-def test_db04_apagar_auditoria_exige_frase_com_e_auditoria(marcador: None) -> None:
-    r = rodar(executar=True, confirmacao=FRASE, apagar_auditoria=True, frase_exata=True)
-    assert not r.ok and r.sqlstate == "LD003", r.mensagem
-    assert "E AUDITORIA" in r.mensagem
-    # a frase de auditoria nao vale quando a auditoria e preservada
-    r2 = rodar(executar=True, confirmacao=FRASE_AUD, apagar_auditoria=False, frase_exata=True)
-    assert not r2.ok and r2.sqlstate == "LD003", r2.mensagem

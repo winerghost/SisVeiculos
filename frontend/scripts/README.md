@@ -28,3 +28,12 @@ A partir de `public/icons/icon-512.png` (ícone **provisório**: "AGU" em branco
 
 `icon-192.png` e `icon-512.png` seguem como `any` e não são tocados. Para usar a arte oficial,
 substitua `icon-512.png` (e `icon-192.png`), rode o script e suba `VERSAO` em `public/sw.js`.
+
+## Guia em PDF da limpeza pré-produção
+
+    node scripts/gerar-pdf-limpeza.mjs
+
+Gera `docs/limpeza-geral-producao.pdf` (A4, com rodapé "Página X de Y" e marcadores) a partir de
+`docs/limpeza-geral-producao.html`, com a Inter local. Bloqueia qualquer acesso fora de `file://`.
+Ao mudar o procedimento, atualize o HTML, `docs/limpeza-pre-lancamento.md` e `supabase/ops/README.md`
+juntos e gere o PDF de novo.

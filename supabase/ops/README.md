@@ -1,34 +1,87 @@
 # supabase/ops: ferramentas operacionais (NÃO são migrations)
 
-Esta pasta **não** é lida pelo `supabase db push`. Os arquivos são colados à mão no SQL Editor do Supabase (papel `postgres`).
+Esta pasta **não** é lida pelo `supabase db push`. Os arquivos SQL são colados à mão no SQL Editor do Supabase (papel `postgres`).
 
 | Arquivo | Para quê |
 |---|---|
-| `limpar_dados_de_teste.sql` | Apaga **uma vez** os dados de teste (requisições, checklists, notificações, localizações de viagem, envios de relatório por e-mail, uso de IA, fotos de perfil, acessos de login e auditoria: 10 tabelas) antes do uso real. Por padrão é um **ensaio** que não apaga nada. **Exige antes o `db push` da migration `20261114120000`** (o script recusa sem ela). |
-| `lacrar_producao.sql` | Grava o lacre (`comment on database ... 'sisveiculos:lacrado'`). Com o lacre, a limpeza se recusa a rodar. |
+| `limpar_dados_de_teste.sql` | Apaga **uma vez**, antes do uso real, os dados operacionais dos testes e (opcional) as contas que não são admin ativo. Por padrão é um **ensaio** que não apaga nada. Não mexe em `storage.*`. |
+| `lacrar_producao.sql` | Grava o lacre (`comment on database ... 'sisveiculos:lacrado'`). Com o lacre, a limpeza (SQL e Storage) recusa. |
+| `backend/app/ops/limpar_storage.py` (fora desta pasta) | Apaga os **arquivos** dos buckets. Roda dentro do container do backend. |
 
-Passo a passo para quem não é técnico: [`docs/limpeza-pre-lancamento.md`](../../docs/limpeza-pre-lancamento.md).
+Passo a passo para quem não é técnico: [`docs/limpeza-pre-lancamento.md`](../../docs/limpeza-pre-lancamento.md) e o guia em PDF [`docs/limpeza-geral-producao.pdf`](../../docs/limpeza-geral-producao.pdf) (fonte `docs/limpeza-geral-producao.html`; gerar em `frontend/` com `node scripts/gerar-pdf-limpeza.mjs`). Mudou o procedimento: atualize os três.
 
-Resumo:
-0. **Antes de tudo:** aplique as migrations pendentes pelo pipeline (`supabase db push`), em especial `20261114120000_localizacao_retencao_12_meses.sql`. Ela troca o gatilho de `localizacoes_viagem` e acrescenta `localizacao_expurgada` à auditoria; sem ela o script se recusa (`ESTRUTURA INESPERADA`, LD004). Não rode a limpeza antes do push.
-1. Faça **backup** (Database > Backups só tem backup diário em planos pagos; sem backup faça um pg_dump/export antes: sem backup "não há desfazer" vale de verdade) e deixe o sistema **parado** (`docker compose stop backend` na VPS, ou fora de horário). O script e o ensaio travam as tabelas; 15 s de espera e desfaz com segurança.
-2. Rode `limpar_dados_de_teste.sql` sem mudar nada: aparece o erro `ENSAIO: nada foi apagado` com as contagens e o número a copiar. Copie/fotografe a mensagem.
-3. Para apagar, mude `v_executar := true`, `v_confirmacao := 'APAGAR DADOS DE TESTE ofwvoztarroglekfwohs'` (a auditoria é **preservada por padrão**: `v_apagar_auditoria := false`; para apagá-la também, mude para `true` **e** termine a frase com ` E AUDITORIA`, ou o script recusa) e `v_confere_total := <número do ensaio>` (total das 10 tabelas do escopo). Depois apague o snippet salvo no Studio e **religue o backend logo em seguida** (`docker compose start backend`): desativar contas e logar exigem o backend no ar; ele fica parado só durante ensaio e execução. Parâmetro `NULL` é recusado.
-4. Esvazie os buckets `avatares` e `checklists` no painel (o SQL não apaga arquivos; até lá ficam arquivos com dado pessoal) e **desative** (não remova) os usuários de teste no sistema.
-5. No dia do lançamento, rode `lacrar_producao.sql`.
+## Ordem
 
-Parâmetros do topo de `limpar_dados_de_teste.sql`: `v_executar`, `v_confirmacao`, `v_confere_total`, `v_ref_esperado`, `v_apagar_auditoria`, `v_lacrar`.
+1. **Backup** (Database > Backups só em plano pago; senão pg_dump/export antes).
+2. **`supabase db push`** pelo pipeline, com todas as migrations pendentes, incluindo `20261127120000_km_percorrido`, `20261128120000/120100/120200` (telefone) e `20261129120000_ops_banco_lacrado` (RPC do lacre para o Storage). Sem as do SQL: LD004. Depois `git pull` + `docker compose up -d --build` na VPS (traz `app/ops`).
+3. **Parar o backend**: `docker compose stop backend`.
+4. **Ensaio SQL**: rodar `limpar_dados_de_teste.sql` como está (ou só com `v_manter_usuarios := false` no modo só admins). Sai o erro `ENSAIO: nada foi apagado` com contagens por tabela, contas apagadas/mantidas, arquivos por bucket e o total para `v_confere_total`.
+5. **Execução SQL**: `v_executar := true`, `v_confirmacao` (tabela abaixo) e `v_confere_total := <total do ensaio>`. Apagar o snippet salvo no Studio.
+6. **Religar o backend**: `docker compose start backend` (o Storage roda nele).
+7. **Ensaio Storage**: `docker compose exec backend python -m app.ops.limpar_storage [--apagar-usuarios]`.
+8. **Execução Storage**: o mesmo com `--executar`; frase `APAGAR ARQUIVOS ofwvoztarroglekfwohs` (stdin ou `--confirmacao`). Sempre **depois** do SQL, para o plano de `avatares` refletir o banco já limpo.
+9. **Conferência**: login do admin real, lista vazia, veículo livre, ensaio do Storage sem nada a apagar em `checklists`.
+10. **Lacre** no lançamento: `lacrar_producao.sql` com `'LACRAR PRODUCAO ofwvoztarroglekfwohs'`.
 
-**Apaga (filhas primeiro):** `checklist_fotos`, `checklists`, `notificacoes`, `localizacoes_viagem`, `requisicoes`, `perfil_fotos`, `acessos_login`, `envios_email`, `ia_uso` e `auditoria` (esta só com `v_apagar_auditoria := true`, que **não é o padrão** e exige a frase com ` E AUDITORIA`). Todas são dado operacional gerado pelos testes (o de `localizacoes_viagem` é sensível: coordenadas).
+## Parâmetros de `limpar_dados_de_teste.sql`
 
-**Mantém:** `perfis`, `veiculos`, `configuracoes`, `ia_configuracoes` (cadastro e configuração), `convites`, `auth.*`, `storage.*`. As únicas tabelas do schema `public` são essas 15; não existem outras (dashboards são só funções).
+| Parâmetro | Padrão | Efeito |
+|---|---|---|
+| `v_executar` | `false` | `false` = ensaio (faz tudo e desfaz). |
+| `v_confirmacao` | `''` | Frase exata (abaixo). |
+| `v_confere_total` | `-1` | Total do ensaio; `-1` nunca vale (LD007 se não bater). |
+| `v_ref_esperado` | `'ofwvoztarroglekfwohs'` | Entra na frase; o banco não confere o ref. |
+| `v_manter_usuarios` | `true` | `false` = apaga todas as contas que não são admin ativo. |
+| `v_apagar_auditoria` | `true` | `false` = preserva a auditoria inteira. |
+| `v_lacrar` | `false` | `true` = grava o lacre ao fim da execução. |
 
-**Como o gatilho é tratado:** `notificacoes` e `localizacoes_viagem` só aceitam DELETE no sistema com marcador do expurgo **e** piso de idade (30 dias / 12 meses); dado de teste é recente, então o marcador não serve. O script desliga o gatilho **nomeado** de cada tabela (`trg_notificacoes_proteger`, `trg_localizacoes_viagem_imutavel`, como nas outras) e o religa **no mesmo modo de antes** (`ENABLE ALWAYS`; `trg_envios_email_sem_delete` e `trg_ia_uso_imutavel` hoje estão em `ENABLE` padrão e voltam assim). Os gatilhos de TRUNCATE não são tocados e, ao fim, o estado de todos os gatilhos de `public` é comparado com o de antes.
+Parâmetro `NULL` é recusado (LD003). Ensaio e execução têm de usar o **mesmo modo** (`v_manter_usuarios` e `v_apagar_auditoria`): o total muda com o modo.
 
-Não toca em `auth.sessions` / `auth.audit_log_entries` (IP, navegador, e-mail: LGPD) nem em outros buckets de Storage; as migrations criam só esses dois buckets (`avatares` e `checklists`; não há bucket de staging), mas confira no painel se existe outro. O conteúdo de `localizacoes_viagem`, `notificacoes`, `envios_email` e `ia_uso` é apagado pelo SQL; o Auth (usuários, sessões, logs) segue fora do escopo. Na execução real fica 1 linha em `auditoria` (o registro da limpeza); com `v_apagar_auditoria := true` (opt-in explícito) somem também os eventos `admin_semeado`/`perfil_criado` dos perfis reais (o padrão `false` os preserva).
+Códigos: LD002 lacrado · LD003 frase/parâmetro nulo · LD004 estrutura inesperada ou sem permissão · LD005 verificação final · LD006 lacre recusado · LD007 total não bate · LD008 nenhum admin ativo · LD009 linha mantida aponta para conta a apagar (típico de `v_manter_usuarios = false` com `v_apagar_auditoria = false`).
 
-Grave o **lacre** assim que houver uso real. Exceção única pré-lançamento ao "sem DELETE físico / auditoria append-only": dados fictícios, gatilhos religados e verificados.
+**Frase de confirmação** (reflete o que será apagado): `APAGAR DADOS DE TESTE <ref>`, mais ` E AUDITORIA` se `v_apagar_auditoria = true`, mais ` E USUARIOS` se `v_manter_usuarios = false`.
 
-**Lacre:** substitui o comentário padrão do banco (`default administrative connection database`) ou um comentário vazio; qualquer outro comentário é preservado (o lacre recusa). Limites: protege contra erro e esquecimento, **não contra má-fé** (o dono desfaz com um `COMMENT`: `comment on database postgres is 'default administrative connection database';`, decisão consciente do dono), e o comentário pode se perder em restore de backup ou recriação do projeto.
+| `v_manter_usuarios` | `v_apagar_auditoria` | Frase |
+|---|---|---|
+| `true` | `true` (padrão) | `APAGAR DADOS DE TESTE ofwvoztarroglekfwohs E AUDITORIA` |
+| `true` | `false` | `APAGAR DADOS DE TESTE ofwvoztarroglekfwohs` |
+| `false` | `true` | `APAGAR DADOS DE TESTE ofwvoztarroglekfwohs E AUDITORIA E USUARIOS` |
+| `false` | `false` | `APAGAR DADOS DE TESTE ofwvoztarroglekfwohs E USUARIOS` |
 
-**Avisos:** NUNCA rode depois de haver uso real. O banco não conhece o ref do projeto, então a defesa é a frase de confirmação (que inclui o ref: confira o projeto no navegador) mais o total de linhas do escopo copiado do ensaio. Testes: `supabase/tests/test_ops_limpeza.py` (só banco local descartável).
+## Classificação das 21 tabelas de `public`
+
+- **Sempre apagadas:** `requisicoes`, `requisicoes_arquivadas`, `checklists`, `checklist_fotos`, `notificacoes`, `localizacoes_viagem`, `envios_email`, `ia_uso`, `acessos_login`, `desafios_webauthn`, `reautenticacoes_webauthn`.
+- **Auditoria:** `auditoria` apagada por padrão; fica só a linha da própria limpeza (`acao_administrativa` / `limpeza_pre_lancamento`, só contagens, sem PII).
+- **Dependem de `v_manter_usuarios`:** `perfis`, `convites`, `perfil_fotos`, `push_inscricoes`, `credenciais_webauthn` (e `auth.users`).
+  - `true`: tudo mantido.
+  - `false`: apaga `perfis` + `auth.users` (dependências em `auth.*` pelo cascade do Auth) de quem não é admin ativo, e as `perfil_fotos`, `push_inscricoes` e `credenciais_webauthn` dessas contas; apaga **todos** os `convites`. Recusa se não houver ao menos 1 admin ativo (LD008) ou se alguma linha que fica apontar para conta a apagar (LD009).
+- `requisicoes_arquivadas` não tem gatilho de DELETE (desarquivar já é DELETE).
+- **Sempre mantidas:** `veiculos` (com km atual), `configuracoes`, `ia_configuracoes`, `saudacoes`.
+
+Tabela de `public` fora dessa lista: recusa com LD004 (`ESTRUTURA INESPERADA`).
+
+## Travas (mantidas)
+
+- Ensaio por padrão; execução exige frase + total do ensaio.
+- Lacre `sisveiculos:lacrado` recusa sempre (LD002); `sisveiculos:descartavel` marca o banco local de testes e nunca é sobrescrito pelo lacre (LD006).
+- Transação única com `lock_timeout` de 15 s: qualquer erro desfaz tudo.
+- Gatilhos de proteção são desligados **pelo nome**, religados **no mesmo modo de antes** (`ENABLE ALWAYS` ou `ENABLE`) e o estado de todos os gatilhos de `public` é comparado no fim (LD005 se mudar). Gatilhos de TRUNCATE nunca são tocados.
+- No fim confere: ≥ 1 admin ativo e contagens das mantidas iguais às do ensaio.
+- Mensagens e logs só com contagens (LGPD).
+
+## Storage (`app.ops.limpar_storage`)
+
+- Usa `SUPABASE_URL` e a `service_role` já presentes no container; o ref vem de `SUPABASE_URL`. Nunca imprime segredos, URLs assinadas nem caminhos com id de pessoa: só contagens por bucket.
+- `checklists`: sempre esvaziado. `avatares`: fica só a foto **vigente** de cada perfil (`perfil_fotos.removida_em IS NULL`); apaga órfãos (sem linha em `perfil_fotos`), uploads temporários `tmp/` e fotos já trocadas/removidas. Com `--apagar-usuarios`, apaga também as vigentes de quem não é admin ativo. Outros buckets: só reportados.
+- Recusa se o banco estiver lacrado. O lacre é lido pela RPC `public.ops_banco_lacrado()` (só `service_role`); migration `20261129120000_ops_banco_lacrado` (`security definer`, só devolve booleano, `true` se o comentário contém `sisveiculos:lacrado`). Sem ela o ensaio avisa e `--executar` recusa (falha fechada).
+- Saída: `0` ok; `2` recusado (nada apagado); `1` falha (pode ter apagado parte; rode o ensaio de novo).
+- A frase é a mesma nos dois modos.
+- Container `read_only`, não-root (uid 10001) e com `PYTHONDONTWRITEBYTECODE=1`: o comando não escreve em disco (só `/tmp`, que é tmpfs).
+
+## Avisos
+
+**NUNCA** rode depois de haver uso real. Exceção única pré-lançamento ao "sem DELETE físico / auditoria append-only": dados fictícios, gatilhos religados e verificados. Não toca em `pg_cron`, nas funções de expurgo nem em `auth.sessions`/`auth.audit_log_entries` além do cascade do Auth ao apagar contas no modo só admins.
+
+**Lacre:** protege contra erro e esquecimento, **não contra má-fé** (o dono desfaz com `comment on database postgres is 'default administrative connection database';`), e pode se perder em restore ou recriação do projeto.
+
+Testes: `supabase/tests/test_ops_limpeza.py` (só banco local descartável, marcador `sisveiculos:descartavel`), `supabase/tests/test_ops_banco_lacrado.py` (RPC do lacre) e `backend/tests/test_ops_limpar_storage.py` (Storage com cliente falso).

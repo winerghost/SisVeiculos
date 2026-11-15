@@ -77,6 +77,7 @@ Só abre requisição se o veículo estiver livre. Decisão: uma requisição ab
   - `docker compose up -d --build`: mudou `backend/`, `frontend/`, Dockerfile, `requirements.txt`, `package*.json`, `next.config.*`, `SUPABASE_URL` ou `SUPABASE_ANON_KEY`.
   - `docker compose up -d` (sem build): mudou só `.env` do backend ou o `docker-compose.yml`.
   - Migrations: `supabase db push` pelo pipeline, nunca pelo servidor. Mudanças em `nginx.conf` ou `security-headers.conf` já contam como `frontend/` (exigem `--build`).
+- Limpeza pré-lançamento (SQL + Storage, ensaio por padrão, lacre): só pelo runbook `docs/limpeza-pre-lancamento.md`.
 - Comandos git de leitura (`git diff`, `git status`, `git log`) são livres. Commit e push só quando o usuário pedir.
 
 ## Convenções e testes

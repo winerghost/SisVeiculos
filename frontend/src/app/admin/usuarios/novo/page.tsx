@@ -23,7 +23,9 @@ function Formulario() {
   const [unidade, setUnidade] = React.useState(eu?.unidades[0] ?? '');
   const [role, setRole] = React.useState('solicitante');
   const [validade, setValidade] = React.useState('');
+  const [telefone, setTelefone] = React.useState('');
   const [enviado, setEnviado] = React.useState<Convite | null>(null);
+  const telefoneInvalido = Boolean(envio.erro) && envio.campoErro === 'telefone';
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -36,6 +38,8 @@ function Formulario() {
         role,
         // Em branco: o servidor aplica o prazo padrão.
         ...(validade ? { validade_dias: Number(validade) } : {}),
+        // Opcional: vai como digitado; o servidor normaliza e valida.
+        ...(telefone.trim() ? { telefone: telefone.trim() } : {}),
       }),
     );
     if (r.ok) setEnviado(r.valor.convite);
@@ -64,7 +68,11 @@ function Formulario() {
         <Info aria-hidden className="mt-0.5 size-5 shrink-0" />O convite vai por e-mail,
         institucional ou Gmail. É de uso único e tem prazo de validade.
       </p>
-      {envio.erro ? <Alerta titulo="Não foi possível enviar">{envio.erro}</Alerta> : null}
+      {envio.erro ? (
+        <Alerta id="envio-erro" titulo="Não foi possível enviar">
+          {envio.erro}
+        </Alerta>
+      ) : null}
       <div>
         <Label htmlFor="email">E-mail</Label>
         <Input
@@ -105,6 +113,27 @@ function Formulario() {
             </option>
           ))}
         </Select>
+      </div>
+      <div>
+        <Label htmlFor="telefone">
+          Telefone (WhatsApp) <span className="font-normal text-texto-2">(opcional)</span>
+        </Label>
+        <Input
+          id="telefone"
+          type="tel"
+          inputMode="numeric"
+          // Telefone de terceiro: sem autopreenchimento (não sugere nem guarda o do admin).
+          autoComplete="off"
+          placeholder="5561999998888"
+          // A API indica o campo recusado (erro.campo); o front só liga a mensagem ao campo.
+          aria-invalid={telefoneInvalido || undefined}
+          aria-describedby={telefoneInvalido ? 'telefone-dica envio-erro' : 'telefone-dica'}
+          value={telefone}
+          onChange={(e) => setTelefone(e.target.value)}
+        />
+        <p id="telefone-dica" className="mt-1 text-sm text-texto-2">
+          Só números, com 55 e DDD.
+        </p>
       </div>
       <div>
         <Label htmlFor="validade">

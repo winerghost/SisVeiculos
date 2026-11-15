@@ -24,6 +24,7 @@ from app.repositorios.auth_admin import ContaAuth, IndiceEmails
 from app.repositorios.supabase_repo import traduzir_erro_banco
 
 _EMAIL = re.compile(r"^[a-z0-9._%+-]+@(gmail\.com|([a-z0-9-]+\.)*agu\.gov\.br)$")
+_TELEFONE = re.compile(r"^55[1-9]{2}9?[0-9]{8}$")
 _COLUNAS_CONVITE = ["id", "email", "role", "unidade", "criado_por", "criado_em"] + [
     "expira_em",
     "usado_em",
@@ -54,6 +55,8 @@ class AdminMemoria:
 
     def _init_admin(self) -> None:
         self.convites: dict[str, dict[str, Any]] = {}  # guarda token_hash (não sai nas leituras)
+        # perfis.telefone (fora do dataclass Perfil, que circula por toda a API).
+        self.telefones: dict[str, str | None] = {}
         self.chamadas_reenviar_convite = 0  # reenvios que a "RPC" efetivou
         self.eventos: list[dict[str, Any]] = []  # auditoria administrativa, como o banco grava
         self.contas_auth: dict[str, dict[str, Any]] = {}
@@ -88,14 +91,14 @@ class AdminMemoria:
         if ator is None or p is None or not p.ativo or p.role != "admin":
             raise erro_db("AG002")
 
-    @staticmethod
-    def _perfil_dict(p: Perfil) -> dict[str, Any]:
+    def _perfil_dict(self, p: Perfil) -> dict[str, Any]:
         return {
             "id": p.id,
             "nome": p.nome,
             "unidade": p.unidade,
             "role": p.role,
             "ativo": p.ativo,
+            "telefone": self.telefones.get(p.id),
             "criado_em": ANTES,
             "atualizado_em": ANTES,
         }
@@ -154,10 +157,16 @@ class AdminMemoria:
             old = self.perfis.get(usuario_id)
             if old is None:
                 return None
+            campos = dict(campos)
+            muda_tel = "telefone" in campos
+            tel = campos.pop("telefone", None)
+            if tel is not None and not _TELEFONE.fullmatch(tel):  # CHECK do banco espelhado
+                raise erro_db("23514", 'violates check constraint "ck_perfis_telefone"')
             new = replace(old, **campos)
             muda_papel = (new.role, new.ativo) != (old.role, old.ativo)
             muda_unidade = new.unidade != old.unidade
-            if muda_papel or muda_unidade:
+            muda_tel = muda_tel and tel != self.telefones.get(usuario_id)
+            if muda_papel or muda_unidade or muda_tel:
                 self._exigir_admin_ativo(ator_id)
             if muda_papel:
                 if ator_id == old.id:
@@ -183,6 +192,15 @@ class AdminMemoria:
                     de=old.unidade,
                     para=new.unidade,
                 )
+            if muda_tel:  # guarda do banco: só o fato, nunca o valor (LGPD)
+                self._audit(
+                    "perfis",
+                    old.id,
+                    "perfil_telefone_alterado",
+                    ator_id,
+                    detalhes={"telefone_alterado": True},
+                )
+                self.telefones[usuario_id] = tel
             self.perfis[usuario_id] = new
             return self._perfil_dict(new)
 
@@ -298,6 +316,7 @@ class AdminMemoria:
                     "token_hash": token_hash,
                     "criado_por": ator_id,
                     "expira_em": expira_em,
+                    **({"telefone": antigo["telefone"]} if antigo.get("telefone") else {}),
                 }
             )
 
@@ -324,6 +343,7 @@ class AdminMemoria:
                 self._exigir_admin_ativo(c["criado_por"])
             p = Perfil(usuario_id, nome, c["unidade"], c["role"], True)
             self.perfis[usuario_id] = p
+            self.telefones[usuario_id] = c.get("telefone")  # RPC copia o telefone do convite
             c["usado_em"], c["usado_por"] = agora_iso(), usuario_id
             ator = c["criado_por"] if c["role"] == "admin" else None
             self._audit("perfis", usuario_id, "perfil_criado", ator, para=f"{p.role}/ativo")

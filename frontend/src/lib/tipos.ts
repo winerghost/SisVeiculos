@@ -251,6 +251,8 @@ export interface UsuarioAdmin {
   ultimo_acesso_em?: string | null;
   /** URL assinada curta da foto de perfil (null sem foto ou conta inativa). */
   foto_url?: string | null;
+  /** Telefone (WhatsApp) só dígitos; só nas rotas de admin. null = sem telefone. */
+  telefone?: string | null;
   acoes_permitidas: string[];
 }
 
@@ -307,6 +309,8 @@ export interface NovoConvite {
   unidade: string;
   role: string;
   validade_dias?: number;
+  /** Opcional; a API normaliza e valida (DDI 55 + DDD + número). */
+  telefone?: string;
 }
 
 export interface VeiculoAdmin {

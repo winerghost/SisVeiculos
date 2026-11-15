@@ -49,12 +49,19 @@ class Gravador:
     def __init__(self) -> None:
         self.chamadas: list[tuple[str, dict[str, Any]]] = []
         self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
+        self.contatos: list[dict[str, Any] | None] = []
 
     def notificar(
-        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+        self,
+        evento: str,
+        requisicao: dict[str, Any],
+        detalhes: dict[str, Any] | None = None,
+        *,
+        contatos: dict[str, Any] | None = None,
     ) -> None:
         self.chamadas.append((evento, dict(requisicao)))
         self.detalhes.append((evento, detalhes))
+        self.contatos.append(contatos)
 
     def fechar(self) -> None:
         return None
@@ -68,7 +75,12 @@ class Quebrado:
     """Notificador que levanta: a API não pode depender dele (defesa em profundidade)."""
 
     def notificar(
-        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+        self,
+        evento: str,
+        requisicao: dict[str, Any],
+        detalhes: dict[str, Any] | None = None,
+        *,
+        contatos: dict[str, Any] | None = None,
     ) -> None:
         raise RuntimeError("n8n fora")
 
@@ -764,21 +776,18 @@ def test_veiculo_vai_completo_ao_webhook_menos_denylist(client_n, auth, cen, gra
 
 
 def test_falha_ao_montar_detalhes_nao_quebra_resposta(client_n, auth, cen, grav, repo):  # type: ignore[no-untyped-def]
+    """Detalhes e contatos são best-effort: a leitura dos contatos falha e a ação segue."""
     rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
     acao(client_n, auth, cen.aut, rid, "autorizar")
-    original = repo.nomes_perfis
-    chamadas = {"n": 0}
 
-    def uma_vez(ids: set[str]) -> dict[str, str]:
-        chamadas["n"] += 1
-        if chamadas["n"] == 1:  # 1ª chamada = montagem dos detalhes; a apresentação segue normal
-            raise RuntimeError("Fulano de Tal quebrou")
-        return original(ids)
+    def quebra(ids: set[str]) -> dict[str, Any]:
+        raise RuntimeError("Fulano de Tal 5561999998888 quebrou")
 
-    repo.nomes_perfis = uma_vez  # type: ignore[method-assign]
+    repo.contatos_perfis = quebra  # type: ignore[method-assign]
     r = acao(client_n, auth, cen.aut, rid, "saida")
     assert r.status_code == 200 and r.get_json()["status"] == "em_uso"
     assert grav.eventos[-1] == "requisicao.saida" and grav.detalhes[-1][1] is None
+    assert grav.contatos[-1] is None
 
 
 def test_assinatura_hmac_cobre_corpo_com_detalhes_e_reentrega_mantem_evento_id() -> None:
@@ -817,16 +826,35 @@ def test_denylist_por_substring_recursiva_e_chave_inofensiva_passa(client_n, aut
             "foto_url": "https://x/f.png",
             "token_convite": "abc",
             "Telefone_Contato": "999",
+            "celular_oficina": "888",
+            "senha_x": "s",
+            "caminho_foto": "fotos/a.jpg",
+            "client_secret": "cs",
             "extra": {"cpf_motorista": "1", "ok": [{"api_key": "k", "valor": 2}]},
             "campo_novo_inofensivo": "passa",
         }
     )
+    repo.telefones[cen.sol.id] = "5561911112222"
     acao(client_n, auth, cen.aut, rid, "saida")
-    r = dict(grav.detalhes)["requisicao.saida"]["requisicao"]
-    for removida in ("email_solicitante", "foto_url", "token_convite", "Telefone_Contato"):
-        assert removida not in r
+    d = dict(grav.detalhes)["requisicao.saida"]
+    r = d["requisicao"]
+    for removida in (
+        "email_solicitante",
+        "foto_url",
+        "token_convite",
+        "Telefone_Contato",
+        "celular_oficina",
+        "senha_x",
+        "caminho_foto",
+        "client_secret",
+    ):
+        assert removida not in r, removida
     assert r["campo_novo_inofensivo"] == "passa"
     assert r["extra"] == {"ok": [{"valor": 2}]}
+    # Exceção aprovada (2026-11-15): só `perfis.telefone`, fora da denylist (pessoas e contatos).
+    assert d["solicitante"]["telefone"] == "5561911112222"
+    assert grav.contatos[-1]["solicitante"]["telefone"] == "5561911112222"
+    assert "telefone" in grav.contatos[-1]["autorizador"]
 
 
 def test_flags_desligadas_removem_km_e_motorista_da_linha_mesmo_gravados(  # type: ignore[no-untyped-def]
@@ -859,16 +887,16 @@ def test_log_de_detalhes_indisponiveis_sem_pii(  # type: ignore[no-untyped-def]
     caplog.set_level(logging.DEBUG)
     rid = criar(client_n, auth, cen.sol, cen.veiculo).get_json()["id"]
     acao(client_n, auth, cen.aut, rid, "autorizar")
-    original = repo.nomes_perfis
+    original = repo.contatos_perfis
     chamadas = {"n": 0}
 
-    def uma_vez(ids: set[str]) -> dict[str, str]:
+    def uma_vez(ids: set[str]) -> dict[str, Any]:
         chamadas["n"] += 1
-        if chamadas["n"] == 1:
+        if chamadas["n"] == 1:  # 1ª chamada = montagem dos detalhes; os contatos seguem
             raise RuntimeError("Fulano de Tal AGU -> Fórum obs-sensivel")
         return original(ids)
 
-    repo.nomes_perfis = uma_vez  # type: ignore[method-assign]
+    repo.contatos_perfis = uma_vez  # type: ignore[method-assign]
     assert acao(client_n, auth, cen.aut, rid, "saida").status_code == 200
     avisos = [x for x in caplog.records if "detalhes indisponiveis" in x.getMessage()]
     assert len(avisos) == 1 and avisos[0].exc_info is None

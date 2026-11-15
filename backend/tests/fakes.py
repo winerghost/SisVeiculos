@@ -265,6 +265,13 @@ class RepoMemoria(
     def nomes_perfis(self, ids: set[str]) -> dict[str, str]:
         return {i: self.perfis[i].nome for i in ids if i in self.perfis}
 
+    def contatos_perfis(self, ids: set[str]) -> dict[str, dict[str, Any]]:
+        return {
+            i: {"nome": self.perfis[i].nome, "telefone": self.telefones.get(i)}
+            for i in ids
+            if i in self.perfis
+        }
+
     def descricoes_veiculos(self, ids: set[str]) -> dict[str, str]:
         return {i: self.veiculos[i]["descricao"] for i in ids if i in self.veiculos}
 

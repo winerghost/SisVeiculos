@@ -256,7 +256,7 @@ class ServicoUsuarios:
         exigir_admin(admin)
         campos = validar_edicao_usuario(corpo)
         alvo = self._carregar(usuario_id)
-        mudou = {k: v for k, v in campos.items() if alvo[k] != v}
+        mudou = {k: v for k, v in campos.items() if alvo.get(k) != v}
         if "role" in mudou:
             if alvo["id"] == admin.id:
                 raise AutoAlteracaoProibida(MSG_AUTO_PAPEL)
@@ -266,6 +266,8 @@ class ServicoUsuarios:
             if atualizado is None:
                 raise NaoEncontrado("Usuário não encontrado.")
             alvo = atualizado
+            # O telefone é auditado pelo guarda do banco (`perfil_telefone_alterado`, sem o
+            # valor; exige `alterado_por`, enviado por `atualizar_perfil`). O nome, não.
             if "nome" in mudou:  # nenhum trigger audita o nome; sem o valor (LGPD)
                 self._repo.registrar_auditoria(
                     tabela="perfis",

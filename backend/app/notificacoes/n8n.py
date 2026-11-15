@@ -9,7 +9,10 @@ Garantias:
   `requisicao.chegada` o serviço envia também `detalhes` (dados completos da viagem; versão 2).
   A exceção aprovada inclui ids de pessoas (com nome), texto livre (`descricao_avarias`,
   `observacao`, `trajeto`) e coordenadas da localização. Nunca segue token, URL assinada, caminho
-  de Storage, e-mail, CPF nem telefone (denylist por substring no serviço). Ver `montar_payload`.
+  de Storage, e-mail nem CPF (denylist por substring no serviço). Ver `montar_payload`.
+- Telefone (exceção APROVADA, 2026-11-15): todo evento `requisicao.*` leva o bloco `contatos`
+  ({id, nome, telefone} de solicitante, autorizador e motorista) para o n8n avisar por WhatsApp;
+  em saída/chegada as pessoas de `detalhes` também levam `telefone`. Nunca vai a log.
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
 - Assinatura: `X-Assinatura: sha256=HMAC(chave, "<timestamp>.<corpo>")` e `X-Timestamp`
   (segundos Unix) para o n8n rejeitar replay. A chave é `N8N_HMAC_SECRET`; se ausente, cai no
@@ -66,7 +69,12 @@ _MSG_PUBLICO = "N8N_WEBHOOK_URL deve apontar para um host público."
 
 class Notificador(Protocol):
     def notificar(
-        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+        self,
+        evento: str,
+        requisicao: dict[str, Any],
+        detalhes: dict[str, Any] | None = None,
+        *,
+        contatos: dict[str, Any] | None = None,
     ) -> None:
         """Nunca bloqueia e nunca lança."""
         ...
@@ -78,7 +86,12 @@ class NotificadorNulo:
     """No-op (integração desligada)."""
 
     def notificar(
-        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+        self,
+        evento: str,
+        requisicao: dict[str, Any],
+        detalhes: dict[str, Any] | None = None,
+        *,
+        contatos: dict[str, Any] | None = None,
     ) -> None:
         return None
 
@@ -158,9 +171,12 @@ def montar_payload(
     requisicao: dict[str, Any],
     evento_id: str | None = None,
     detalhes: dict[str, Any] | None = None,
+    *,
+    contatos: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Payload mínimo por allowlist; com `detalhes` (só saída e chegada) acrescenta o bloco
-    completo aprovado e sobe a versão para 2.
+    completo aprovado e sobe a versão para 2. `contatos` (todos os eventos de requisição,
+    exceção LGPD aprovada) leva id, nome e telefone de solicitante, autorizador e motorista.
 
     `evento_id` (uuid4) é estável por evento; o n8n deduplica por ele."""
     payload: dict[str, Any] = {
@@ -171,6 +187,8 @@ def montar_payload(
         "ocorrido_em": datetime.now(UTC).isoformat(),
         "versao": VERSAO_PAYLOAD,
     }
+    if contatos is not None:
+        payload["contatos"] = contatos
     if detalhes:
         payload["detalhes"] = detalhes
         payload["versao"] = VERSAO_PAYLOAD_DETALHES
@@ -216,14 +234,19 @@ class N8nWebhook:
 
     # -- API pública ---------------------------------------------------------------
     def notificar(
-        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+        self,
+        evento: str,
+        requisicao: dict[str, Any],
+        detalhes: dict[str, Any] | None = None,
+        *,
+        contatos: dict[str, Any] | None = None,
     ) -> None:
         try:
             if evento not in EVENTOS or self._parar.is_set():
                 return
             evento_id = str(uuid.uuid4())  # gerado uma vez; reutilizado nas retentativas
             corpo = json.dumps(
-                montar_payload(evento, requisicao, evento_id, detalhes),
+                montar_payload(evento, requisicao, evento_id, detalhes, contatos=contatos),
                 separators=(",", ":"),
                 ensure_ascii=False,
                 default=str,  # datetime/UUID/Decimal vindos do banco

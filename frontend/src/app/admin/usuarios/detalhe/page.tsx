@@ -33,6 +33,7 @@ function Edicao({
   const [nome, setNome] = React.useState(u.nome);
   const [unidade, setUnidade] = React.useState(u.unidade);
   const [role, setRole] = React.useState(u.role);
+  const [telefone, setTelefone] = React.useState(u.telefone ?? '');
   const [confirmando, setConfirmando] = React.useState(false);
   const [confirmandoFoto, setConfirmandoFoto] = React.useState(false);
   const [fotoRemovida, setFotoRemovida] = React.useState(false);
@@ -49,14 +50,22 @@ function Edicao({
   const podeAtivar = u.acoes_permitidas.includes('ativar');
   const podeRemoverFoto = u.acoes_permitidas.includes('remover_foto');
   const podeTrocarFoto = u.acoes_permitidas.includes('trocar_foto');
+  const telefoneInvalido = Boolean(envio.erro) && envio.campoErro === 'telefone';
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
     if (envio.ocupado) return;
     setSalvo(false);
     setClicado('salvar');
+    // Telefone só vai se mudou (vazio limpa); o servidor normaliza e valida.
+    const telefoneMudou = telefone.trim() !== (u.telefone ?? '');
     const r = await envio.executar(() =>
-      admin.alterarUsuario(u.id, { nome, unidade, ...(podeRole ? { role } : {}) }),
+      admin.alterarUsuario(u.id, {
+        nome,
+        unidade,
+        ...(podeRole ? { role } : {}),
+        ...(telefoneMudou ? { telefone: telefone.trim() } : {}),
+      }),
     );
     setClicado(null);
     if (r.ok) {
@@ -64,6 +73,7 @@ function Edicao({
       setNome(r.valor.nome);
       setUnidade(r.valor.unidade);
       setRole(r.valor.role);
+      setTelefone(r.valor.telefone ?? '');
       setSalvo(true);
     } else {
       await recarregar(); // acoes_permitidas podem ter mudado no servidor
@@ -116,7 +126,7 @@ function Edicao({
         </div>
       </section>
 
-      {envio.erro ? <Alerta>{envio.erro}</Alerta> : null}
+      {envio.erro ? <Alerta id="envio-erro">{envio.erro}</Alerta> : null}
       {salvo ? (
         <p role="status" className="rounded-padrao border border-borda bg-white p-3">
           Alterações salvas.
@@ -167,6 +177,28 @@ function Edicao({
               </option>
             ))}
           </Select>
+        </div>
+        <div>
+          <Label htmlFor="telefone">
+            Telefone (WhatsApp) <span className="font-normal text-texto-2">(opcional)</span>
+          </Label>
+          <Input
+            id="telefone"
+            type="tel"
+            inputMode="numeric"
+            // Telefone de terceiro: sem autopreenchimento (não sugere nem guarda o do admin).
+            autoComplete="off"
+            placeholder="5561999998888"
+            // A API indica o campo recusado (erro.campo); o front só liga a mensagem ao campo.
+            aria-invalid={telefoneInvalido || undefined}
+            aria-describedby={telefoneInvalido ? 'telefone-dica envio-erro' : 'telefone-dica'}
+            disabled={!podeEditar}
+            value={telefone}
+            onChange={(e) => setTelefone(e.target.value)}
+          />
+          <p id="telefone-dica" className="mt-1 text-sm text-texto-2">
+            Só números, com 55 e DDD.
+          </p>
         </div>
         {podeEditar ? (
           <Button

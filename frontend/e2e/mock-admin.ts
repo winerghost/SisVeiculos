@@ -16,6 +16,7 @@ interface Usuario {
   ativo: boolean;
   email: string;
   ultimo_acesso_em: string | null;
+  telefone?: string | null;
 }
 
 export interface OpcoesAdmin {
@@ -57,12 +58,19 @@ export interface OpcoesAdmin {
   saudacaoLigada?: boolean;
   /** POST /admin/ia/saudacoes/gerar responde 502 com esta mensagem. */
   erroGerarSaudacao?: string;
+  /** Convite e PATCH com `telefone` não vazio respondem 400 com esta mensagem e `campo: 'telefone'`. */
+  erroTelefone?: string;
 }
 
 const ACESSO_BASE = Date.parse('2026-11-05T15:00:00Z');
 
 const erro = (route: Route, status: number, codigo: string, mensagem: string) =>
   route.fulfill({ status, json: { erro: { codigo, mensagem } } });
+const erroTelefone = (route: Route, mensagem: string) =>
+  route.fulfill({
+    status: 400,
+    json: { erro: { codigo: 'requisicao_invalida', mensagem, campo: 'telefone' } },
+  });
 
 export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
   const usuarios: Usuario[] = [
@@ -143,6 +151,8 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
   const acoesColecao = opcoes.semCriar ? [] : ['criar'];
   const corpos: {
     convidar: unknown[];
+    /** Corpos de PATCH /admin/usuarios/:id. */
+    alterar: unknown[];
     aceitar: unknown[];
     senha: unknown[];
     config: unknown[];
@@ -171,6 +181,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
     acessos: [],
     reenvios: 0,
     convidar: [],
+    alterar: [],
     aceitar: [],
     senha: [],
     config: [],
@@ -208,6 +219,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
 
   const apresentar = (u: Usuario) => ({
     ...u,
+    telefone: u.telefone ?? null,
     foto_url: temFoto(u) && u.ativo ? FOTO_URL : null,
     rotulo_perfil: `${u.unidade} · ${u.role}`,
     acoes_permitidas: [
@@ -399,6 +411,7 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
       if (!id && m === 'POST') {
         const c = req.postDataJSON() as Record<string, string>;
         corpos.convidar.push(c);
+        if (opcoes.erroTelefone && c.telefone) return erroTelefone(route, opcoes.erroTelefone);
         const convite = {
           id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
           email: c.email,
@@ -449,7 +462,12 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
         return route.fulfill({ json: apresentar(u) });
       }
       if (m === 'PATCH') {
-        Object.assign(u, req.postDataJSON());
+        const c = req.postDataJSON() as Record<string, string | null>;
+        corpos.alterar.push({ ...c });
+        if (opcoes.erroTelefone && c.telefone) return erroTelefone(route, opcoes.erroTelefone);
+        // Só para o teste: o "servidor" devolve o telefone só com dígitos ("" limpa).
+        if (typeof c.telefone === 'string') c.telefone = c.telefone.replace(/\D/g, '') || null;
+        Object.assign(u, c);
         return route.fulfill({ json: apresentar(u) });
       }
       if (acao === 'desativar') u.ativo = false;
@@ -585,7 +603,9 @@ export async function mockarAdmin(page: Page, opcoes: OpcoesAdmin = {}) {
               requisicoes: { novos: 5, existentes: 0, conflitos: 0 },
             },
             erros: [],
-            configuracoes_alteradas: [{ chave: 'checklist', rotulo: 'Checklist', de: false, para: true }],
+            configuracoes_alteradas: [
+              { chave: 'checklist', rotulo: 'Checklist', de: false, para: true },
+            ],
             aplicado: modo === 'confirmar',
             acoes_permitidas: modo === 'previa' ? ['confirmar'] : [],
           },

@@ -13,6 +13,12 @@ ROLES = ("solicitante", "autorizador", "admin", "motorista", "vigilante")
 # Mesmo critério do CHECK ck_convites_email_dominio: Gmail ou *.agu.gov.br.
 _EMAIL = re.compile(r"^[a-z0-9._%+-]+@(gmail\.com|([a-z0-9-]+\.)*agu\.gov\.br)$")
 _PLACA = re.compile(r"^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$")
+# Mesmo critério do CHECK de perfis.telefone: DDI 55 + DDD + número (campo `number` do
+# Evolution Go). Só o admin cadastra; vai ao webhook n8n (exceção LGPD aprovada).
+_TELEFONE = re.compile(r"^55[1-9]{2}9?[0-9]{8}$")
+_TELEFONE_SEPARADORES = re.compile(r"[\s()+\-]")
+MAX_TELEFONE_BRUTO = 40
+MSG_TELEFONE = "Telefone inválido: use DDI 55 + DDD + número, ex.: 5561999998888."
 MAX_EMAIL = 254
 MAX_DESCRICAO = 120
 VALIDADE_PADRAO_DIAS, VALIDADE_MAX_DIAS = 7, 30
@@ -57,6 +63,22 @@ def validar_email(valor: Any) -> str:
     return email
 
 
+def normalizar_telefone(valor: Any) -> str | None:
+    """Remove espaços, (), - e +; valida DDI 55 + DDD + número. None/"" = sem telefone.
+
+    O valor nunca entra na mensagem de erro nem em log (LGPD)."""
+    if valor is None:
+        return None
+    if not isinstance(valor, str) or len(valor) > MAX_TELEFONE_BRUTO:
+        raise RequisicaoInvalida(MSG_TELEFONE, campo="telefone")
+    digitos = _TELEFONE_SEPARADORES.sub("", valor)
+    if not digitos:
+        return None
+    if not digitos.isascii() or not _TELEFONE.fullmatch(digitos):
+        raise RequisicaoInvalida(MSG_TELEFONE, campo="telefone")
+    return digitos
+
+
 MAX_BUSCA = 80
 # Caracteres com sentido na sintaxe de filtro do PostgREST (",", "(", ")", aspas, "\") ou
 # curinga (* e % no PostgREST; "_" é o curinga de 1 caractere do ILIKE do Postgres): recusados
@@ -96,7 +118,7 @@ def _unidade(valor: Any) -> str:
 
 
 def validar_convite(corpo: Any) -> dict[str, Any]:
-    c = _objeto(corpo, {"email", "nome", "unidade", "role", "validade_dias"})
+    c = _objeto(corpo, {"email", "nome", "unidade", "role", "validade_dias", "telefone"})
     validade = c.get("validade_dias", VALIDADE_PADRAO_DIAS)
     if isinstance(validade, bool) or not isinstance(validade, int):
         raise RequisicaoInvalida("O campo 'validade_dias' deve ser um número inteiro.")
@@ -110,14 +132,16 @@ def validar_convite(corpo: Any) -> dict[str, Any]:
         "unidade": _unidade(c.get("unidade")),
         "role": _role(c.get("role", "solicitante")),
         "validade_dias": validade,
+        "telefone": normalizar_telefone(c.get("telefone")),
     }
 
 
 def validar_edicao_usuario(corpo: Any) -> dict[str, Any]:
-    """Só nome, unidade e role. `ativo` tem rota própria; e-mail e id não mudam."""
-    c = _objeto(corpo, {"nome", "unidade", "role"})
+    """Só nome, unidade, role e telefone. `ativo` tem rota própria; e-mail e id não mudam.
+    `telefone` "" ou null limpa o cadastro."""
+    c = _objeto(corpo, {"nome", "unidade", "role", "telefone"})
     if not c:
-        raise RequisicaoInvalida("Informe ao menos um campo: nome, unidade ou role.")
+        raise RequisicaoInvalida("Informe ao menos um campo: nome, unidade, role ou telefone.")
     campos: dict[str, Any] = {}
     if "nome" in c:
         campos["nome"] = validar_texto(c, "nome", MAX_NOME, True)
@@ -125,6 +149,8 @@ def validar_edicao_usuario(corpo: Any) -> dict[str, Any]:
         campos["unidade"] = _unidade(c["unidade"])
     if "role" in c:
         campos["role"] = _role(c["role"])
+    if "telefone" in c:
+        campos["telefone"] = normalizar_telefone(c["telefone"])
     return campos
 
 

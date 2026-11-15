@@ -17,9 +17,19 @@ class ErroApi(Exception):
     codigo = "erro"
     retry_after: int | None = None  # segundos, vira o cabeçalho Retry-After
 
-    def __init__(self, mensagem: str, codigo: str | None = None, status: int | None = None):
+    def __init__(
+        self,
+        mensagem: str,
+        codigo: str | None = None,
+        status: int | None = None,
+        *,
+        campo: str | None = None,
+    ):
         super().__init__(mensagem)
         self.mensagem = mensagem
+        # Nome do campo do corpo que causou o erro (acessibilidade: o front liga a mensagem ao
+        # campo com aria-invalid/aria-describedby). Opcional: ausente, o corpo não muda.
+        self.campo = campo
         if codigo:
             self.codigo = codigo
         if status:
@@ -144,8 +154,11 @@ class FalhaRegistroAcesso(Exception):  # noqa: N818
         self.codigo = codigo
 
 
-def corpo_erro(codigo: str, mensagem: str) -> dict[str, dict[str, str]]:
-    return {"erro": {"codigo": codigo, "mensagem": mensagem}}
+def corpo_erro(codigo: str, mensagem: str, campo: str | None = None) -> dict[str, dict[str, str]]:
+    erro = {"codigo": codigo, "mensagem": mensagem}
+    if campo:
+        erro["campo"] = campo
+    return {"erro": erro}
 
 
 _HTTP = {
@@ -161,7 +174,7 @@ _HTTP = {
 def registrar_erros(app: Flask) -> None:
     @app.errorhandler(ErroApi)
     def _api(e: ErroApi):  # type: ignore[no-untyped-def]
-        resp = jsonify(corpo_erro(e.codigo, e.mensagem))
+        resp = jsonify(corpo_erro(e.codigo, e.mensagem, e.campo))
         if e.retry_after:
             resp.headers["Retry-After"] = str(e.retry_after)
         return resp, e.status

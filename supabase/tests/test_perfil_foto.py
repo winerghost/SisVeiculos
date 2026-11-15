@@ -618,10 +618,10 @@ def test_ck_auditoria_preserva_valores_antigos_e_inclui_os_novos() -> None:
             ).fetchall()
         )
     assert len(ACOES_ANTIGAS) == 15 and len(TABELAS_ANTIGAS_AUD) == 6
-    # Contagem exata: 20 acoes ate motorista_designado; depois localizacao_registrada/_lida/_expurgada
-    # (migrations 20261112/20261113/20261114) e saudacao_excluida (20261115120400) = 24 acoes.
+    # Subconjunto (nao contagem fixa): migrations posteriores acrescentam acoes (passkeys,
+    # exportar/importar, perfil_telefone_alterado...) e nao podem quebrar este teste.
     acoes = set(re.findall(r"'([a-z_]+)'::text", defs["ck_auditoria_acao"]))
-    assert len(acoes) == 24
+    assert len(acoes) >= 24
     for v in ("motorista_designado", "localizacao_registrada", "localizacao_lida",
               "localizacao_expurgada", "saudacao_excluida"):
         assert v in acoes, v

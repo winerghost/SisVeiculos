@@ -55,12 +55,16 @@ import type {
   VeiculoAdmin,
 } from './tipos';
 
-/** Erro devolvido pela API no formato {"erro": {"codigo", "mensagem"}}. */
+/** Corpo de erro da API; `campo` (opcional) indica o campo recusado, para acessibilidade. */
+type CorpoErro = { erro?: { codigo?: string; mensagem?: string; campo?: string } } | null;
+
+/** Erro devolvido pela API no formato {"erro": {"codigo", "mensagem", "campo"?}}. */
 export class ApiErro extends Error {
   constructor(
     public readonly status: number,
     public readonly codigo: string,
     mensagem: string,
+    public readonly campo: string | null = null,
   ) {
     super(mensagem);
   }
@@ -86,12 +90,13 @@ async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
     corpo = null;
   }
   if (!resp.ok) {
-    const e = (corpo as { erro?: { codigo?: string; mensagem?: string } } | null)?.erro;
+    const e = (corpo as CorpoErro)?.erro;
     // A mensagem vem do servidor e é exibida como veio; o fallback só cobre corpo ilegível.
     throw new ApiErro(
       resp.status,
       e?.codigo ?? 'erro',
       e?.mensagem ?? 'Não foi possível concluir a operação.',
+      typeof e?.campo === 'string' ? e.campo : null,
     );
   }
   return corpo as T;
@@ -130,7 +135,7 @@ async function chamarArquivo(
     throw new ApiErro(0, 'sem_conexao', 'Sem conexão com o servidor. Tente novamente.');
   }
   if (!resp.ok) {
-    let corpo: { erro?: { codigo?: string; mensagem?: string } } | null = null;
+    let corpo: CorpoErro = null;
     try {
       corpo = await resp.json();
     } catch {
@@ -182,7 +187,11 @@ export const admin = {
   usuarios: (p: { q?: string; role?: string; ativo?: string; limite: number; offset: number }) =>
     chamar<ListaUsuarios>(`/admin/usuarios${query(p)}`),
   usuario: (id: string) => chamar<UsuarioAdmin>(`/admin/usuarios/${enc(id)}`),
-  alterarUsuario: (id: string, d: Partial<Pick<UsuarioAdmin, 'nome' | 'unidade' | 'role'>>) =>
+  /** `telefone` vazio limpa; a API normaliza e valida. */
+  alterarUsuario: (
+    id: string,
+    d: Partial<Pick<UsuarioAdmin, 'nome' | 'unidade' | 'role'>> & { telefone?: string },
+  ) =>
     chamar<UsuarioAdmin>(`/admin/usuarios/${enc(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(d),

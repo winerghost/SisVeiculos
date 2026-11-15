@@ -569,3 +569,118 @@ test('admin: dados exporta e importa com prévia; Confirmar só com acoes_permit
   ]);
   expect(mock.corpos.importacoes[4]?.corpo).toBe(bom);
 });
+
+// ---- Telefone (WhatsApp): só o admin cadastra; o servidor normaliza e valida ----
+
+const TEL = '5561999998888';
+const ANA = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+/** Nada do telefone fica no aparelho: storages, cookies e Cache Storage (o SW não guarda API). */
+async function telefoneNoAparelho(page: Page, valor: string): Promise<string[]> {
+  return page.evaluate(async (v) => {
+    const achados: string[] = [];
+    const tudo = JSON.stringify({ l: { ...localStorage }, s: { ...sessionStorage } });
+    if (tudo.includes(v) || document.cookie.includes(v)) achados.push('storage');
+    if ('caches' in window) {
+      for (const nome of await caches.keys()) {
+        const cache = await caches.open(nome);
+        for (const req of await cache.keys()) {
+          const corpo = await (await cache.match(req))?.clone().text();
+          if (req.url.includes(v) || corpo?.includes(v)) achados.push(`cache:${req.url}`);
+        }
+      }
+    }
+    return achados;
+  }, valor);
+}
+
+test('admin: telefone vai como digitado, volta normalizado da API e não fica no aparelho', async ({
+  page,
+}) => {
+  const consoles: string[] = [];
+  page.on('console', (m) => consoles.push(m.text()));
+  const mock = await entrarAdmin(page);
+  await expect(page.getByRole('link', { name: 'Admin', exact: true })).toBeVisible();
+
+  // Convite: o campo não pede autopreenchimento (telefone de terceiro).
+  await page.goto('/admin/usuarios/novo');
+  const campoNovo = page.getByLabel(/Telefone \(WhatsApp\)/);
+  await expect(campoNovo).toHaveAttribute('autocomplete', 'off');
+  await page.getByLabel('E-mail').fill('pedro.alves@gmail.com');
+  await page.getByLabel('Nome completo').fill('Pedro Alves');
+  await campoNovo.fill(` ${TEL} `);
+  await page.getByRole('button', { name: 'Enviar convite' }).click();
+  await expect(page.getByText('Convite enviado para')).toBeVisible();
+  expect(mock.corpos.convidar[0]).toMatchObject({ telefone: TEL });
+
+  // Detalhe: o valor exibido depois de salvar é o que a API devolveu.
+  await page.goto(`/admin/usuarios/detalhe?id=${ANA}`);
+  const campo = page.getByLabel(/Telefone \(WhatsApp\)/);
+  await expect(campo).toHaveValue('');
+  await expect(campo).toHaveAttribute('autocomplete', 'off');
+  await expect(campo).not.toHaveAttribute('aria-invalid', /.*/);
+  await campo.fill('(55) 61 99999-8888');
+  await page.getByRole('button', { name: 'Salvar alterações' }).click();
+  await expect(page.getByText('Alterações salvas.')).toBeVisible();
+  expect(mock.corpos.alterar[0]).toMatchObject({ telefone: '(55) 61 99999-8888' });
+  await expect(campo).toHaveValue(TEL);
+
+  // Sem mudança no telefone, ele não vai no PATCH; apagar manda "" (o servidor limpa).
+  await page.getByRole('button', { name: 'Salvar alterações' }).click();
+  await expect(page.getByText('Alterações salvas.')).toBeVisible();
+  expect(mock.corpos.alterar[1]).not.toHaveProperty('telefone');
+
+  // Recarregado da API, segue lá; e nada foi para storage, cache ou console.
+  await page.reload();
+  await expect(page.getByLabel(/Telefone \(WhatsApp\)/)).toHaveValue(TEL);
+  expect(await telefoneNoAparelho(page, TEL)).toEqual([]);
+  expect(consoles.join('\n')).not.toContain(TEL);
+  expect(consoles.join('\n')).not.toContain('99999');
+  expect(page.url()).not.toContain(TEL);
+});
+
+test('admin: erro 400 do telefone aparece como veio e marca o campo (aria-invalid)', async ({
+  page,
+}) => {
+  const MSG = 'Telefone inválido. Use só números, com 55 e DDD.';
+  const mock = await entrarAdmin(page, { erroTelefone: MSG });
+  await expect(page.getByRole('link', { name: 'Admin', exact: true })).toBeVisible();
+
+  // Detalhe: a API recusa; o front mostra a mensagem e liga o erro ao campo.
+  await page.goto(`/admin/usuarios/detalhe?id=${ANA}`);
+  const campo = page.getByLabel(/Telefone \(WhatsApp\)/);
+  await campo.fill('123');
+  await page.getByRole('button', { name: 'Salvar alterações' }).click();
+  const alerta = page.getByRole('alert').filter({ hasText: MSG });
+  await expect(alerta).toBeVisible();
+  await expect(alerta).toHaveText(MSG);
+  expect(mock.corpos.alterar).toEqual([expect.objectContaining({ telefone: '123' })]);
+  await expect(campo).toHaveAttribute('aria-invalid', 'true');
+  const ids = ((await campo.getAttribute('aria-describedby')) ?? '').split(' ');
+  expect(ids).toContain('telefone-dica');
+  expect(ids).toContain((await alerta.getAttribute('id')) ?? '-');
+  // O campo continua com o que foi digitado: nada é corrigido no cliente.
+  await expect(campo).toHaveValue('123');
+
+  // Erro que não é do telefone não marca o campo.
+  await campo.fill('');
+  await page.getByLabel('Nome').fill('Ana S.');
+  await page.getByRole('button', { name: 'Salvar alterações' }).click();
+  await expect(page.getByText('Alterações salvas.')).toBeVisible();
+  await expect(campo).not.toHaveAttribute('aria-invalid', /.*/);
+  expect(await campo.getAttribute('aria-describedby')).toBe('telefone-dica');
+
+  // Convite: mesma ligação do erro ao campo.
+  await page.goto('/admin/usuarios/novo');
+  await page.getByLabel('E-mail').fill('pedro.alves@gmail.com');
+  await page.getByLabel('Nome completo').fill('Pedro Alves');
+  const campoNovo = page.getByLabel(/Telefone \(WhatsApp\)/);
+  await campoNovo.fill('abc');
+  await page.getByRole('button', { name: 'Enviar convite' }).click();
+  const alertaNovo = page.getByRole('alert').filter({ hasText: MSG });
+  await expect(alertaNovo).toBeVisible();
+  await expect(campoNovo).toHaveAttribute('aria-invalid', 'true');
+  expect((await campoNovo.getAttribute('aria-describedby'))?.split(' ')).toContain(
+    (await alertaNovo.getAttribute('id')) ?? '-',
+  );
+});

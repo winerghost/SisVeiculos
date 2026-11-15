@@ -228,6 +228,7 @@ ACOES_AUDITORIA = (
     ("perfil_criado", "Perfil criado"),
     ("perfil_alterado", "Perfil alterado"),
     ("perfil_unidade_alterada", "Unidade do perfil alterada"),
+    ("perfil_telefone_alterado", "Telefone do perfil alterado"),
     ("admin_semeado", "Administrador inicial"),
     ("configuracao_alterada", "Configuração alterada"),
     ("veiculo_criado", "Veículo criado"),

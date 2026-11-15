@@ -134,7 +134,10 @@ EVENTO_POR_ACAO = {
 # select('*') por métodos próprios do repositório (`obter_requisicao_completa`,
 # `obter_veiculo_completo`), então coluna nova no banco chega sem mexer em COLUNAS_REQ. Os filtros
 # finos ficam no n8n (decisão do dono do projeto). Só chaves cujo NOME contenha um destes trechos
-# (segredo, acesso, contato) ficam de fora, em qualquer nível de aninhamento. Não é allowlist.
+# (segredo, acesso, e-mail, CPF, telefone) ficam de fora, em qualquer nível de aninhamento. Não é
+# allowlist. Telefone/celular SEGUEM na denylist: a exceção aprovada em 2026-11-15 (WhatsApp) cobre
+# só `perfis.telefone`, que sai à parte em `contatos` e nas pessoas de `detalhes` (`_contato`, fora
+# deste filtro). Coluna futura com telefone de terceiro não vaza sem revisão de LGPD.
 DENYLIST_WEBHOOK_REQ = re.compile(
     r"email|e_mail|token|senha|password|secret|key|caminho|path|url|cpf|telefone|celular",
     re.IGNORECASE,
@@ -152,6 +155,12 @@ def filtrar_denylist_webhook(valor: Any) -> Any:
     if isinstance(valor, list):
         return [filtrar_denylist_webhook(v) for v in valor]
     return valor
+
+
+def _contato(pid: str, dados: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """{id, nome, telefone} de uma pessoa para o webhook n8n (nunca e-mail nem CPF)."""
+    d = dados.get(pid) or {}
+    return {"id": pid, "nome": d.get("nome"), "telefone": d.get("telefone")}
 
 
 ACOES_COM_DETALHES = frozenset({"registrar_saida", "registrar_chegada"})
@@ -773,7 +782,12 @@ class ServicoRequisicoes:
             raise VeiculoOcupado(MSG_OCUPADO)
         dados["usuario_id"] = perfil.id  # sempre do JWT, nunca do body
         criada = self._repo.inserir_requisicao(dados)
-        self._notificador.notificar("requisicao.criada", criada)  # só após o banco confirmar
+        # Só após o banco confirmar.
+        self._notificador.notificar(
+            "requisicao.criada",
+            criada,
+            contatos=self._contatos_webhook(criada, "requisicao.criada"),
+        )
         return self.apresentar(perfil, criada)
 
     def executar(
@@ -799,33 +813,71 @@ class ServicoRequisicoes:
         atualizada = self._repo.transicionar(req["id"], req["status"], campos)
         if atualizada is None:  # outra requisição mudou o estado no meio do caminho
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
-        self._notificar_acao(acao, atualizada)  # após o commit
+        self._notificar_acao(acao, atualizada, config)  # após o commit
         return self.apresentar(perfil, atualizada)
 
-    def _notificar_acao(self, acao: str, atualizada: Requisicao) -> None:
-        """Notifica o n8n; saída e chegada levam `detalhes` (aprovação LGPD), best-effort."""
+    def _notificar_acao(self, acao: str, atualizada: Requisicao, config: Configuracoes) -> None:
+        """Notifica o n8n; saída e chegada levam `detalhes` (aprovação LGPD), best-effort.
+
+        Reaproveita o `config` já lido na ação e, em saída/chegada, os perfis que
+        `_detalhes_webhook` buscou (uma só leitura de `perfis` no caminho da resposta)."""
+        evento = EVENTO_POR_ACAO[acao]
         detalhes: dict[str, Any] | None = None
+        perfis: dict[str, dict[str, Any]] | None = None
         if acao in ACOES_COM_DETALHES:
             try:
-                detalhes = self._detalhes_webhook(atualizada, acao)
+                detalhes, perfis = self._detalhes_webhook(atualizada, acao, config)
             except Exception as exc:  # noqa: BLE001 - nunca quebra a resposta
                 # Só evento e tipo da exceção; sem exc_info (a mensagem pode ter PII).
                 log.warning(
-                    "n8n: detalhes indisponiveis evento=%s (%s)",
-                    EVENTO_POR_ACAO[acao],
-                    type(exc).__name__,
+                    "n8n: detalhes indisponiveis evento=%s (%s)", evento, type(exc).__name__
                 )
-                detalhes = None
+                detalhes = perfis = None
+        contatos = self._contatos_webhook(atualizada, evento, config, perfis)
         if detalhes is None:
-            self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada)
+            self._notificador.notificar(evento, atualizada, contatos=contatos)
         else:
-            self._notificador.notificar(EVENTO_POR_ACAO[acao], atualizada, detalhes)
+            self._notificador.notificar(evento, atualizada, detalhes, contatos=contatos)
 
-    def _detalhes_webhook(self, req: Requisicao, acao: str) -> dict[str, Any]:
+    def _contatos_webhook(
+        self,
+        req: Requisicao,
+        evento: str,
+        config: Configuracoes | None = None,
+        perfis: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Bloco `contatos` de TODO evento de requisição (exceção LGPD aprovada): id, nome e
+        telefone de solicitante, autorizador (`autorizado_por`) e motorista (só com o recurso
+        ligado; desligado, a chave fica ausente). Best-effort: falhou, sai None e a ação segue.
+
+        `config` e `perfis` (nome/telefone já lidos por `_detalhes_webhook`) são reaproveitados
+        quando vierem; só faltando é que se lê do banco. Log: só evento e tipo da exceção."""
+        try:
+            config = config or self._repo.ler_configuracoes()
+            papeis: dict[str, str | None] = {
+                "solicitante": req.get("usuario_id"),
+                "autorizador": req.get("autorizado_por"),
+            }
+            if config.motorista:
+                papeis["motorista"] = req.get("motorista_id")
+            ids = {v for v in papeis.values() if v}
+            # `_detalhes_webhook` busca um superconjunto destes ids (mesmo `config`).
+            dados = perfis
+            if dados is None:
+                dados = self._repo.contatos_perfis(ids) if ids else {}
+            return {papel: (_contato(pid, dados) if pid else None) for papel, pid in papeis.items()}
+        except Exception as exc:  # noqa: BLE001 - nunca quebra a ação
+            log.warning("n8n: contatos indisponiveis evento=%s (%s)", evento, type(exc).__name__)
+            return None
+
+    def _detalhes_webhook(
+        self, req: Requisicao, acao: str, config: Configuracoes
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         """Dados completos da viagem para o n8n (só saída e chegada). Recurso opcional desligado
-        => campo ausente. Nunca inclui e-mail, token, URL assinada nem caminho de Storage."""
+        => campo ausente. Nunca inclui e-mail, token, URL assinada nem caminho de Storage.
+
+        Devolve também os perfis lidos (id -> nome/telefone), reaproveitados em `contatos`."""
         momento = "saida" if acao == "registrar_saida" else "chegada"
-        config = self._repo.ler_configuracoes()
         checklists = self._repo.obter_checklists(req["id"]) if config.checklist else []
         checklist = next((c for c in checklists if c.get("momento") == momento), None)
         papeis = {
@@ -839,14 +891,14 @@ class ServicoRequisicoes:
         ids = {v for v in papeis.values() if v}
         if checklist and checklist.get("registrado_por"):
             ids.add(checklist["registrado_por"])
-        nomes = self._repo.nomes_perfis(ids) if ids else {}
+        contatos = self._repo.contatos_perfis(ids) if ids else {}
         veiculo_id = req.get("veiculo_id")
         # Linhas INTEIRAS do banco (colunas futuras inclusas); a denylist é aplicada abaixo.
         linha = self._repo.obter_requisicao_completa(req["id"]) or req
         veiculo = (self._repo.obter_veiculo_completo(veiculo_id) if veiculo_id else None) or {}
 
         def pessoa(pid: str | None) -> dict[str, Any]:
-            return {"id": pid, "nome": nomes.get(pid) if pid else None}
+            return _contato(pid, contatos) if pid else {"id": None, "nome": None, "telefone": None}
 
         # Recurso desligado: o valor gravado no banco também não sai dentro de `requisicao`.
         omitir: set[str] = set()
@@ -891,7 +943,7 @@ class ServicoRequisicoes:
                 "registrado_em": checklist.get("registrado_em"),
                 "quantidade_fotos": len(checklist.get("fotos") or []),
             }
-        return detalhes
+        return detalhes, contatos
 
     def _executar_motorista(
         self, acao: str, perfil: Perfil, req: Requisicao, corpo: Any, config: Configuracoes
@@ -918,7 +970,7 @@ class ServicoRequisicoes:
         atualizada = self._repo.obter_requisicao(req["id"])
         if atualizada is None or atualizada["status"] != resultado["status"]:
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
-        self._notificar_acao(acao, atualizada)  # após o commit
+        self._notificar_acao(acao, atualizada, config)  # após o commit
         return self.apresentar(perfil, atualizada)
 
     def _motorista_na_autorizacao(

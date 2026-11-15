@@ -677,7 +677,12 @@ class Gravador:
         self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
 
     def notificar(
-        self, evento: str, requisicao: dict[str, Any], detalhes: dict[str, Any] | None = None
+        self,
+        evento: str,
+        requisicao: dict[str, Any],
+        detalhes: dict[str, Any] | None = None,
+        *,
+        contatos: dict[str, Any] | None = None,
     ) -> None:
         self.eventos.append((evento, dict(requisicao)))
         self.detalhes.append((evento, detalhes))

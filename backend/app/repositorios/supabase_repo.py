@@ -148,7 +148,8 @@ COLUNAS_CHECKLIST = (
 COLUNAS_CHECKLIST_FOTO = "id,requisicao_id,momento,posicao,mime_type,tamanho_bytes,caminho"
 COLUNAS_LOCALIZACAO = "momento,latitude,longitude,precisao_m,registrado_em,registrado_por"
 _SET_LOCALIZACAO = frozenset(COLUNAS_LOCALIZACAO.split(","))
-COLUNAS_PERFIL_ADMIN = "id,nome,unidade,role,ativo,criado_em,atualizado_em"
+# `telefone` só sai nas rotas admin (lista/detalhe) e no webhook n8n; nunca em outra rota.
+COLUNAS_PERFIL_ADMIN = "id,nome,unidade,role,ativo,telefone,criado_em,atualizado_em"
 COLUNAS_CONVITE = (
     "id,email,role,unidade,criado_por,criado_em,expira_em,usado_em,usado_por,"
     "revogado_em,revogado_por"
@@ -235,6 +236,7 @@ MSG_RELATORIO_INVALIDO = (
     "Parâmetros do relatório inválidos: informe um período de até 366 dias e um agrupamento válido."
 )
 MSG_EMAIL = "Informe um e-mail institucional (@agu.gov.br) ou Gmail."
+MSG_TELEFONE = "Telefone inválido: use DDI 55 + DDD + número, ex.: 5561999998888."
 
 
 def _inteiro_do_rpc(dados: Any, chave: str, rpc: str) -> int:
@@ -418,6 +420,8 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return DependenciaRecurso("Abastecimento e manutenção exigem a Quilometragem ligada.")
     if codigo == "23514" and "ck_convites_email_dominio" in texto:
         return RequisicaoInvalida(MSG_EMAIL)
+    if codigo == "23514" and ("ck_perfis_telefone" in texto or "ck_convites_telefone" in texto):
+        return RequisicaoInvalida(MSG_TELEFONE, campo="telefone")
     if codigo in CODIGOS_LOCK:
         return SistemaOcupado(MSG_OCUPADO_ADMIN if admin else MSG_OCUPADO)
     if codigo == "23502":  # not_null_violation: resposta fixa; a mensagem pode citar coluna/valor
@@ -678,6 +682,19 @@ class SupabaseRepositorio:
             lambda: self._c.table("perfis").select("id,nome").in_("id", sorted(ids)).execute()
         )
         return {r["id"]: r["nome"] for r in res.data}
+
+    def contatos_perfis(self, ids: set[str]) -> dict[str, dict[str, Any]]:
+        if not ids:
+            return {}
+        res = _exec(
+            lambda: self._c.table("perfis")
+            .select("id,nome,telefone")
+            .in_("id", sorted(ids))
+            .execute()
+        )
+        return {
+            str(r["id"]): {"nome": r.get("nome"), "telefone": r.get("telefone")} for r in res.data
+        }
 
     def descricoes_veiculos(self, ids: set[str]) -> dict[str, str]:
         if not ids:

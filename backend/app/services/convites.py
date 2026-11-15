@@ -190,6 +190,7 @@ class ServicoConvites:
         dias: int,
         nome: str | None,
         substitui: dict[str, Any] | None = None,
+        telefone: str | None = None,
     ) -> dict[str, Any]:
         """Cria o convite novo e entrega o link.
 
@@ -210,6 +211,8 @@ class ServicoConvites:
             "criado_por": admin.id,
             "expira_em": (datetime.now(UTC) + timedelta(days=dias)).isoformat(),
         }
+        if telefone is not None:  # `convites.telefone`: a RPC de aceite o copia para o perfil
+            dados["telefone"] = telefone
         if substitui is not None:
             try:
                 convite = self._repo.reenviar_convite(
@@ -249,6 +252,7 @@ class ServicoConvites:
             unidade=d["unidade"],
             dias=d["validade_dias"],
             nome=d["nome"],
+            telefone=d["telefone"],
         )
         return self._apresentar(convite)
 

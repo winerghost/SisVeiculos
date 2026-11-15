@@ -97,6 +97,11 @@ class Repositorio(Protocol):
         """Só `perfis.nome` por id (nunca e-mail nem outros dados pessoais)."""
         ...
 
+    def contatos_perfis(self, ids: set[str]) -> dict[str, dict[str, Any]]:
+        """`{id: {"nome", "telefone"}}` só para o webhook n8n (exceção LGPD aprovada).
+        Nunca e-mail nem outros dados; nunca devolvido por rota da API."""
+        ...
+
     def descricoes_veiculos(self, ids: set[str]) -> dict[str, str]:
         """`veiculos.descricao` por id (inclui veículos inativos, para o histórico)."""
         ...

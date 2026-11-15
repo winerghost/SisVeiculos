@@ -250,6 +250,7 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
               ? [
                   { chave: 'km_saida', rotulo: 'Km de saída' },
                   { chave: 'km_chegada', rotulo: 'Km de chegada' },
+                  { chave: 'km_percorrido', rotulo: 'Km percorrido' },
                   { chave: 'lancado_por', rotulo: 'KM lançado por' },
                 ]
               : []),
@@ -261,6 +262,7 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
               situacao: 'Concluída',
               km_saida: '1200',
               km_chegada: '1245',
+              km_percorrido: '45',
               lancado_por: 'Paulo Reis (vigilante)',
             },
             {
@@ -269,6 +271,7 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
               situacao: 'Em uso',
               km_saida: '1245',
               km_chegada: '',
+              km_percorrido: '',
               lancado_por: 'Paulo Reis (vigilante)',
             },
           ],

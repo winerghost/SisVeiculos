@@ -14,8 +14,9 @@ Dados de servidores e deslocamentos oficiais: tratar como sensíveis (LGPD). Idi
 - Backend: Python 3.12 + Flask (factory + blueprints sob `/api`; regra de negócio em `services/`, nunca nas rotas).
 - Banco/Auth: Supabase hospedado (Postgres + Auth). O front usa o SDK só para login; os dados passam pelo Flask.
 - Automação: n8n externo via webhook (só notifica e agrega; nunca decide autorização). Webhook autenticado por token, chamado de forma assíncrona pelo backend. Infra: Docker com imagens Alpine. CI: GitHub Actions.
-- Webhook n8n: saída e chegada enviam o conjunto completo de dados (requisição inteira, veículo, nomes, km, localização e checklist sem fotos), por aprovação expressa do dono do projeto; os demais eventos seguem mínimos.
-- Todo campo novo (coluna/recurso) em requisição, checklist, km, localização etc. DEVE ser repassado ao webhook em saída/chegada; incluir no payload e no teste de regressão do webhook na mesma mudança.
+- Webhook n8n: saída e chegada enviam TODOS os dados (linha inteira da requisição e do veículo via `select *`, nomes, km, localização e checklist sem fotos), por decisão expressa do dono do projeto: os filtros são feitos no n8n. Os demais eventos seguem mínimos. Ficam fora só segredos e acessos (denylist: token, senha, URL/caminho de Storage, e-mail, CPF, telefone) e os campos de recurso desligado.
+- REGRA PERMANENTE: toda informação nova que surgir no desenvolvimento (coluna, tabela, recurso ou dado ligado à requisição, ao veículo, ao checklist, ao km, à localização, ao motorista etc.) DEVE chegar ao webhook em saída e chegada. Coluna nova em `requisicoes` ou `veiculos` já passa sozinha; tabela ou recurso novo exige incluir no `_detalhes_webhook`. Atualizar o teste de regressão do webhook na mesma mudança.
+- Recebimento no n8n (workflow SisVeiculo): Webhook com Raw Body e nó Code "Verificar assinatura" (Bearer, HMAC sobre `<X-Timestamp>.<corpo bruto>`, janela de 300 s, dedup por `X-Evento-Id`). Mudou o formato da assinatura ou dos cabeçalhos: atualizar esse nó junto.
 - Trade-offs: Front→Flask→Supabase centraliza regras e secrets ao custo de um serviço a mais. Conflito de horário no banco (exclusion constraint) é seguro contra concorrência, mas exige `btree_gist`. Export estático é leve e compatível com Capacitor, mas `NEXT_PUBLIC_*` fica embutido no build.
 
 ## Contas e perfis (role vem de `perfis` no banco, nunca do cliente)
@@ -60,7 +61,7 @@ Só abre requisição se o veículo estiver livre. Decisão: uma requisição ab
 - Nunca commitar segredos. `service_role` só no backend; no front, apenas URL e `anon key`. gitleaks no CI.
 - Validar JWT (assinatura, exp, aud, iss) em toda rota protegida; checar role no servidor; filtrar por dono (anti-IDOR).
 - CORS restrito, rate limit em login e criação, CSP no nginx do frontend e HSTS no Cloudflare, IP real do cliente via `CF-Connecting-IP`, payload limitado, SQL parametrizado, saída sanitizada.
-- LGPD: coletar o mínimo, sem dados pessoais em logs, n8n ou IA sem aprovação (exceção aprovada: saída/chegada no n8n, ver Stack). Confirmar a política de segurança da AGU antes de produção.
+- LGPD: coletar o mínimo, sem dados pessoais em logs, n8n ou IA sem aprovação (exceção aprovada: saída/chegada no n8n com todos os dados, ver Stack). Confirmar a política de segurança da AGU antes de produção.
 - `pip-audit`, `npm audit`, Trivy; containers não-root, read-only e com versões fixadas. Alpine por padrão; usar `slim` só se uma dependência falhar em musl, informando o motivo.
 
 ## PWA e visual

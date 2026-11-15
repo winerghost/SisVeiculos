@@ -709,6 +709,11 @@ export function CartaoRequisicao({
         {req.km_chegada !== null && req.km_chegada !== undefined ? (
           <p className="mt-1 text-sm text-texto-2">Km de chegada: {numero(req.km_chegada)}</p>
         ) : null}
+        {req.km_percorrido !== null && req.km_percorrido !== undefined ? (
+          <p className="mt-1 text-sm text-texto-2">
+            Quilometragem percorrida: {numero(req.km_percorrido)} km
+          </p>
+        ) : null}
         {req.motorista ? (
           <p className="mt-1 text-sm text-texto-2">Motorista: {req.motorista.nome}</p>
         ) : null}

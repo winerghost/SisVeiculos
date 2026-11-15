@@ -691,7 +691,7 @@ def test_toda_chave_da_requisicao_vai_em_detalhes_menos_denylist(client_n, auth,
     from app.services.requisicoes import DENYLIST_WEBHOOK_REQ
 
     # Sem recursos opcionais ligados, km e motorista saem da linha por regra de flag (ver abaixo).
-    por_flag = {"km_saida", "km_chegada", "motorista_id", "motorista_alterado_por"}
+    por_flag = {"km_saida", "km_chegada", "km_percorrido", "motorista_id", "motorista_alterado_por"}
 
     _fluxo_ate_chegada(client_n, auth, cen)
     vistos = 0

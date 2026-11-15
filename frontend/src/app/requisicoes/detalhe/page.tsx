@@ -68,6 +68,11 @@ function Detalhe({ id }: { id: string }) {
         {r.km_chegada !== null && r.km_chegada !== undefined ? (
           <p className="mt-1 text-texto-2">Km de chegada: {numero(r.km_chegada)}</p>
         ) : null}
+        {r.km_percorrido !== null && r.km_percorrido !== undefined ? (
+          <p className="mt-1 text-texto-2">
+            Quilometragem percorrida: {numero(r.km_percorrido)} km
+          </p>
+        ) : null}
         {r.observacao ? <p className="mt-2 break-words">Obs.: {r.observacao}</p> : null}
       </section>
 

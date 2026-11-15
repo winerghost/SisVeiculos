@@ -138,12 +138,14 @@ class RepoMemoria(
                 "cancelada_em": None,
                 "km_saida": None,
                 "km_chegada": None,
+                "km_percorrido": None,
                 "motorista_id": None,
                 "motorista_alterado_por": None,  # coluna de transporte: o trigger sempre zera
                 "criado_em": agora,
                 "atualizado_em": agora,
                 **dados,
             }
+            req["km_percorrido"] = self._km_percorrido(req)  # trigger: ignora valor do cliente
             self.requisicoes[rid] = req
             self.auditoria.append((rid, None, "solicitada"))
             return dict(req)
@@ -281,6 +283,7 @@ class RepoMemoria(
         if r is None or r["status"] != status_atual:
             return None
         campos = dict(campos)
+        campos.pop("km_percorrido", None)  # só o trigger grava (nunca valor do cliente)
         ator_motorista = campos.pop("motorista_alterado_por", None)  # coluna de transporte
         self._trigger_autodecisao(r, campos)
         self._triggers_km(r, campos)
@@ -301,6 +304,7 @@ class RepoMemoria(
                 requisicao_id, r.get("motorista_id"), campos.get("cancelada_por")
             )
         r.update(campos)
+        r["km_percorrido"] = self._km_percorrido(r)
         r[CARIMBOS[campos["status"]]] = datetime.now(UTC).isoformat()
         return filtrar_colunas(r)  # como o RETURNING com COLUNAS_REQ real
 
@@ -496,6 +500,12 @@ class RepoMemoria(
         if ator.role in {"autorizador", "admin"}:
             return not self.config.autorizador_km
         return True
+
+    @staticmethod
+    def _km_percorrido(r: Requisicao) -> int | None:
+        """Emula o trigger BEFORE INSERT OR UPDATE: km_chegada - km_saida; nulo se faltar um."""
+        saida, chegada = r.get("km_saida"), r.get("km_chegada")
+        return None if saida is None or chegada is None else chegada - saida
 
     def _triggers_km(self, r: Requisicao, campos: dict[str, Any]) -> None:
         """Emula as constraints e o trigger da migration 18 (erros traduzidos de verdade)."""

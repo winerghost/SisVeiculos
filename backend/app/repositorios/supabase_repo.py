@@ -56,8 +56,8 @@ MSG_ARQUIVAR_ABERTA = (
 COLUNAS_REQ = (
     "id,usuario_id,nome_solicitante,unidade,hora_saida,trajeto,observacao,veiculo_id,status,"
     "autorizado_por,autorizado_em,saida_real_em,chegada_real_em,saida_registrada_por,"
-    "chegada_registrada_por,cancelada_por,cancelada_em,km_saida,km_chegada,motorista_id,"
-    "motorista_alterado_por,criado_em,atualizado_em"
+    "chegada_registrada_por,cancelada_por,cancelada_em,km_saida,km_chegada,km_percorrido,"
+    "motorista_id,motorista_alterado_por,criado_em,atualizado_em"
 )
 
 COLUNAS_REQ_SET = frozenset(COLUNAS_REQ.split(","))

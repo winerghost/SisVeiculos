@@ -142,6 +142,8 @@ test('km ligado: saída pede só km_saida e envia no corpo; valor gravado aparec
   await page.getByText('Sede -> Fórum').click();
   await expect(page.getByText('Km de saída: 12.345')).toBeVisible();
   await expect(page.getByText('Km de chegada: 12.400')).toBeVisible();
+  // Valor vem da API (o mock imita o cálculo do banco); o cliente só exibe.
+  await expect(page.getByText('Quilometragem percorrida: 55 km')).toBeVisible();
 });
 
 test('km desligado: sem campos e POST sem corpo', async ({ page }) => {

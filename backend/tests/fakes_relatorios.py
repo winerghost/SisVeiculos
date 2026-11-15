@@ -74,6 +74,9 @@ class RelatoriosMemoria:
             "hora_saida_prevista",
             "duracao_uso_s",
         ]
+        km = bool(self.config.quilometragem)  # o banco só devolve km com o recurso ligado
+        if km:
+            cols += ["km_saida", "km_chegada", "km_percorrido"]
         if p["incluir_nomes"]:
             cols.append("solicitante")
         if p["incluir_trajeto"]:
@@ -92,6 +95,8 @@ class RelatoriosMemoria:
                 "hora_saida_prevista": r["hora_saida"],
                 "duracao_uso_s": 3725,
             }
+            if km:
+                linha.update({c: r.get(c) for c in ("km_saida", "km_chegada", "km_percorrido")})
             if p["incluir_nomes"]:
                 linha["solicitante"] = r["nome_solicitante"]
             if p["incluir_trajeto"]:

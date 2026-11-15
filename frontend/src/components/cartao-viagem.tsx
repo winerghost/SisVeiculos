@@ -40,6 +40,12 @@ export function DadosViagem({ viagem }: { viagem: Requisicao }) {
           <dd>{numero(viagem.km_chegada)}</dd>
         </>
       ) : null}
+      {viagem.km_percorrido !== null && viagem.km_percorrido !== undefined ? (
+        <>
+          <dt className="text-texto-2">Quilometragem percorrida</dt>
+          <dd>{numero(viagem.km_percorrido)} km</dd>
+        </>
+      ) : null}
     </dl>
   );
 }

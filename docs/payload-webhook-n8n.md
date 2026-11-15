@@ -24,12 +24,12 @@ Log de falha ao montar `detalhes`: só `evento` e o tipo da exceção, sem trace
 | Chave | Presença | Conteúdo |
 |---|---|---|
 | `momento` | sempre | `saida` ou `chegada` |
-| `requisicao` | sempre | **todas** as colunas da linha, menos: (a) chaves cujo **nome contenha** (sem diferenciar maiúsculas, em qualquer nível de dict/lista) `email`, `e_mail`, `token`, `senha`, `password`, `secret`, `key`, `caminho`, `path`, `url`, `cpf`, `telefone`, `celular` (`DENYLIST_WEBHOOK_REQ`); (b) `km_saida` e `km_chegada` com Quilometragem desligada; (c) `motorista_id` com Motorista desligado, mesmo com valor gravado. Coluna nova e inofensiva entra sozinha |
-| `veiculo` | sempre | `{id, descricao}` (placa/modelo) |
+| `requisicao` | sempre | **todas** as colunas da linha, menos: (a) chaves cujo **nome contenha** (sem diferenciar maiúsculas, em qualquer nível de dict/lista) `email`, `e_mail`, `token`, `senha`, `password`, `secret`, `key`, `caminho`, `path`, `url`, `cpf`, `telefone`, `celular` (`DENYLIST_WEBHOOK_REQ`); (b) `km_saida`, `km_chegada` e `km_percorrido` com Quilometragem desligada; (c) `motorista_id` e `motorista_alterado_por` com Motorista desligado, mesmo com valor gravado. A linha é lida com `select *`: coluna nova entra sozinha |
+| `veiculo` | sempre | linha **inteira** do veículo (`select *`: id, descricao, placa, modelo, ativo e colunas futuras), com a mesma denylist; `codigo_publico` só com Leitor de QR ligado |
 | `solicitante`, `autorizado_por`, `saida_registrada_por`, `chegada_registrada_por` | sempre | `{id, nome}` (`null` se ainda não ocorreu) |
 | `saida_real_em`, `chegada_real_em` | sempre | timestamps (`chegada_real_em` nulo na saída) |
 | `motorista` | recurso Motorista ligado | `{id, nome}` |
-| `km_saida`, `km_chegada` | recurso Quilometragem ligado | inteiros ou `null` |
+| `km_saida`, `km_chegada`, `km_percorrido` | recurso Quilometragem ligado | inteiros ou `null`; `km_percorrido` = `km_chegada - km_saida`, calculado pelo banco (trigger), preenchido na chegada |
 | `localizacao` | recurso Localização do motorista ligado e registrada no momento | linha de `localizacoes_viagem` do momento (coordenadas, precisão, quando, quem), com a mesma denylist por substring |
 | `checklist` | recurso Checklist ligado e registrado no momento | `{momento, combustivel, avarias, descricao_avarias, registrado_por {id,nome}, registrado_em, quantidade_fotos}` (sem caminhos nem URLs de fotos) |
 

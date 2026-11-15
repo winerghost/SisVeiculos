@@ -127,6 +127,8 @@ export interface Requisicao {
   /** Odômetro gravado; null se nunca gravado (permanece visível com o recurso desligado). */
   km_saida: number | null;
   km_chegada: number | null;
+  /** km_chegada - km_saida calculado no banco; null se nunca calculado (segue visível com o recurso desligado, como km_saida/km_chegada). */
+  km_percorrido?: number | null;
   /** Campos extras que a API manda pedir por ação executável ({} com o recurso desligado). */
   campos_acao?: Partial<Record<Acao, CamposDaAcao>>;
 }

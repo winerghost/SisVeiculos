@@ -531,9 +531,10 @@ class ServicoRequisicoes:
             {
                 **self._sem_equipe(r, staff, perfil),
                 # Sempre presentes (null se nunca gravados): desligar o recurso não esconde
-                # o que já foi gravado.
+                # o que já foi gravado. `km_percorrido` é calculado só no banco (trigger).
                 "km_saida": r.get("km_saida"),
                 "km_chegada": r.get("km_chegada"),
+                "km_percorrido": r.get("km_percorrido"),
                 **self._acoes(perfil, r, config, arquivadas),
                 # Preferência pessoal de quem consulta (false para quem não pode arquivar).
                 "arquivada": r["id"] in arquivadas,
@@ -850,7 +851,7 @@ class ServicoRequisicoes:
         # Recurso desligado: o valor gravado no banco também não sai dentro de `requisicao`.
         omitir: set[str] = set()
         if not config.quilometragem:
-            omitir |= {"km_saida", "km_chegada"}
+            omitir |= {"km_saida", "km_chegada", "km_percorrido"}
         if not config.motorista:
             omitir |= {"motorista_id", "motorista_alterado_por"}
         if not config.leitor_qr_veiculos:
@@ -868,6 +869,7 @@ class ServicoRequisicoes:
         if config.quilometragem:
             detalhes["km_saida"] = req.get("km_saida")
             detalhes["km_chegada"] = req.get("km_chegada")
+            detalhes["km_percorrido"] = linha.get("km_percorrido", req.get("km_percorrido"))
         if config.motorista_localizacao:
             loc = next(
                 (

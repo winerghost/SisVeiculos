@@ -26,6 +26,8 @@ interface Req {
   atualizado_em: string;
   km_saida: number | null;
   km_chegada: number | null;
+  /** Calculado pelo banco (km_chegada - km_saida); o mock imita o servidor. */
+  km_percorrido?: number | null;
   /** Perfil Motorista: designado na autorização. */
   motorista?: { id: string; nome: string } | null;
   /** Situação do horário que a API calcula (o mock só repete o que a semente informa). */
@@ -1069,6 +1071,8 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
       }
       if (typeof kmBody.km_saida === 'number') r.km_saida = kmBody.km_saida;
       if (typeof kmBody.km_chegada === 'number') r.km_chegada = kmBody.km_chegada;
+      r.km_percorrido =
+        r.km_saida !== null && r.km_chegada !== null ? r.km_chegada - r.km_saida : null;
     }
     const agora = new Date().toISOString();
     r.status = alvo[1];

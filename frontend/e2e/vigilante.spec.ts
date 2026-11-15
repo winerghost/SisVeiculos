@@ -207,6 +207,7 @@ test('relatórios: filtro "lançado por vigilante" e quem lançou o KM vêm do c
     'Situação',
     'Km de saída',
     'Km de chegada',
+    'Km percorrido',
     'KM lançado por',
   ]);
   await expect(tabela.getByText('Paulo Reis (vigilante)').first()).toBeVisible();

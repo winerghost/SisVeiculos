@@ -1011,6 +1011,8 @@ def test_exportar_cobre_todas_as_colunas_e_audita(
                 if tabela != "configuracoes"
                 else excecoes
             )
+            if tabela == "requisicoes":  # derivada: recalculada pelo gatilho na importacao
+                esperado -= {"km_percorrido"}
             assert set(linha) == esperado, (tabela, set(linha) ^ esperado)
 
     with h.conectar() as c:

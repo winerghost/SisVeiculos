@@ -24,6 +24,8 @@ services:
         condition: service_healthy
     environment:
       TZ: America/Sao_Paulo
+      # Sem isso o Gin sobe em modo debug (lista todas as rotas no log a cada início).
+      GIN_MODE: release
       SERVER_PORT: "8080"
       CLIENT_NAME: ${EVOLUTION_CLIENT_NAME:-sisveiculos}
       GLOBAL_API_KEY: ${EVOLUTION_GLOBAL_API_KEY:?defina EVOLUTION_GLOBAL_API_KEY no .env}

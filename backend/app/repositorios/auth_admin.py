@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -23,6 +23,8 @@ MAX_PAGINAS = 25  # teto de segurança (5.000 contas) das varreduras por e-mail 
 MAX_LOTE_EMAILS = 100  # ids por chamada de emails_por_id (uma página da listagem)
 PARALELISMO = 8
 TIMEOUT_HTTP = 10.0
+# Prazo TOTAL de `emails_para_webhook` (roda no caminho da resposta da API, antes do return).
+TIMEOUT_EMAILS_WEBHOOK = 2.0
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,13 @@ class AuthAdmin(Protocol):
 
     def emails_por_id(self, ids: set[str]) -> dict[str, str]:
         """E-mail só dos ids pedidos (get_user_by_id; no máx. MAX_LOTE_EMAILS por chamada)."""
+        ...
+
+    def emails_para_webhook(
+        self, ids: set[str], *, timeout: float = TIMEOUT_EMAILS_WEBHOOK
+    ) -> dict[str, str]:
+        """Como `emails_por_id`, para o webhook n8n: prazo total `timeout` e SEM log próprio
+        (o chamador registra um WARNING sem PII). Falha ou tempo esgotado: levanta."""
         ...
 
     def id_por_email(self, email: str) -> str | None:
@@ -219,6 +228,29 @@ class SupabaseAuthAdmin:
                 resultados = list(pool.map(self._email_de, pedidos))
         except Exception as e:
             raise _falha(e) from None
+        return {i: email for i, email in resultados if email}
+
+    def emails_para_webhook(
+        self, ids: set[str], *, timeout: float = TIMEOUT_EMAILS_WEBHOOK
+    ) -> dict[str, str]:
+        """Espera no máximo `timeout` segundos pelo lote inteiro; o pool é encerrado sem esperar
+        (chamadas ainda em voo terminam sozinhas no timeout da biblioteca, fora da resposta).
+        Não passa por `_falha` (evita ERROR duplicado); a exceção original sobe ao chamador,
+        que só registra o tipo dela."""
+        if not ids:
+            return {}
+        pedidos = sorted(ids)[:MAX_LOTE_EMAILS]
+        pool = ThreadPoolExecutor(
+            max_workers=min(PARALELISMO, len(pedidos)), thread_name_prefix="auth-email"
+        )
+        try:
+            futuros = [pool.submit(self._email_de, i) for i in pedidos]
+            _, pendentes = wait(futuros, timeout=timeout)
+            if pendentes:
+                raise TimeoutError("emails_para_webhook")
+            resultados = [f.result() for f in futuros]
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return {i: email for i, email in resultados if email}
 
     def _ban(self, usuario_id: str, duracao: str) -> None:

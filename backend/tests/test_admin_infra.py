@@ -4,6 +4,7 @@ sobre PostgREST (mock), adaptador do Auth Admin, histórico com `por` e separaç
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -272,6 +273,53 @@ def test_auth_emails_por_id_limita_lote_e_ignora_404(caplog):  # type: ignore[no
     r = a.emails_por_id(ids)
     assert adm.get_user_by_id.call_count == 100 and len(r) == 99 and "id000" not in r
     assert "emails_por_id_truncado" in caplog.text and "@gmail.com" not in caplog.text
+
+
+def test_auth_emails_para_webhook_caminho_feliz_e_404():  # type: ignore[no-untyped-def]
+    adm = MagicMock()
+    nf = Exception("nf")
+    nf.status = 404  # type: ignore[attr-defined]
+
+    def obter(i):  # type: ignore[no-untyped-def]
+        if i == "sem":
+            raise nf
+        return SimpleNamespace(user=SimpleNamespace(id=i, email=f"{i}@gmail.com"))
+
+    adm.get_user_by_id.side_effect = obter
+    assert auth_com(adm).emails_para_webhook({"a", "sem"}) == {"a": "a@gmail.com"}
+    assert auth_com(adm).emails_para_webhook(set()) == {}
+
+
+def test_auth_emails_para_webhook_respeita_prazo_total_sem_log(caplog):  # type: ignore[no-untyped-def]
+    import threading
+    import time
+
+    caplog.set_level(logging.DEBUG)
+    libera = threading.Event()
+    adm = MagicMock()
+
+    def lento(i):  # type: ignore[no-untyped-def]
+        libera.wait(5)
+        return SimpleNamespace(user=SimpleNamespace(id=i, email=f"{i}@gmail.com"))
+
+    adm.get_user_by_id.side_effect = lento
+    inicio = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            auth_com(adm).emails_para_webhook({"a", "b"}, timeout=0.2)
+        assert time.monotonic() - inicio < 2  # não espera as chamadas em voo
+    finally:
+        libera.set()
+    assert "erro_auth_admin" not in caplog.text and "@gmail.com" not in caplog.text
+
+
+def test_auth_emails_para_webhook_falha_sobe_sem_log_error(caplog):  # type: ignore[no-untyped-def]
+    caplog.set_level(logging.DEBUG)
+    adm = MagicMock()
+    adm.get_user_by_id.side_effect = RuntimeError("fora vazou@gmail.com")
+    with pytest.raises(RuntimeError):
+        auth_com(adm).emails_para_webhook({"a"})
+    assert caplog.records == []
 
 
 def test_auth_indice_de_emails_trunca_e_nao_loga_pii(caplog):  # type: ignore[no-untyped-def]

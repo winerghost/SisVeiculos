@@ -26,6 +26,7 @@ def _servico() -> ServicoDashboards:
         d.repo,
         notificador=d.notificador,
         fotos=FotosExibicao(d.repo, d.armazenamento_avatares),
+        auth=d.auth_admin,
     )
     return ServicoDashboards(d.repo, requisicoes)
 

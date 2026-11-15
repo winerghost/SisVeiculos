@@ -31,6 +31,7 @@ def _req() -> ServicoRequisicoes:
         deps().repo,
         notificador=deps().notificador,
         fotos=_exibicao(),
+        auth=deps().auth_admin,
     )
 
 

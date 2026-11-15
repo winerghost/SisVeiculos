@@ -5,7 +5,8 @@ enviam dados completos (bloco `detalhes`, `versao` 2). Os demais eventos seguem 
 O envio é best-effort: se montar `detalhes` falhar, o evento sai sem ele (`versao` 1).
 
 A exceção aprovada inclui ids de pessoas, texto livre (`descricao_avarias`, `observacao`, `trajeto`) e coordenadas.
-Nunca enviado: tokens, URLs assinadas, caminhos de Storage, e-mail, CPF, segredos.
+Nunca enviado: tokens, URLs assinadas, caminhos de Storage, CPF, segredos; e-mail só pelo bloco
+`contatos` e pessoas de `detalhes` (exceção abaixo).
 
 Exceção aprovada do telefone (dono do projeto, 2026-11-15): o telefone (WhatsApp, `perfis.telefone`,
 só dígitos `55`+DDD+número, ex.: `5561999998888`, o campo `number` do Evolution Go) vai em **todos** os
@@ -17,6 +18,12 @@ quem autorizou. A exceção cobre **só** `perfis.telefone`, montado à parte (`
 Log de falha ao montar `detalhes` ou `contatos`: só `evento` e o tipo da exceção, sem traceback e
 nunca com telefone (`n8n: detalhes indisponiveis evento=...` / `n8n: contatos indisponiveis evento=...`).
 Falhou a leitura, a chave sai `null` e a ação segue.
+
+Exceção aprovada do e-mail (dono do projeto, 2026-11-15): o e-mail de login (`auth.users`, lido pelo
+backend via Admin API) segue **exatamente** a regra do telefone: vai em todos os eventos `requisicao.*`
+no bloco `contatos` e nas pessoas de `detalhes` em saída/chegada, montado à parte. Conta inativa também
+envia. `email`/`e_mail` **seguem na denylist** de qualquer outra coluna. Nunca vai a log nem a rota que
+não seja admin.
 
 ## Chaves comuns (todos os eventos)
 
@@ -34,25 +41,35 @@ Falhou a leitura, a chave sai `null` e a ação segue.
 
 | Chave | Conteúdo |
 |---|---|
-| `solicitante` | `{id, nome, telefone}` do dono da requisição |
-| `autorizador` | `{id, nome, telefone}` de `autorizado_por` (quem autorizou ou negou); `null` antes da decisão |
-| `motorista` | `{id, nome, telefone}` ou `null` se não designado; **chave ausente** com o recurso Motorista desligado |
+| `solicitante` | `{id, nome, telefone, email}` do dono da requisição |
+| `autorizador` | `{id, nome, telefone, email}` de `autorizado_por` (quem autorizou ou negou); `null` antes da decisão |
+| `motorista` | `{id, nome, telefone, email}` ou `null` se não designado; **chave ausente** com o recurso Motorista desligado |
 
 `telefone` é `null` quando a pessoa não tem número cadastrado.
+
+`email` (login do `auth.users`, lido pela Admin API) é `null` em dois casos, que o n8n **não** deve tratar como
+"pessoa sem e-mail":
+- a conta não existe no Auth (404): `null` só para essa pessoa;
+- a Admin API falhou ou passou do prazo (2 s no total, best-effort): `null` para **todas** as pessoas do evento
+  (em `contatos` e em `detalhes`). A ação segue normalmente e o backend registra só
+  `n8n: emails indisponiveis evento=... (<tipo da exceção>)`, sem PII.
+
+Com o n8n desligado (sem `N8N_WEBHOOK_URL`), o backend não monta `contatos` nem `detalhes` e não lê
+telefone nem e-mail.
 
 ## `detalhes` (só saída e chegada)
 
 | Chave | Presença | Conteúdo |
 |---|---|---|
 | `momento` | sempre | `saida` ou `chegada` |
-| `requisicao` | sempre | **todas** as colunas da linha, menos: (a) chaves cujo **nome contenha** (sem diferenciar maiúsculas, em qualquer nível de dict/lista) `email`, `e_mail`, `token`, `senha`, `password`, `secret`, `key`, `caminho`, `path`, `url`, `cpf`, `telefone`, `celular` (`DENYLIST_WEBHOOK_REQ`; o telefone das pessoas sai só em `contatos` e nos blocos de pessoa); (b) `km_saida`, `km_chegada` e `km_percorrido` com Quilometragem desligada; (c) `motorista_id` e `motorista_alterado_por` com Motorista desligado, mesmo com valor gravado. A linha é lida com `select *`: coluna nova entra sozinha |
+| `requisicao` | sempre | **todas** as colunas da linha, menos: (a) chaves cujo **nome contenha** (sem diferenciar maiúsculas, em qualquer nível de dict/lista) `email`, `e_mail`, `token`, `senha`, `password`, `secret`, `key`, `caminho`, `path`, `url`, `cpf`, `telefone`, `celular` (`DENYLIST_WEBHOOK_REQ`; telefone e e-mail das pessoas saem só em `contatos` e nos blocos de pessoa); (b) `km_saida`, `km_chegada` e `km_percorrido` com Quilometragem desligada; (c) `motorista_id` e `motorista_alterado_por` com Motorista desligado, mesmo com valor gravado. A linha é lida com `select *`: coluna nova entra sozinha |
 | `veiculo` | sempre | linha **inteira** do veículo (`select *`: id, descricao, placa, modelo, ativo e colunas futuras), com a mesma denylist; `codigo_publico` só com Leitor de QR ligado |
-| `solicitante`, `autorizado_por`, `saida_registrada_por`, `chegada_registrada_por` | sempre | `{id, nome, telefone}` (campos `null` se ainda não ocorreu) |
+| `solicitante`, `autorizado_por`, `saida_registrada_por`, `chegada_registrada_por` | sempre | `{id, nome, telefone, email}` (campos `null` se ainda não ocorreu) |
 | `saida_real_em`, `chegada_real_em` | sempre | timestamps (`chegada_real_em` nulo na saída) |
-| `motorista` | recurso Motorista ligado | `{id, nome, telefone}` |
+| `motorista` | recurso Motorista ligado | `{id, nome, telefone, email}` |
 | `km_saida`, `km_chegada`, `km_percorrido` | recurso Quilometragem ligado | inteiros ou `null`; `km_percorrido` = `km_chegada - km_saida`, calculado pelo banco (trigger), preenchido na chegada |
 | `localizacao` | recurso Localização do motorista ligado e registrada no momento | linha de `localizacoes_viagem` do momento (coordenadas, precisão, quando, quem), com a mesma denylist por substring |
-| `checklist` | recurso Checklist ligado e registrado no momento | `{momento, combustivel, avarias, descricao_avarias, registrado_por {id,nome,telefone}, registrado_em, quantidade_fotos}` (sem caminhos nem URLs de fotos) |
+| `checklist` | recurso Checklist ligado e registrado no momento | `{momento, combustivel, avarias, descricao_avarias, registrado_por {id,nome,telefone,email}, registrado_em, quantidade_fotos}` (sem caminhos nem URLs de fotos) |
 
 Recurso desligado => chave ausente. Regra: campo novo (coluna ou recurso) deve ser repassado aqui e
 coberto pelo teste de regressão `test_toda_chave_da_requisicao_vai_em_detalhes_menos_denylist`.

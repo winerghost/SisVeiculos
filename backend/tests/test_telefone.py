@@ -255,8 +255,15 @@ def pessoas(repo: RepoMemoria):  # type: ignore[no-untyped-def]
     return C
 
 
-def _p(repo, perfil):  # type: ignore[no-untyped-def]
-    return {"id": perfil.id, "nome": perfil.nome, "telefone": repo.telefones.get(perfil.id)}
+def _p(repo, perfil, *, com_email: bool = True):  # type: ignore[no-untyped-def]
+    """Pessoa como o webhook monta: e-mail de login (auth.users) junto do telefone."""
+    email = repo.contas_auth[perfil.id]["email"] if com_email else None
+    return {
+        "id": perfil.id,
+        "nome": perfil.nome,
+        "telefone": repo.telefones.get(perfil.id),
+        "email": email,
+    }
 
 
 def test_contatos_em_todos_os_eventos_com_motorista(client_n, auth, grav, repo, pessoas):  # type: ignore[no-untyped-def]
@@ -374,6 +381,179 @@ def test_log_de_contatos_indisponiveis_traz_o_evento_sem_pii(  # type: ignore[no
     assert "n8n: contatos indisponiveis evento=requisicao.criada (RuntimeError)" in caplog.text
     assert "n8n: contatos indisponiveis evento=requisicao.autorizada (RuntimeError)" in caplog.text
     assert TEL not in caplog.text and "Fulano" not in caplog.text
+
+
+# ------------------------------------------------------------------ e-mail de login no webhook
+def _emails(repo, *perfis) -> set[str]:  # type: ignore[no-untyped-def]
+    return {repo.contas_auth[p.id]["email"] for p in perfis}
+
+
+def test_email_nas_pessoas_de_saida_e_chegada_inclusive_checklist_e_atores(  # type: ignore[no-untyped-def]
+    client_n, auth, grav, repo, pessoas
+):
+    repo.config = replace(repo.ler_configuracoes(), motorista=True)
+    c = pessoas
+    rid = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    acao(client_n, auth, c.aut, rid, "autorizar")
+    acao(client_n, auth, c.aut, rid, "saida")
+    acao(client_n, auth, c.aut, rid, "chegada")
+    d = dict(grav.detalhes)["requisicao.chegada"]
+    for papel in ("autorizado_por", "saida_registrada_por", "chegada_registrada_por"):
+        assert d[papel] == _p(repo, c.aut), papel
+    assert d["motorista"]["email"] == repo.contas_auth[c.mot.id]["email"]
+    s = dict(grav.detalhes)["requisicao.saida"]
+    vazia = {"id": None, "nome": None, "telefone": None, "email": None}
+    assert s["chegada_registrada_por"] == vazia
+
+
+def test_email_no_checklist_registrado_por(client_n, auth, grav, repo, pessoas):  # type: ignore[no-untyped-def]
+    from tests.test_checklist import BASE, post
+
+    repo.config = replace(repo.ler_configuracoes(), checklist=True)
+    c = pessoas
+    rid = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    acao(client_n, auth, c.aut, rid, "autorizar")
+    assert post(client_n, auth, c.aut, rid, "checklist/saida", BASE).status_code == 201
+    assert acao(client_n, auth, c.aut, rid, "saida").status_code == 200
+    ck = dict(grav.detalhes)["requisicao.saida"]["checklist"]
+    assert ck["registrado_por"] == _p(repo, c.aut)
+
+
+def test_conta_inativa_tambem_envia_email(client_n, auth, grav, repo, pessoas):  # type: ignore[no-untyped-def]
+    c = pessoas
+    rid = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    repo.perfis[c.sol.id] = replace(repo.perfis[c.sol.id], ativo=False)
+    acao(client_n, auth, c.aut, rid, "negar")
+    assert grav.contatos[-1]["solicitante"] == _p(repo, c.sol)
+
+
+def test_uma_so_chamada_a_admin_api_por_acao(client_n, auth, auth_admin, grav, repo, pessoas):  # type: ignore[no-untyped-def]
+    repo.config = replace(repo.ler_configuracoes(), motorista=True)
+    c = pessoas
+    rid = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    assert len(auth_admin.consultas_email) == 1
+    for nome in ("autorizar", "saida", "chegada"):
+        antes = len(auth_admin.consultas_email)
+        assert acao(client_n, auth, c.aut, rid, nome).status_code == 200
+        assert len(auth_admin.consultas_email) == antes + 1, nome
+    assert auth_admin.consultas_email[-1] == {c.sol.id, c.aut.id, c.mot.id}
+
+
+def test_falha_da_admin_api_email_none_acao_segue_e_log_sem_pii(  # type: ignore[no-untyped-def]
+    client_n, auth, auth_admin, grav, repo, pessoas, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    auth_admin.falhar_emails = True
+    c = pessoas
+    r = criar(client_n, auth, c.sol, c.veiculo)
+    assert r.status_code == 201
+    rid = r.get_json()["id"]
+    for nome in ("autorizar", "saida", "chegada"):
+        assert acao(client_n, auth, c.aut, rid, nome).status_code == 200, nome
+    for ct in grav.contatos:
+        assert ct is not None and ct["solicitante"] == _p(repo, c.sol, com_email=False)
+    for evento in ("requisicao.saida", "requisicao.chegada"):
+        d = dict(grav.detalhes)[evento]
+        assert d is not None and d["solicitante"] == _p(repo, c.sol, com_email=False)
+    assert "n8n: emails indisponiveis evento=requisicao.criada (ErroInterno)" in caplog.text
+    assert "n8n: emails indisponiveis evento=requisicao.saida (ErroInterno)" in caplog.text
+    assert "@" not in caplog.text
+
+
+def test_nenhum_email_no_log_no_caminho_feliz(client_n, auth, grav, repo, pessoas, caplog):  # type: ignore[no-untyped-def]
+    caplog.set_level(logging.DEBUG)
+    c = pessoas
+    rid = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    for nome in ("autorizar", "saida", "chegada"):
+        acao(client_n, auth, c.aut, rid, nome)
+    for email in _emails(repo, c.sol, c.aut):
+        assert email not in caplog.text
+
+
+def test_email_nao_sai_nas_respostas_da_api(client_n, auth, grav, repo, pessoas):  # type: ignore[no-untyped-def]
+    c = pessoas
+    r = criar(client_n, auth, c.sol, c.veiculo)
+    rid = r.get_json()["id"]
+    respostas = [r, *(acao(client_n, auth, c.aut, rid, n) for n in ("autorizar", "saida"))]
+    respostas.append(client_n.get(f"/api/requisicoes/{rid}", headers=auth(c.sol.id)))
+    for resp in respostas:
+        texto = resp.get_data(as_text=True)
+        for email in _emails(repo, c.sol, c.aut):
+            assert email not in texto
+
+
+def test_timeout_da_admin_api_email_none_e_acao_2xx(  # type: ignore[no-untyped-def]
+    client_n, auth, auth_admin, grav, repo, pessoas, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    auth_admin.erro_emails_webhook = TimeoutError("emails_para_webhook")
+    c = pessoas
+    r = criar(client_n, auth, c.sol, c.veiculo)
+    assert r.status_code == 201
+    rid = r.get_json()["id"]
+    for nome in ("autorizar", "saida"):
+        assert acao(client_n, auth, c.aut, rid, nome).status_code == 200, nome
+    assert all(ct["solicitante"] == _p(repo, c.sol, com_email=False) for ct in grav.contatos)
+    assert dict(grav.detalhes)["requisicao.saida"]["solicitante"]["email"] is None
+    assert "n8n: emails indisponiveis evento=requisicao.saida (TimeoutError)" in caplog.text
+    assert "erro_auth_admin" not in caplog.text and "@" not in caplog.text
+
+
+def test_n8n_desligado_nao_monta_nem_le_pessoas(  # type: ignore[no-untyped-def]
+    client, auth, auth_admin, repo, pessoas, monkeypatch
+):
+    """Fixture `client` sem notificador (NotificadorNulo): nada de Admin API nem `perfis`."""
+    repo.config = replace(repo.ler_configuracoes(), motorista=True)
+    leituras: list[set[str]] = []
+    original = repo.contatos_perfis
+
+    def contado(ids: set[str]) -> dict[str, Any]:
+        leituras.append(set(ids))
+        return original(ids)
+
+    monkeypatch.setattr(repo, "contatos_perfis", contado)
+    c = pessoas
+    r = criar(client, auth, c.sol, c.veiculo)
+    assert r.status_code == 201
+    rid = r.get_json()["id"]
+    for nome in ("autorizar", "saida", "chegada"):
+        assert acao(client, auth, c.aut, rid, nome).status_code == 200, nome
+    r2 = criar(client, auth, c.sol, c.veiculo).get_json()["id"]
+    assert acao(client, auth, c.sol, r2, "cancelar").status_code == 200
+    assert auth_admin.consultas_email == [] and leituras == []
+
+
+def test_detalhes_falha_apos_ler_pessoas_nao_rele(  # type: ignore[no-untyped-def]
+    client_n, auth, auth_admin, grav, repo, pessoas, monkeypatch
+):
+    """M2: `obter_veiculo_completo` quebra depois de `_pessoas_webhook`; `contatos` reaproveita."""
+    c = pessoas
+    rid = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    acao(client_n, auth, c.aut, rid, "autorizar")
+
+    def quebra(veiculo_id: str) -> dict[str, Any]:
+        raise RuntimeError("fora")
+
+    monkeypatch.setattr(repo, "obter_veiculo_completo", quebra)
+    leituras = []
+    original = repo.contatos_perfis
+    monkeypatch.setattr(repo, "contatos_perfis", lambda ids: leituras.append(ids) or original(ids))
+    antes = len(auth_admin.consultas_email)
+    assert acao(client_n, auth, c.aut, rid, "saida").status_code == 200
+    assert len(auth_admin.consultas_email) == antes + 1 and len(leituras) == 1
+    assert grav.detalhes[-1] == ("requisicao.saida", None)
+    assert grav.contatos[-1]["solicitante"] == _p(repo, c.sol)
+    assert grav.contatos[-1]["autorizador"] == _p(repo, c.aut)
+
+
+def test_sem_auth_admin_email_none() -> None:
+    from app.services.requisicoes import ServicoRequisicoes
+
+    repo = RepoMemoria()
+    sol = repo.novo_perfil("solicitante")
+    svc = ServicoRequisicoes(repo)
+    ct = svc._contatos_webhook({"usuario_id": sol.id}, "requisicao.criada")
+    assert ct is not None and ct["solicitante"]["email"] is None
 
 
 def test_payload_http_leva_contatos_e_e_assinado() -> None:

@@ -25,6 +25,7 @@ from app.errors import (
 )
 from app.modelos import Configuracoes, Perfil, Requisicao
 from app.notificacoes import Notificador, NotificadorNulo
+from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
 from app.services.fotos_exibicao import FotosExibicao
 from app.services.horario_saida import (
@@ -137,7 +138,9 @@ EVENTO_POR_ACAO = {
 # (segredo, acesso, e-mail, CPF, telefone) ficam de fora, em qualquer nível de aninhamento. Não é
 # allowlist. Telefone/celular SEGUEM na denylist: a exceção aprovada em 2026-11-15 (WhatsApp) cobre
 # só `perfis.telefone`, que sai à parte em `contatos` e nas pessoas de `detalhes` (`_contato`, fora
-# deste filtro). Coluna futura com telefone de terceiro não vaza sem revisão de LGPD.
+# deste filtro). O mesmo vale para o e-mail (aprovado em 2026-11-15): só o de login (auth.users),
+# montado em `_contato`; coluna `email` em requisição/veículo/localização segue barrada aqui.
+# Coluna futura com telefone ou e-mail de terceiro não vaza sem revisão de LGPD.
 DENYLIST_WEBHOOK_REQ = re.compile(
     r"email|e_mail|token|senha|password|secret|key|caminho|path|url|cpf|telefone|celular",
     re.IGNORECASE,
@@ -158,9 +161,20 @@ def filtrar_denylist_webhook(valor: Any) -> Any:
 
 
 def _contato(pid: str, dados: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """{id, nome, telefone} de uma pessoa para o webhook n8n (nunca e-mail nem CPF)."""
+    """{id, nome, telefone, email} de uma pessoa para o webhook n8n (nunca CPF).
+
+    `email` é o de login (auth.users), mesclado em `dados` por `_pessoas_webhook`; exceção
+    LGPD aprovada em 2026-11-15, igual ao telefone. Só vai ao payload do webhook."""
     d = dados.get(pid) or {}
-    return {"id": pid, "nome": d.get("nome"), "telefone": d.get("telefone")}
+    return {
+        "id": pid,
+        "nome": d.get("nome"),
+        "telefone": d.get("telefone"),
+        "email": d.get("email"),
+    }
+
+
+PESSOA_VAZIA: dict[str, Any] = {"id": None, "nome": None, "telefone": None, "email": None}
 
 
 ACOES_COM_DETALHES = frozenset({"registrar_saida", "registrar_chegada"})
@@ -340,8 +354,10 @@ class ServicoRequisicoes:
         notificador: Notificador | None = None,
         fotos: FotosExibicao | None = None,
         relogio: Callable[[], datetime] | None = None,
+        auth: AuthAdmin | None = None,
     ) -> None:
         self._repo = repo
+        self._auth = auth  # só para o e-mail de login no webhook n8n (best-effort)
         self._relogio: Callable[[], datetime] = relogio or (lambda: datetime.now(UTC))
         self._fotos = fotos
         self._notificador: Notificador = notificador or NotificadorNulo()
@@ -785,12 +801,13 @@ class ServicoRequisicoes:
             raise VeiculoOcupado(MSG_OCUPADO)
         dados["usuario_id"] = perfil.id  # sempre do JWT, nunca do body
         criada = self._repo.inserir_requisicao(dados)
-        # Só após o banco confirmar.
-        self._notificador.notificar(
-            "requisicao.criada",
-            criada,
-            contatos=self._contatos_webhook(criada, "requisicao.criada"),
-        )
+        # Só após o banco confirmar. n8n desligado: nada é montado (nem Admin API).
+        if self._notificador.ativo:
+            self._notificador.notificar(
+                "requisicao.criada",
+                criada,
+                contatos=self._contatos_webhook(criada, "requisicao.criada"),
+            )
         return self.apresentar(perfil, criada)
 
     def executar(
@@ -822,20 +839,25 @@ class ServicoRequisicoes:
     def _notificar_acao(self, acao: str, atualizada: Requisicao, config: Configuracoes) -> None:
         """Notifica o n8n; saída e chegada levam `detalhes` (aprovação LGPD), best-effort.
 
-        Reaproveita o `config` já lido na ação e, em saída/chegada, os perfis que
-        `_detalhes_webhook` buscou (uma só leitura de `perfis` no caminho da resposta)."""
+        Reaproveita o `config` já lido na ação e, em saída/chegada, as pessoas que
+        `_detalhes_webhook` buscou, mesmo que ele falhe depois de lê-las (uma só leitura de
+        `perfis` e uma só chamada à Admin API por ação). n8n desligado: nada é montado."""
+        if not self._notificador.ativo:
+            return
         evento = EVENTO_POR_ACAO[acao]
         detalhes: dict[str, Any] | None = None
         perfis: dict[str, dict[str, Any]] | None = None
         if acao in ACOES_COM_DETALHES:
+            lidas: dict[str, Any] = {}
             try:
-                detalhes, perfis = self._detalhes_webhook(atualizada, acao, config)
+                detalhes, perfis = self._detalhes_webhook(atualizada, acao, config, lidas)
             except Exception as exc:  # noqa: BLE001 - nunca quebra a resposta
                 # Só evento e tipo da exceção; sem exc_info (a mensagem pode ter PII).
                 log.warning(
                     "n8n: detalhes indisponiveis evento=%s (%s)", evento, type(exc).__name__
                 )
-                detalhes = perfis = None
+                detalhes = None
+                perfis = lidas.get("pessoas")  # já lidas antes da falha: não relê
         contatos = self._contatos_webhook(atualizada, evento, config, perfis)
         if detalhes is None:
             self._notificador.notificar(evento, atualizada, contatos=contatos)
@@ -849,12 +871,14 @@ class ServicoRequisicoes:
         config: Configuracoes | None = None,
         perfis: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
-        """Bloco `contatos` de TODO evento de requisição (exceção LGPD aprovada): id, nome e
-        telefone de solicitante, autorizador (`autorizado_por`) e motorista (só com o recurso
-        ligado; desligado, a chave fica ausente). Best-effort: falhou, sai None e a ação segue.
+        """Bloco `contatos` de TODO evento de requisição (exceção LGPD aprovada): id, nome,
+        telefone e e-mail de login de solicitante, autorizador (`autorizado_por`) e motorista
+        (só com o recurso ligado; desligado, a chave fica ausente). Best-effort: falhou, sai
+        None e a ação segue.
 
-        `config` e `perfis` (nome/telefone já lidos por `_detalhes_webhook`) são reaproveitados
-        quando vierem; só faltando é que se lê do banco. Log: só evento e tipo da exceção."""
+        `config` e `perfis` (nome/telefone/email já lidos por `_detalhes_webhook`) são
+        reaproveitados quando vierem; só faltando é que se lê do banco. Log: só evento e
+        tipo da exceção."""
         try:
             config = config or self._repo.ler_configuracoes()
             papeis: dict[str, str | None] = {
@@ -867,19 +891,46 @@ class ServicoRequisicoes:
             # `_detalhes_webhook` busca um superconjunto destes ids (mesmo `config`).
             dados = perfis
             if dados is None:
-                dados = self._repo.contatos_perfis(ids) if ids else {}
+                dados = self._pessoas_webhook(ids, evento)
             return {papel: (_contato(pid, dados) if pid else None) for papel, pid in papeis.items()}
         except Exception as exc:  # noqa: BLE001 - nunca quebra a ação
             log.warning("n8n: contatos indisponiveis evento=%s (%s)", evento, type(exc).__name__)
             return None
 
+    def _pessoas_webhook(self, ids: set[str], evento: str) -> dict[str, dict[str, Any]]:
+        """id -> {nome, telefone, email} para o webhook: `perfis` + e-mail de login (Admin API).
+
+        Uma só chamada a `emails_para_webhook` por ação (timeout curto, sem log interno). A
+        Admin API é best-effort: falhou, estourou o tempo ou sem AuthAdmin, `email` fica None
+        para todos e o resto segue. Log: só evento e tipo da
+        exceção, nunca o e-mail."""
+        if not ids:
+            return {}
+        perfis = self._repo.contatos_perfis(ids)
+        emails: dict[str, str] = {}
+        if self._auth is not None:
+            try:
+                emails = self._auth.emails_para_webhook(set(ids))
+            except Exception as exc:  # noqa: BLE001 - nunca quebra a ação
+                log.warning("n8n: emails indisponiveis evento=%s (%s)", evento, type(exc).__name__)
+                emails = {}
+        return {pid: {**(perfis.get(pid) or {}), "email": emails.get(pid)} for pid in ids}
+
     def _detalhes_webhook(
-        self, req: Requisicao, acao: str, config: Configuracoes
+        self,
+        req: Requisicao,
+        acao: str,
+        config: Configuracoes,
+        lidas: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         """Dados completos da viagem para o n8n (só saída e chegada). Recurso opcional desligado
-        => campo ausente. Nunca inclui e-mail, token, URL assinada nem caminho de Storage.
+        => campo ausente. Nunca inclui token, URL assinada nem caminho de Storage; e-mail só o
+        de login nas pessoas (via `_contato`), nunca coluna `email` de requisição/veículo.
 
-        Devolve também os perfis lidos (id -> nome/telefone), reaproveitados em `contatos`."""
+        Devolve também as pessoas lidas (id -> nome/telefone/email), reaproveitadas em
+        `contatos` (uma só leitura de `perfis` e uma só chamada à Admin API por ação). Se
+        `lidas` vier, as pessoas são guardadas nele logo após a leitura (chave `pessoas`), para
+        o chamador reaproveitá-las caso uma leitura posterior falhe."""
         momento = "saida" if acao == "registrar_saida" else "chegada"
         checklists = self._repo.obter_checklists(req["id"]) if config.checklist else []
         checklist = next((c for c in checklists if c.get("momento") == momento), None)
@@ -894,14 +945,16 @@ class ServicoRequisicoes:
         ids = {v for v in papeis.values() if v}
         if checklist and checklist.get("registrado_por"):
             ids.add(checklist["registrado_por"])
-        contatos = self._repo.contatos_perfis(ids) if ids else {}
+        contatos = self._pessoas_webhook(ids, EVENTO_POR_ACAO[acao])
+        if lidas is not None:
+            lidas["pessoas"] = contatos
         veiculo_id = req.get("veiculo_id")
         # Linhas INTEIRAS do banco (colunas futuras inclusas); a denylist é aplicada abaixo.
         linha = self._repo.obter_requisicao_completa(req["id"]) or req
         veiculo = (self._repo.obter_veiculo_completo(veiculo_id) if veiculo_id else None) or {}
 
         def pessoa(pid: str | None) -> dict[str, Any]:
-            return _contato(pid, contatos) if pid else {"id": None, "nome": None, "telefone": None}
+            return _contato(pid, contatos) if pid else dict(PESSOA_VAZIA)
 
         # Recurso desligado: o valor gravado no banco também não sai dentro de `requisicao`.
         omitir: set[str] = set()

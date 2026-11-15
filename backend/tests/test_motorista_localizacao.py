@@ -676,6 +676,8 @@ class Gravador:
         self.eventos: list[tuple[str, dict[str, Any]]] = []
         self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
 
+    ativo = True
+
     def notificar(
         self,
         evento: str,

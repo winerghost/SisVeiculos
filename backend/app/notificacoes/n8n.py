@@ -10,9 +10,11 @@ Garantias:
   A exceção aprovada inclui ids de pessoas (com nome), texto livre (`descricao_avarias`,
   `observacao`, `trajeto`) e coordenadas da localização. Nunca segue token, URL assinada, caminho
   de Storage, e-mail nem CPF (denylist por substring no serviço). Ver `montar_payload`.
-- Telefone (exceção APROVADA, 2026-11-15): todo evento `requisicao.*` leva o bloco `contatos`
-  ({id, nome, telefone} de solicitante, autorizador e motorista) para o n8n avisar por WhatsApp;
-  em saída/chegada as pessoas de `detalhes` também levam `telefone`. Nunca vai a log.
+- Telefone e e-mail (exceções APROVADAS, 2026-11-15): todo evento `requisicao.*` leva o bloco
+  `contatos` ({id, nome, telefone, email} de solicitante, autorizador e motorista) para o n8n
+  avisar; em saída/chegada as pessoas de `detalhes` também levam `telefone` e `email` (e-mail de
+  login do Auth, inclusive de conta inativa). Montados à parte: a denylist segue barrando
+  `email`/`telefone` em qualquer outra coluna. Nunca vão a log.
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
 - Assinatura: `X-Assinatura: sha256=HMAC(chave, "<timestamp>.<corpo>")` e `X-Timestamp`
   (segundos Unix) para o n8n rejeitar replay. A chave é `N8N_HMAC_SECRET`; se ausente, cai no
@@ -68,6 +70,10 @@ _MSG_PUBLICO = "N8N_WEBHOOK_URL deve apontar para um host público."
 
 
 class Notificador(Protocol):
+    # False: integração desligada; quem chama nem monta `detalhes`/`contatos` (minimização LGPD).
+    @property
+    def ativo(self) -> bool: ...
+
     def notificar(
         self,
         evento: str,
@@ -84,6 +90,10 @@ class Notificador(Protocol):
 
 class NotificadorNulo:
     """No-op (integração desligada)."""
+
+    @property
+    def ativo(self) -> bool:
+        return False
 
     def notificar(
         self,
@@ -176,7 +186,8 @@ def montar_payload(
 ) -> dict[str, Any]:
     """Payload mínimo por allowlist; com `detalhes` (só saída e chegada) acrescenta o bloco
     completo aprovado e sobe a versão para 2. `contatos` (todos os eventos de requisição,
-    exceção LGPD aprovada) leva id, nome e telefone de solicitante, autorizador e motorista.
+    exceção LGPD aprovada) leva id, nome, telefone e e-mail de login de solicitante,
+    autorizador e motorista.
 
     `evento_id` (uuid4) é estável por evento; o n8n deduplica por ele."""
     payload: dict[str, Any] = {
@@ -231,6 +242,10 @@ class N8nWebhook:
 
     def __repr__(self) -> str:  # nunca expõe URL nem token
         return "N8nWebhook()"
+
+    @property
+    def ativo(self) -> bool:
+        return not self._parar.is_set()
 
     # -- API pública ---------------------------------------------------------------
     def notificar(

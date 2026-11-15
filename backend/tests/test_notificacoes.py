@@ -51,6 +51,8 @@ class Gravador:
         self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
         self.contatos: list[dict[str, Any] | None] = []
 
+    ativo = True
+
     def notificar(
         self,
         evento: str,
@@ -73,6 +75,8 @@ class Gravador:
 
 class Quebrado:
     """Notificador que levanta: a API não pode depender dele (defesa em profundidade)."""
+
+    ativo = True
 
     def notificar(
         self,
@@ -855,6 +859,12 @@ def test_denylist_por_substring_recursiva_e_chave_inofensiva_passa(client_n, aut
     assert d["solicitante"]["telefone"] == "5561911112222"
     assert grav.contatos[-1]["solicitante"]["telefone"] == "5561911112222"
     assert "telefone" in grav.contatos[-1]["autorizador"]
+    # Idem e-mail de login (auth.users): só nas pessoas e em contatos; a coluna segue barrada.
+    email_sol = repo.contas_auth[cen.sol.id]["email"]
+    assert d["solicitante"]["email"] == email_sol
+    assert grav.contatos[-1]["solicitante"]["email"] == email_sol
+    assert grav.contatos[-1]["autorizador"]["email"] == repo.contas_auth[cen.aut.id]["email"]
+    assert "x@y.gov.br" not in json.dumps(d)
 
 
 def test_flags_desligadas_removem_km_e_motorista_da_linha_mesmo_gravados(  # type: ignore[no-untyped-def]

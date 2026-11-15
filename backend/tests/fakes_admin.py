@@ -562,6 +562,8 @@ class AuthAdminMemoria:
         self.falhar_bloqueio = False
         self.falhar_reenvio_acesso = False
         self.consultas_email: list[set[str]] = []  # ids pedidos a emails_por_id
+        self.falhar_emails = False
+        self.erro_emails_webhook: Exception | None = None  # ex.: TimeoutError (prazo do webhook)
         self.varreduras = 0
         self.indice_truncado = False
         self.atraso_convidar: threading.Event | None = None  # segura o envio (concorrência)
@@ -604,7 +606,16 @@ class AuthAdminMemoria:
 
     def emails_por_id(self, ids: set[str]) -> dict[str, str]:
         self.consultas_email.append(set(ids))
+        if self.falhar_emails:
+            # Mensagem com e-mail de propósito: o chamador não pode logá-la.
+            raise ErroInterno("falha ao ler vazou@gmail.com")
         return {i: self.contas[i]["email"] for i in ids if i in self.contas}
+
+    def emails_para_webhook(self, ids: set[str], *, timeout: float = 2.0) -> dict[str, str]:
+        if self.erro_emails_webhook is not None:
+            self.consultas_email.append(set(ids))
+            raise self.erro_emails_webhook
+        return self.emails_por_id(ids)
 
     def id_por_email(self, email: str) -> str | None:
         self.varreduras += 1

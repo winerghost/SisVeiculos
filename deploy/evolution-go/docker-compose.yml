@@ -1,0 +1,101 @@
+# Evolution GO (gateway de WhatsApp) para o n8n, na mesma VPS.
+# Stack separada do SisVeiculos: o backend nunca fala com a Evolution; só o n8n.
+#
+# Redes:
+#   - whatsapp_interna (externa, criada uma vez): Evolution <-> n8n. O n8n chama http://evolution-go:8080
+#   - banco (interna desta stack, sem saída para a internet): Evolution <-> Postgres
+# Porta: só 127.0.0.1:8081 (o 8080 já é do frontend do SisVeiculos). Use túnel SSH ou o proxy do
+# CloudPanel para abrir o /manager; nunca publique em 0.0.0.0.
+#
+# Uso na VPS (dentro desta pasta):
+#   docker network create whatsapp_interna        # só na primeira vez
+#   cp .env.example .env && nano .env             # só na primeira vez
+#   docker compose up -d
+name: evolution-go
+
+services:
+  evolution-go:
+    # A imagem oficial só publica "latest": fixe pelo digest no .env (EVOLUTION_GO_IMAGE).
+    image: ${EVOLUTION_GO_IMAGE:-evoapicloud/evolution-go:latest}
+    container_name: evolution-go
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: America/Sao_Paulo
+      SERVER_PORT: "8080"
+      CLIENT_NAME: ${EVOLUTION_CLIENT_NAME:-sisveiculos}
+      GLOBAL_API_KEY: ${EVOLUTION_GLOBAL_API_KEY:?defina EVOLUTION_GLOBAL_API_KEY no .env}
+      POSTGRES_AUTH_DB: postgresql://${POSTGRES_USER:-evogo}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/evogo_auth?sslmode=disable
+      POSTGRES_USERS_DB: postgresql://${POSTGRES_USER:-evogo}:${POSTGRES_PASSWORD}@postgres:5432/evogo_users?sslmode=disable
+      # LGPD: não guardar conversas no banco.
+      DATABASE_SAVE_MESSAGES: "false"
+      CONNECT_ON_STARTUP: "true"
+      WADEBUG: ${EVOLUTION_WADEBUG:-INFO}
+      LOGTYPE: json
+      OS_NAME: ${EVOLUTION_OS_NAME:-SisVeiculos}
+      # Webhook global de retorno (ex.: queda de sessão). Vazio = desligado.
+      # Pela rede interna: http://<container-do-n8n>:5678/webhook/<caminho-secreto>
+      WEBHOOK_URL: ${EVOLUTION_WEBHOOK_URL:-}
+      WEBHOOK_FILES: "false"
+      # Sem MinIO nesta stack (o .env.example oficial vem com true).
+      MINIO_ENABLED: "false"
+      AMQP_GLOBAL_ENABLED: "false"
+      # Ativação da licença sem interface (opcional).
+      EVOLUTION_OPERATOR_EMAIL: ${EVOLUTION_OPERATOR_EMAIL:-}
+    ports:
+      - "127.0.0.1:${EVOLUTION_PORTA_LOCAL:-8081}:8080"
+    networks:
+      - whatsapp_interna
+      - banco
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: ${EVOLUTION_POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: evolution-go-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-evogo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: evogo_auth
+    volumes:
+      - evolution_pgdata:/var/lib/postgresql/data
+      # Cria o segundo banco (evogo_users) só na primeira inicialização do volume.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - banco
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d evogo_auth"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # Compartilhada com o n8n. Criada fora do compose para não depender da ordem das stacks.
+  whatsapp_interna:
+    external: true
+  # Só Evolution <-> Postgres, sem rota para a internet.
+  banco:
+    internal: true
+
+volumes:
+  evolution_pgdata:

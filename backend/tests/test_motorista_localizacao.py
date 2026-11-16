@@ -685,6 +685,7 @@ class Gravador:
         detalhes: dict[str, Any] | None = None,
         *,
         contatos: dict[str, Any] | None = None,
+        resumo: dict[str, Any] | None = None,
     ) -> None:
         self.eventos.append((evento, dict(requisicao)))
         self.detalhes.append((evento, detalhes))

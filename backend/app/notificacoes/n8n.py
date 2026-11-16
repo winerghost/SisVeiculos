@@ -15,6 +15,10 @@ Garantias:
   avisar; em saída/chegada as pessoas de `detalhes` também levam `telefone` e `email` (e-mail de
   login do Auth, inclusive de conta inativa). Montados à parte: a denylist segue barrando
   `email`/`telefone` em qualquer outra coluna. Nunca vão a log.
+- Resumo (exceção APROVADA, 2026-11-15): todo evento `requisicao.*` leva o bloco `resumo`
+  ({nome_solicitante, hora_saida, hora_saida_fmt, trajeto}) para o n8n montar a mensagem de
+  WhatsApp. Allowlist fixa desses 4 campos (nunca `observacao`); `checklist.registrado` não leva.
+  Não altera `versao`. Nunca vai a log nem à resposta da API.
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
 - Assinatura: `X-Assinatura: sha256=HMAC(chave, "<timestamp>.<corpo>")` e `X-Timestamp`
   (segundos Unix) para o n8n rejeitar replay. A chave é `N8N_HMAC_SECRET`; se ausente, cai no
@@ -62,6 +66,8 @@ EVENTOS = frozenset(
 )
 # Campos da requisição que podem sair daqui (nenhum identifica pessoa).
 _CAMPOS_REQ = ("status", "veiculo_id", "unidade")
+# Allowlist do bloco `resumo` (exceção LGPD aprovada; nunca `observacao`).
+CAMPOS_RESUMO = ("nome_solicitante", "hora_saida", "hora_saida_fmt", "trajeto")
 _HOSTS_PROIBIDOS = frozenset({"localhost", "localhost.localdomain", "ip6-localhost"})
 _SUFIXOS_PROIBIDOS = (".localhost", ".local", ".internal", ".intranet", ".lan", ".home.arpa")
 _ROTULO = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
@@ -70,7 +76,7 @@ _MSG_PUBLICO = "N8N_WEBHOOK_URL deve apontar para um host público."
 
 
 class Notificador(Protocol):
-    # False: integração desligada; quem chama nem monta `detalhes`/`contatos` (minimização LGPD).
+    # False: integração desligada; quem chama nem monta `detalhes`/`contatos`/`resumo` (LGPD).
     @property
     def ativo(self) -> bool: ...
 
@@ -81,6 +87,7 @@ class Notificador(Protocol):
         detalhes: dict[str, Any] | None = None,
         *,
         contatos: dict[str, Any] | None = None,
+        resumo: dict[str, Any] | None = None,
     ) -> None:
         """Nunca bloqueia e nunca lança."""
         ...
@@ -102,6 +109,7 @@ class NotificadorNulo:
         detalhes: dict[str, Any] | None = None,
         *,
         contatos: dict[str, Any] | None = None,
+        resumo: dict[str, Any] | None = None,
     ) -> None:
         return None
 
@@ -183,11 +191,13 @@ def montar_payload(
     detalhes: dict[str, Any] | None = None,
     *,
     contatos: dict[str, Any] | None = None,
+    resumo: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Payload mínimo por allowlist; com `detalhes` (só saída e chegada) acrescenta o bloco
     completo aprovado e sobe a versão para 2. `contatos` (todos os eventos de requisição,
     exceção LGPD aprovada) leva id, nome, telefone e e-mail de login de solicitante,
-    autorizador e motorista.
+    autorizador e motorista. `resumo` (só eventos `requisicao.*`, exceção aprovada) leva só os
+    campos de `CAMPOS_RESUMO`; não altera `versao`.
 
     `evento_id` (uuid4) é estável por evento; o n8n deduplica por ele."""
     payload: dict[str, Any] = {
@@ -200,6 +210,8 @@ def montar_payload(
     }
     if contatos is not None:
         payload["contatos"] = contatos
+    if resumo is not None and evento.startswith("requisicao."):
+        payload["resumo"] = {c: resumo.get(c) for c in CAMPOS_RESUMO}
     if detalhes:
         payload["detalhes"] = detalhes
         payload["versao"] = VERSAO_PAYLOAD_DETALHES
@@ -255,13 +267,16 @@ class N8nWebhook:
         detalhes: dict[str, Any] | None = None,
         *,
         contatos: dict[str, Any] | None = None,
+        resumo: dict[str, Any] | None = None,
     ) -> None:
         try:
             if evento not in EVENTOS or self._parar.is_set():
                 return
             evento_id = str(uuid.uuid4())  # gerado uma vez; reutilizado nas retentativas
             corpo = json.dumps(
-                montar_payload(evento, requisicao, evento_id, detalhes, contatos=contatos),
+                montar_payload(
+                    evento, requisicao, evento_id, detalhes, contatos=contatos, resumo=resumo
+                ),
                 separators=(",", ":"),
                 ensure_ascii=False,
                 default=str,  # datetime/UUID/Decimal vindos do banco

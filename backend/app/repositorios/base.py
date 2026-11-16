@@ -37,7 +37,7 @@ class Repositorio(Protocol):
     def obter_requisicao(self, requisicao_id: str) -> Requisicao | None: ...
 
     def obter_requisicao_completa(self, requisicao_id: str) -> Requisicao | None:
-        """Todas as colunas da linha (inclusive futuras). Só para o webhook n8n de saída/chegada,
+        """Todas as colunas da linha (inclusive futuras). Só para o webhook n8n (detalhes e resumo),
         que passa pela denylist; nunca devolver em resposta da API."""
         ...
 

@@ -25,6 +25,11 @@ no bloco `contatos` e nas pessoas de `detalhes` em saída/chegada, montado à pa
 envia. `email`/`e_mail` **seguem na denylist** de qualquer outra coluna. Nunca vai a log nem a rota que
 não seja admin.
 
+Exceção aprovada do resumo (dono do projeto, 2026-11-15): todo evento `requisicao.*` leva o bloco
+`resumo` (nome do solicitante, saída prevista e trajeto) para o n8n montar a mensagem de WhatsApp,
+sem IA. Montado à parte por allowlist fixa desses campos; `observacao` **nunca** entra. Não muda a
+`versao`. Nunca vai a log nem à resposta da API.
+
 ## Chaves comuns (todos os eventos)
 
 | Chave | Descrição |
@@ -36,6 +41,7 @@ não seja admin.
 | `ocorrido_em` | ISO 8601 UTC |
 | `versao` | `1` sem `detalhes`; `2` com `detalhes` |
 | `contatos` | só eventos `requisicao.*` (ver abaixo); ausente em `checklist.registrado` ou se a leitura falhar (best-effort) |
+| `resumo` | só eventos `requisicao.*` (ver abaixo); ausente em `checklist.registrado` ou se a leitura falhar (best-effort) |
 
 ## `contatos` (todos os eventos de requisição)
 
@@ -56,6 +62,19 @@ não seja admin.
 
 Com o n8n desligado (sem `N8N_WEBHOOK_URL`), o backend não monta `contatos` nem `detalhes` e não lê
 telefone nem e-mail.
+
+## `resumo` (todos os eventos de requisição)
+
+| Chave | Conteúdo |
+|---|---|
+| `nome_solicitante` | `nome_solicitante` da requisição |
+| `hora_saida` | saída **prevista** (coluna `hora_saida`), ISO 8601 UTC, ex.: `2026-11-16T17:30:00+00:00` |
+| `hora_saida_fmt` | a mesma saída prevista em America/Sao_Paulo, `dd/mm/aaaa HH:MM`, ex.: `16/11/2026 14:30` |
+| `trajeto` | trajeto da requisição |
+
+Vem da requisição em memória quando ela tem os campos; senão o backend relê a linha completa. Se
+não der para ler, a chave **fica ausente** e o evento segue; o log traz só
+`n8n: resumo indisponivel evento=... (<tipo da exceção>)`, sem PII.
 
 ## `detalhes` (só saída e chegada)
 
@@ -78,4 +97,5 @@ coberto pelo teste de regressão `test_toda_chave_da_requisicao_vai_em_detalhes_
 
 `backend/app/notificacoes/n8n.py`, `backend/app/services/requisicoes.py`,
 `backend/tests/test_notificacoes.py`, `backend/tests/test_motorista_localizacao.py`,
-`backend/tests/test_telefone.py` (telefone e `contatos`).
+`backend/tests/test_telefone.py` (telefone e `contatos`), `backend/tests/test_webhook_resumo.py`
+(`resumo`).

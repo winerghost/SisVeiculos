@@ -599,7 +599,7 @@ class SupabaseRepositorio:
         return res.data[0] if res.data else None
 
     def obter_requisicao_completa(self, requisicao_id: str) -> Requisicao | None:
-        """Linha INTEIRA (select *): só para o webhook n8n de saída/chegada; nunca vai à API."""
+        """Linha INTEIRA (select *): só para o webhook n8n (detalhes e resumo); nunca vai à API."""
         res = _exec(
             lambda: self._c.table("requisicoes")
             .select("*")

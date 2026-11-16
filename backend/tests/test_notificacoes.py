@@ -50,6 +50,7 @@ class Gravador:
         self.chamadas: list[tuple[str, dict[str, Any]]] = []
         self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
         self.contatos: list[dict[str, Any] | None] = []
+        self.resumos: list[dict[str, Any] | None] = []
 
     ativo = True
 
@@ -60,10 +61,12 @@ class Gravador:
         detalhes: dict[str, Any] | None = None,
         *,
         contatos: dict[str, Any] | None = None,
+        resumo: dict[str, Any] | None = None,
     ) -> None:
         self.chamadas.append((evento, dict(requisicao)))
         self.detalhes.append((evento, detalhes))
         self.contatos.append(contatos)
+        self.resumos.append(resumo)
 
     def fechar(self) -> None:
         return None
@@ -85,6 +88,7 @@ class Quebrado:
         detalhes: dict[str, Any] | None = None,
         *,
         contatos: dict[str, Any] | None = None,
+        resumo: dict[str, Any] | None = None,
     ) -> None:
         raise RuntimeError("n8n fora")
 
@@ -667,6 +671,9 @@ def test_saida_e_chegada_levam_detalhes_completos_e_demais_eventos_nao(client_n,
         assert TOKEN not in json.dumps(payload, default=str)
     assert por_evento["requisicao.chegada"]["chegada_real_em"] is not None
     assert por_evento["requisicao.chegada"]["chegada_registrada_por"]["id"] == cen.aut.id
+    # Bloco `resumo` (2026-11-16) em todo evento de requisição, sem `observacao`.
+    assert all(r and r["trajeto"] == "AGU -> Fórum" for r in grav.resumos)
+    assert "obs-sensivel" not in json.dumps(grav.resumos)
     d = por_evento["requisicao.saida"]  # recursos desligados => campos ausentes
     for ausente in ("km_saida", "km_chegada", "localizacao", "checklist", "motorista"):
         assert ausente not in d

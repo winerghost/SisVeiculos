@@ -23,6 +23,7 @@ from app.errors import (
     VeiculoIndisponivel,
     VeiculoOcupado,
 )
+from app.fuso import FUSO
 from app.modelos import Configuracoes, Perfil, Requisicao
 from app.notificacoes import Notificador, NotificadorNulo
 from app.repositorios.auth_admin import AuthAdmin
@@ -175,6 +176,26 @@ def _contato(pid: str, dados: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 PESSOA_VAZIA: dict[str, Any] = {"id": None, "nome": None, "telefone": None, "email": None}
+
+# Fonte do bloco `resumo` do webhook (exceção LGPD aprovada em 2026-11-15). Allowlist explícita:
+# nunca `observacao` nem outra coluna.
+CAMPOS_FONTE_RESUMO = ("nome_solicitante", "hora_saida", "trajeto")
+
+
+def montar_resumo_webhook(req: Requisicao) -> dict[str, Any]:
+    """{nome_solicitante, hora_saida (ISO UTC), hora_saida_fmt (Brasília), trajeto} para o n8n.
+
+    Lança KeyError/ValueError se faltar campo ou a data for inválida (quem chama omite o bloco)."""
+    bruto = req["hora_saida"]
+    prevista = bruto if isinstance(bruto, datetime) else datetime.fromisoformat(str(bruto))
+    if prevista.tzinfo is None:
+        raise ValueError("hora_saida sem fuso")
+    return {
+        "nome_solicitante": req["nome_solicitante"],
+        "hora_saida": prevista.astimezone(UTC).isoformat(),
+        "hora_saida_fmt": f"{prevista.astimezone(FUSO):%d/%m/%Y %H:%M}",
+        "trajeto": req["trajeto"],
+    }
 
 
 ACOES_COM_DETALHES = frozenset({"registrar_saida", "registrar_chegada"})
@@ -807,6 +828,7 @@ class ServicoRequisicoes:
                 "requisicao.criada",
                 criada,
                 contatos=self._contatos_webhook(criada, "requisicao.criada"),
+                resumo=self._resumo_webhook(criada, "requisicao.criada"),
             )
         return self.apresentar(perfil, criada)
 
@@ -859,10 +881,30 @@ class ServicoRequisicoes:
                 detalhes = None
                 perfis = lidas.get("pessoas")  # já lidas antes da falha: não relê
         contatos = self._contatos_webhook(atualizada, evento, config, perfis)
+        resumo = self._resumo_webhook(atualizada, evento)
         if detalhes is None:
-            self._notificador.notificar(evento, atualizada, contatos=contatos)
+            self._notificador.notificar(evento, atualizada, contatos=contatos, resumo=resumo)
         else:
-            self._notificador.notificar(evento, atualizada, detalhes, contatos=contatos)
+            self._notificador.notificar(
+                evento, atualizada, detalhes, contatos=contatos, resumo=resumo
+            )
+
+    def _resumo_webhook(self, req: Requisicao, evento: str) -> dict[str, Any] | None:
+        """Bloco `resumo` de TODO evento de requisição (exceção LGPD aprovada em 2026-11-15).
+
+        Usa o registro em memória quando ele tem os campos; senão relê a linha completa (visão
+        reduzida sem `trajeto`/`hora_saida`). Best-effort: falhou, sai None (bloco omitido) e o
+        evento segue. Log: só evento e tipo da exceção."""
+        try:
+            fonte: Requisicao | None = req
+            if any(req.get(c) is None for c in CAMPOS_FONTE_RESUMO):
+                fonte = self._repo.obter_requisicao_completa(req["id"])
+            if fonte is None:
+                raise LookupError("requisicao ausente")
+            return montar_resumo_webhook(fonte)
+        except Exception as exc:  # noqa: BLE001 - nunca quebra a ação
+            log.warning("n8n: resumo indisponivel evento=%s (%s)", evento, type(exc).__name__)
+            return None
 
     def _contatos_webhook(
         self,

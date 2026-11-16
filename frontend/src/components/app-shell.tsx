@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
+import { ID_TITULO_PAGINA } from '@/lib/foco';
 import { Button } from '@/components/ui/button';
 import { Alerta } from '@/components/ui/alert';
 import { Avatar } from '@/components/avatar';
@@ -24,6 +25,7 @@ import { TelaMfa } from '@/components/tela-mfa';
 import { SinoNotificacoes } from '@/components/sino-notificacoes';
 import { Saudacao } from '@/components/saudacao';
 import { IndicadorConexao } from '@/components/indicador-conexao';
+import { FaixaAtualizacao } from '@/components/faixa-atualizacao';
 
 function Carregando() {
   return (
@@ -117,10 +119,17 @@ export function AppShell({
           >
             <ChevronLeft aria-hidden />
           </Link>
-          <h1 className="min-w-0 flex-1 text-2xl font-semibold">{titulo}</h1>
+          <h1
+            id={ID_TITULO_PAGINA}
+            tabIndex={-1}
+            className="min-w-0 flex-1 text-2xl font-semibold outline-none"
+          >
+            {titulo}
+          </h1>
           <SinoNotificacoes />
         </header>
         <IndicadorConexao />
+        <FaixaAtualizacao />
         <main className="flex-1 px-5 pt-3 pb-8">{children}</main>
       </div>
     );
@@ -138,8 +147,10 @@ export function AppShell({
             </p>
           ) : null}
           <h1
+            id={ID_TITULO_PAGINA}
+            tabIndex={-1}
             className={cn(
-              'mt-1 font-semibold',
+              'mt-1 font-semibold outline-none',
               // Títulos longos ficam numa linha só ao lado dos ícones do cabeçalho.
               titulo.length > 12 ? 'text-2xl' : 'text-3xl',
             )}
@@ -173,6 +184,7 @@ export function AppShell({
         </div>
       </header>
       <IndicadorConexao />
+      <FaixaAtualizacao />
 
       <main className="flex-1 px-5 pt-5 pb-28">
         <Saudacao />

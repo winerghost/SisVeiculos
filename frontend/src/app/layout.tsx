@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { TempoRealProvider } from '@/lib/tempo-real';
 import { AuthProvider } from '@/lib/auth';
 import { RegistrarSw } from '@/components/registrar-sw';
 import './globals.css';
@@ -60,7 +61,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Ir para o conteúdo
         </a>
         <AuthProvider>
-          <div id="conteudo">{children}</div>
+          <TempoRealProvider>
+            <div id="conteudo">{children}</div>
+          </TempoRealProvider>
         </AuthProvider>
         <RegistrarSw />
       </body>

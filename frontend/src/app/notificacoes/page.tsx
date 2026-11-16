@@ -104,15 +104,19 @@ function Conteudo() {
     return () => window.clearInterval(id);
   }, []);
 
-  const primeira = useCarga(async () => {
-    const r = await api.notificacoes({
-      limite: TAMANHO_PAGINA,
-      offset: 0,
-      somente_nao_lidas: somenteNaoLidas,
-    });
-    void recarregarNaoLidas();
-    return r;
-  }, String(somenteNaoLidas));
+  const primeira = useCarga(
+    async () => {
+      const r = await api.notificacoes({
+        limite: TAMANHO_PAGINA,
+        offset: 0,
+        somente_nao_lidas: somenteNaoLidas,
+      });
+      void recarregarNaoLidas();
+      return r;
+    },
+    String(somenteNaoLidas),
+    { recursos: ['notificacoes'] },
+  );
 
   const base = primeira.dados?.itens ?? [];
   const ids = new Set(base.map((x) => x.id));

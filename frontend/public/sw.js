@@ -7,8 +7,9 @@
  * - Navegação (HTML estático, sem dados de usuário): network-first com cópia para uso offline.
  * - Requisições para outras origens (Supabase) não são interceptadas.
  * - Web Push: o payload é genérico (sem dados pessoais); o clique só abre destino interno.
+ *   As janelas abertas recebem {tipo:'invalidar'} e consultam /api/atualizacoes na hora.
  */
-const VERSAO = 'v4';
+const VERSAO = 'v5';
 const CACHE_ASSETS = `assets-${VERSAO}`;
 const CACHE_PAGINAS = `paginas-${VERSAO}`;
 
@@ -146,7 +147,14 @@ self.addEventListener('push', (event) => {
     data: { destino: typeof dados.destino === 'string' ? dados.destino : null },
   };
   if (typeof dados.tag === 'string' && dados.tag) opcoes.tag = dados.tag;
-  event.waitUntil(self.registration.showNotification(titulo, opcoes));
+  // Avisa as janelas abertas para consultarem /api/atualizacoes já (sem dados no aviso).
+  const avisarJanelas = self.clients
+    .matchAll({ type: 'window' })
+    .then((janelas) => janelas.forEach((j) => j.postMessage({ tipo: 'invalidar' })))
+    .catch(() => undefined);
+  event.waitUntil(
+    Promise.all([self.registration.showNotification(titulo, opcoes), avisarJanelas]),
+  );
 });
 
 self.addEventListener('notificationclick', (event) => {

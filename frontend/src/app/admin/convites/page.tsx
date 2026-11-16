@@ -27,6 +27,7 @@ function Conteudo() {
   const lista = useCarga(
     () => admin.convites({ estado, limite: LIMITE, offset }),
     `${estado}|${offset}`,
+    { recursos: ['usuarios'] },
   );
   const envio = useEnvio();
   const [aviso, setAviso] = React.useState<string | null>(null);

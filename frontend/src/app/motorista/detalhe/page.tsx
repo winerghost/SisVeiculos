@@ -10,12 +10,13 @@ import { AppShell } from '@/components/app-shell';
 import { DadosViagem } from '@/components/cartao-viagem';
 import { BotoesAcao } from '@/components/cartao-requisicao';
 import { LinhaDoTempo } from '@/components/linha-do-tempo';
+import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { StatusChip } from '@/components/ui/status-chip';
 
 function Detalhe({ id }: { id: string }) {
-  const viagem = useCarga(() => api.viagemMotorista(id));
+  const viagem = useCarga(() => api.viagemMotorista(id), id, { recursos: ['requisicoes'] });
   const acao = useAcao(async () => {
     await viagem.recarregar();
   });
@@ -35,6 +36,7 @@ function Detalhe({ id }: { id: string }) {
     <>
       {viagem.erro ? <Alerta className="mb-4">{viagem.erro}</Alerta> : null}
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
+      <DialogoKmAlto confirmacao={acao.confirmacaoKm} />
 
       <section aria-label="Resumo" className="rounded-xl border border-borda bg-white p-4">
         <div className="flex items-center justify-between gap-3">

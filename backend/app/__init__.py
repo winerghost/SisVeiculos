@@ -182,6 +182,7 @@ def create_app(
 
     from app.rotas.admin import admin
     from app.rotas.api import api
+    from app.rotas.atualizacoes import atualizacoes
     from app.rotas.convites import convites
     from app.rotas.dashboards import dashboards
     from app.rotas.notificacoes import notificacoes
@@ -191,6 +192,7 @@ def create_app(
     from app.rotas.saudacao import saudacao, saudacao_admin
 
     app.register_blueprint(api)
+    app.register_blueprint(atualizacoes)
     app.register_blueprint(admin)
     app.register_blueprint(convites)
     app.register_blueprint(dashboards)

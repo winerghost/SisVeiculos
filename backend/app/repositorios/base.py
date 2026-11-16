@@ -543,6 +543,13 @@ class Repositorio(Protocol):
 
     def purgar_notificacoes(self, dias: int = 90) -> int: ...
 
+    # -- atualização em tempo real (migration 20261202120000) -------------------------------
+    def versoes_atualizacao(self, usuario_id: str) -> dict[str, Any]:
+        """Marcadores CRUS por recurso para o perfil (papel lido do banco): {requisicoes,
+        notificacoes, veiculos, configuracoes: str; usuarios: str | None (só admin);
+        nao_lidas: int}. Nunca sai do backend sem HMAC (ver services/atualizacoes.py)."""
+        ...
+
     # -- web push (migration 20261120120000; RPCs só service_role) --------------------------
     def registrar_inscricao_push(
         self, usuario_id: str, endpoint: str, p256dh: str, auth: str

@@ -9,6 +9,7 @@ import type { ListaRequisicoes, Status } from '@/lib/tipos';
 import { cn } from '@/lib/utils';
 import { AppShell } from '@/components/app-shell';
 import { CartaoRequisicao } from '@/components/cartao-requisicao';
+import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -24,13 +25,17 @@ function Viagens() {
   const comAutorizadas = eu?.permissoes.includes('registrar_saida') ?? false;
   const abas = comAutorizadas ? ABAS : ABAS.slice(1);
   const [aba, setAba] = React.useState<Status>('em_uso');
-  const listas = useCarga(async () => {
-    const r = await Promise.all(abas.map((x) => api.requisicoes(x.status)));
-    return Object.fromEntries(abas.map((x, i) => [x.status, r[i]])) as Record<
-      string,
-      ListaRequisicoes
-    >;
-  });
+  const listas = useCarga(
+    async () => {
+      const r = await Promise.all(abas.map((x) => api.requisicoes(x.status)));
+      return Object.fromEntries(abas.map((x, i) => [x.status, r[i]])) as Record<
+        string,
+        ListaRequisicoes
+      >;
+    },
+    '',
+    { recursos: ['requisicoes'] },
+  );
   const acao = useAcao(async () => {
     await listas.recarregar();
   });
@@ -63,6 +68,7 @@ function Viagens() {
 
       {listas.erro ? <Alerta className="mb-4">{listas.erro}</Alerta> : null}
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
+      <DialogoKmAlto confirmacao={acao.confirmacaoKm} />
 
       <div id="painel-viagem" role={comAutorizadas ? 'tabpanel' : undefined}>
         {listas.carregando ? (

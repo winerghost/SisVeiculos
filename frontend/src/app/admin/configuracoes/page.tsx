@@ -13,7 +13,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 
 function Conteudo() {
-  const cfg = useCarga(() => admin.configuracoes());
+  const cfg = useCarga(() => admin.configuracoes(), '', { recursos: ['configuracoes'] });
   const envio = useEnvio();
 
   async function alternar(chave: string, habilitado: boolean) {

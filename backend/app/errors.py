@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from flask import Flask, jsonify
 from werkzeug.exceptions import HTTPException
@@ -24,9 +25,12 @@ class ErroApi(Exception):
         status: int | None = None,
         *,
         campo: str | None = None,
+        extras: dict[str, Any] | None = None,
     ):
         super().__init__(mensagem)
         self.mensagem = mensagem
+        # Campos adicionais dentro de "erro" (ex.: distancia_km). Nunca dado pessoal.
+        self.extras = extras
         # Nome do campo do corpo que causou o erro (acessibilidade: o front liga a mensagem ao
         # campo com aria-invalid/aria-describedby). Opcional: ausente, o corpo não muda.
         self.campo = campo
@@ -124,6 +128,13 @@ class DependenciaRecurso(ErroApi):
     status, codigo = 409, "dependencia_recurso"
 
 
+class KmAltoConfirmar(ErroApi):
+    """Distância da viagem acima de KM_LIMITE_CONFIRMACAO: a chegada só grava com
+    `confirmar_km_alto: true`. Leva `distancia_km` e `limite_km` no corpo do erro."""
+
+    status, codigo = 409, "km_alto_confirmar"
+
+
 class RelatorioGrande(ErroApi):
     """Relatório acima do limite de linhas: o usuário precisa estreitar o filtro."""
 
@@ -154,8 +165,13 @@ class FalhaRegistroAcesso(Exception):  # noqa: N818
         self.codigo = codigo
 
 
-def corpo_erro(codigo: str, mensagem: str, campo: str | None = None) -> dict[str, dict[str, str]]:
-    erro = {"codigo": codigo, "mensagem": mensagem}
+def corpo_erro(
+    codigo: str,
+    mensagem: str,
+    campo: str | None = None,
+    extras: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    erro: dict[str, Any] = {**(extras or {}), "codigo": codigo, "mensagem": mensagem}
     if campo:
         erro["campo"] = campo
     return {"erro": erro}
@@ -174,7 +190,7 @@ _HTTP = {
 def registrar_erros(app: Flask) -> None:
     @app.errorhandler(ErroApi)
     def _api(e: ErroApi):  # type: ignore[no-untyped-def]
-        resp = jsonify(corpo_erro(e.codigo, e.mensagem, e.campo))
+        resp = jsonify(corpo_erro(e.codigo, e.mensagem, e.campo, e.extras))
         if e.retry_after:
             resp.headers["Retry-After"] = str(e.retry_after)
         return resp, e.status

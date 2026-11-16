@@ -13,13 +13,14 @@ import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
 import { LocalizacaoRegistroSecao } from '@/components/localizacao-registro';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
+import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { HoraSaida } from '@/components/ui/hora-saida';
 import { StatusChip } from '@/components/ui/status-chip';
 
 function Detalhe({ id }: { id: string }) {
-  const req = useCarga(() => api.requisicao(id));
+  const req = useCarga(() => api.requisicao(id), id, { recursos: ['requisicoes'] });
   const acao = useAcao(async () => {
     await req.recarregar();
   });
@@ -39,6 +40,7 @@ function Detalhe({ id }: { id: string }) {
     <>
       {req.erro ? <Alerta className="mb-4">{req.erro}</Alerta> : null}
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
+      <DialogoKmAlto confirmacao={acao.confirmacaoKm} />
 
       <section aria-label="Resumo" className="rounded-xl border border-borda bg-white p-4">
         <div className="flex items-center justify-between gap-3">

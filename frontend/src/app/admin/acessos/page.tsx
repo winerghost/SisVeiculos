@@ -33,7 +33,9 @@ function Conteudo() {
   const [offset, setOffset] = React.useState(0);
 
   // Seletor de usuário: usa a própria lista de /api/admin/usuarios (nome e id).
-  const usuarios = useCarga(() => admin.usuarios({ limite: 100, offset: 0 }));
+  const usuarios = useCarga(() => admin.usuarios({ limite: 100, offset: 0 }), '', {
+    recursos: ['usuarios'],
+  });
 
   // `ate` é exclusivo: o dia final escolhido vira 00:00 do dia seguinte. A API valida o intervalo.
   const acessos = useCarga(

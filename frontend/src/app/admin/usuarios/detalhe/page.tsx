@@ -303,7 +303,7 @@ function Edicao({
 }
 
 function PorId({ id }: { id: string }) {
-  const usuario = useCarga(() => admin.usuario(id));
+  const usuario = useCarga(() => admin.usuario(id), id, { recursos: ['usuarios'] });
   if (usuario.carregando) {
     return (
       <p role="status" className="flex items-center gap-2 text-texto-2">

@@ -15,6 +15,7 @@ from typing import Any
 
 from app.errors import (
     ChecklistObrigatorio,
+    KmAltoConfirmar,
     NaoEncontrado,
     RecursoDesligado,
     RequisicaoInvalida,
@@ -35,7 +36,12 @@ from app.services.horario_saida import (
     validar_hora_saida_nao_passada,
 )
 from app.services.localizacao import validar_localizacao
-from app.services.validacao import validar_criacao, validar_km, validar_uuid
+from app.services.validacao import (
+    KM_LIMITE_CONFIRMACAO,
+    validar_criacao,
+    validar_km,
+    validar_uuid,
+)
 
 log = logging.getLogger(__name__)
 
@@ -159,6 +165,11 @@ def filtrar_denylist_webhook(valor: Any) -> Any:
     if isinstance(valor, list):
         return [filtrar_denylist_webhook(v) for v in valor]
     return valor
+
+
+def _milhar(n: int) -> str:
+    """Inteiro com ponto de milhar (pt-BR), sem depender do locale do servidor."""
+    return f"{n:,}".replace(",", ".")
 
 
 def _contato(pid: str, dados: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -1052,8 +1063,13 @@ class ServicoRequisicoes:
         Km e checklist seguem as mesmas validações do registro da equipe. Com a localização ligada,
         latitude e longitude são obrigatórias (sem exceção); desligada, são ignoradas.
         """
-        km = self._km(acao, req, corpo, perfil)
+        # Localização é validada ANTES do aviso de km alto (409): o motorista corrige tudo o que é
+        # erro de dado primeiro e só depois confirma o km, numa ida a menos ao servidor.
+        km = self._km(acao, req, corpo, perfil, confirmar_km_alto=False)
         coordenadas = validar_localizacao(corpo) if config.motorista_localizacao else None
+        if "km_chegada" in km:
+            saida = km.get("km_saida", req.get("km_saida"))
+            self._exigir_confirmacao_km_alto(km["km_chegada"] - int(saida or 0), corpo)
         momento = "saida" if acao == "registrar_saida" else "chegada"
         resultado = self._repo.registrar_transicao_motorista(
             requisicao_id=req["id"],
@@ -1113,8 +1129,19 @@ class ServicoRequisicoes:
                 f"O checklist de {rotulo} é obrigatório antes de registrar a {rotulo}."
             )
 
-    def _km(self, acao: str, req: Requisicao, corpo: Any, perfil: Perfil) -> dict[str, int]:
+    def _km(
+        self,
+        acao: str,
+        req: Requisicao,
+        corpo: Any,
+        perfil: Perfil,
+        *,
+        confirmar_km_alto: bool = True,
+    ) -> dict[str, int]:
         """Km da transição. Recurso desligado: o corpo é ignorado (nada gravado, sem erro).
+
+        `confirmar_km_alto=False`: o chamador exige a confirmação de km alto depois das demais
+        validações (fluxo do motorista, que valida a localização antes).
 
         Ligado: saída exige `km_saida`; chegada exige `km_chegada` e, se a saída ficou sem km
         (recurso ligado com a viagem em curso), também `km_saida`. Km já gravado é imutável:
@@ -1142,7 +1169,30 @@ class ServicoRequisicoes:
         chegada = validar_km(corpo.get("km_chegada"), "km_chegada")
         if chegada < saida:
             raise RequisicaoInvalida("O km de chegada não pode ser menor que o km de saída.")
+        if confirmar_km_alto:
+            self._exigir_confirmacao_km_alto(chegada - saida, corpo)
         return {**extra, "km_chegada": chegada}
+
+    @staticmethod
+    def _exigir_confirmacao_km_alto(distancia: int, corpo: dict[str, Any]) -> None:
+        """Distância acima de KM_LIMITE_CONFIRMACAO só grava com `confirmar_km_alto: true`
+        (booleano JSON). Até o limite a flag é ignorada. Nada sobre a confirmação é gravado."""
+        if distancia <= KM_LIMITE_CONFIRMACAO:
+            return
+        confirmar = corpo.get("confirmar_km_alto")
+        if confirmar is not None and not isinstance(confirmar, bool):
+            raise RequisicaoInvalida(
+                "O campo 'confirmar_km_alto' deve ser verdadeiro ou falso.",
+                campo="confirmar_km_alto",
+            )
+        if confirmar is True:
+            return
+        raise KmAltoConfirmar(
+            f"A distância percorrida será de {_milhar(distancia)} km, acima do limite de "
+            f"{_milhar(KM_LIMITE_CONFIRMACAO)} km. Confira a quilometragem de chegada. "
+            "Se estiver correta, confirme para registrar.",
+            extras={"distancia_km": distancia, "limite_km": KM_LIMITE_CONFIRMACAO},
+        )
 
     def _mensagem_negada(self, acao: str, perfil: Perfil, req: Requisicao) -> str:
         if (

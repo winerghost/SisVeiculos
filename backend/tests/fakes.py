@@ -17,6 +17,7 @@ from app.errors import VeiculoOcupado
 from app.modelos import ESTADOS_ABERTOS, Configuracoes, Perfil, Requisicao
 from app.repositorios.supabase_repo import filtrar_colunas
 from tests.fakes_admin import ANTES, AdminMemoria, erro_db
+from tests.fakes_atualizacoes import AtualizacoesMemoria
 from tests.fakes_checklist import ChecklistMemoria
 from tests.fakes_dados import DadosMemoria
 from tests.fakes_dashboards import DashboardsMemoria
@@ -43,6 +44,7 @@ class RepoMemoria(
     RelatoriosMemoria,
     NotificacoesMemoria,
     PushMemoria,
+    AtualizacoesMemoria,
 ):
     def __init__(self) -> None:
         self._init_admin()
@@ -53,6 +55,7 @@ class RepoMemoria(
         self._init_relatorios()
         self._init_notificacoes()
         self._init_push()
+        self._init_atualizacoes()
         self._seq_eventos = 0
         self.perfis: dict[str, Perfil] = {}
         self.veiculos: dict[str, dict[str, Any]] = {}

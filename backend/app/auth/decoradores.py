@@ -16,7 +16,7 @@ from flask import g, request
 
 from app.errors import NaoAutenticado, SemPermissao
 from app.extensions import deps, ip_cliente
-from app.modelos import Perfil
+from app.modelos import Configuracoes, Perfil
 
 log = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
@@ -75,9 +75,18 @@ def _registrar_acesso(usuario_id: str, claims: dict[str, Any]) -> None:
         log.info("registro_acesso_falhou codigo=%s", type(e).__name__)
 
 
-def autenticar(roles: Collection[str] = ()) -> Perfil:
+def autenticar(
+    roles: Collection[str] = (),
+    *,
+    registrar_acesso: bool = True,
+    configuracoes: Callable[[], Configuracoes] | None = None,
+) -> Perfil:
     """Autentica e, se `roles` for informado, checa o role ANTES de qualquer efeito colateral
-    (consulta de configurações, registro de acesso): quem não tem permissão não deixa rastro."""
+    (consulta de configurações, registro de acesso): quem não tem permissão não deixa rastro.
+
+    `registrar_acesso=False` e `configuracoes` (leitor com cache curto) existem só para o polling
+    de `/api/atualizacoes`, que roda a cada poucos segundos: não infla o histórico de acessos nem
+    lê `configuracoes` a cada chamada. JWT, perfil ativo e MFA continuam valendo igual."""
     d = deps()
     usuario_id, claims = autenticar_token()
 
@@ -89,7 +98,8 @@ def autenticar(roles: Collection[str] = ()) -> Perfil:
         raise SemPermissao("Você não tem permissão para esta ação.")
     # MFA: com o recurso ligado, admin e autorizador precisam de sessão aal2 (TOTP).
     # Solicitante segue só com senha. A verificação é do servidor, sobre claims já validadas.
-    exige_mfa = perfil.role in {"admin", "autorizador"} and d.repo.ler_configuracoes().mfa
+    ler = configuracoes or d.repo.ler_configuracoes
+    exige_mfa = perfil.role in {"admin", "autorizador"} and ler().mfa
     if exige_mfa and not _tem_segundo_fator(claims):
         raise SemPermissao(
             "Este perfil exige verificação em duas etapas. Conclua o segundo fator.",
@@ -97,7 +107,8 @@ def autenticar(roles: Collection[str] = ()) -> Perfil:
         )
     g.perfil = perfil
     g.claims = claims
-    _registrar_acesso(perfil.id, claims)
+    if registrar_acesso:
+        _registrar_acesso(perfil.id, claims)
     return perfil
 
 

@@ -1115,6 +1115,26 @@ class SupabaseRepositorio:
         dados = self._rpc_dict("contar_notificacoes_nao_lidas", {"p_usuario": usuario})
         return _inteiro_do_rpc(dados, "nao_lidas", "contar_notificacoes_nao_lidas")
 
+    def versoes_atualizacao(self, usuario_id: str) -> dict[str, Any]:
+        dados = self._rpc_dict("atualizacoes_versao", {"p_usuario": usuario_id})
+        if not isinstance(dados, dict):
+            log.error("erro_banco resposta_invalida rpc=atualizacoes_versao")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        for chave in ("requisicoes", "notificacoes", "veiculos", "configuracoes"):
+            if not isinstance(dados.get(chave), str):
+                log.error("erro_banco resposta_invalida rpc=atualizacoes_versao")
+                raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        usuarios = dados.get("usuarios")
+        if usuarios is not None and not isinstance(usuarios, str):
+            log.error("erro_banco resposta_invalida rpc=atualizacoes_versao")
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.")
+        nao_lidas = _inteiro_do_rpc(dados, "nao_lidas", "atualizacoes_versao")
+        return {
+            **{k: dados[k] for k in ("requisicoes", "notificacoes", "veiculos", "configuracoes")},
+            "usuarios": usuarios,
+            "nao_lidas": nao_lidas,
+        }
+
     def marcar_notificacao_lida(self, usuario: str, notificacao_id: str) -> dict[str, Any]:
         dados = self._rpc_dict(
             "marcar_notificacao_lida",

@@ -63,7 +63,9 @@ function maisAntiga(m: MaisAntiga | null): string {
 
 /** "Operação agora": contadores, cartões das abertas e atualização a cada 30 s com a aba visível. */
 export function PainelOperacao() {
-  const op = useCarga(() => api.painel<DadosOperacao>('operacao'));
+  const op = useCarga(() => api.painel<DadosOperacao>('operacao'), '', {
+    recursos: ['requisicoes', 'veiculos'],
+  });
   const { recarregar } = op;
   const acao = useAcao(async () => {
     await recarregar();
@@ -460,7 +462,9 @@ export function PainelComFiltros({
   veiculos: Veiculo[];
 }) {
   const [filtros, setFiltros] = React.useState<FiltrosDashboard>({});
-  const r = useCarga(() => api.painel<unknown>(painel, filtros), JSON.stringify(filtros));
+  const r = useCarga(() => api.painel<unknown>(painel, filtros), JSON.stringify(filtros), {
+    recursos: ['requisicoes', 'veiculos'],
+  });
   const d = r.dados?.dados;
   // O resumo vale para os filtros que a API aplicou aos números exibidos, não para o formulário.
   const efetivos = r.dados?.filtros;

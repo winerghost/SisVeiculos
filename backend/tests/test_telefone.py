@@ -563,3 +563,28 @@ def test_payload_http_leva_contatos_e_e_assinado() -> None:
     p = montar_payload("requisicao.autorizada", {"id": "r1", "status": "autorizada"}, contatos=ct)
     assert p["contatos"] == ct and p["versao"] == 1
     assert "contatos" not in montar_payload("requisicao.criada", {"id": "r1"})
+
+
+def test_cancelada_leva_motorista_designado_so_se_autorizada(client_n, auth, grav, repo, pessoas):  # type: ignore[no-untyped-def]
+    """Contrato do n8n: o motorista só é avisado depois de autorizada. Cancelar uma autorizada
+    leva `contatos.motorista` (designado na autorização); cancelar uma solicitada leva None."""
+    repo.config = replace(repo.ler_configuracoes(), motorista=True)
+    c = pessoas
+    r1 = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    acao(client_n, auth, c.aut, r1, "autorizar")  # motorista padrão (único ativo)
+    acao(client_n, auth, c.aut, r1, "cancelar")
+    r2 = criar(client_n, auth, c.sol, c.veiculo).get_json()["id"]
+    acao(client_n, auth, c.sol, r2, "cancelar")
+    assert grav.eventos == [
+        "requisicao.criada",
+        "requisicao.autorizada",
+        "requisicao.cancelada",
+        "requisicao.criada",
+        "requisicao.cancelada",
+    ]
+    cancelada_autorizada, cancelada_solicitada = grav.contatos[2], grav.contatos[4]
+    assert cancelada_autorizada["motorista"] == _p(repo, c.mot)
+    assert set(cancelada_autorizada["motorista"]) == {"id", "nome", "telefone", "email"}
+    assert cancelada_solicitada["motorista"] is None
+    for ct in grav.contatos:
+        assert "motorista_previsto" not in ct

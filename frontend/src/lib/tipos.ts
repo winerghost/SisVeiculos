@@ -212,6 +212,8 @@ export type CampoAcao = CampoKm | CampoLocal;
 export type CorpoAcao = Partial<Record<CampoAcao, number>> & {
   precisao_m?: number;
   motorista_id?: string;
+  /** Só após o 409 `km_alto_confirmar`: o usuário confirmou a distância informada pela API. */
+  confirmar_km_alto?: true;
 };
 
 /** GET /api/admin/requisicoes/<id>/localizacoes (só admin; 403 para os demais). */
@@ -786,4 +788,14 @@ export interface RespostaImportacao {
   /** Só é true quando a confirmação gravou de fato; a prévia devolve false. */
   aplicado: boolean;
   acoes_permitidas: string[];
+}
+
+/** Recursos acompanhados por GET /api/atualizacoes (lista fechada definida pelo backend). */
+export type RecursoTempoReal =
+  'requisicoes' | 'notificacoes' | 'veiculos' | 'configuracoes' | 'usuarios';
+
+/** Versões opacas por recurso (só comparadas por igualdade) e o contador do sino. */
+export interface RespostaAtualizacoes {
+  recursos: Partial<Record<RecursoTempoReal, string>>;
+  nao_lidas: number;
 }

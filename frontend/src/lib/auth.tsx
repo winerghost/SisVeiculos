@@ -24,6 +24,8 @@ interface Contexto {
   /** Notificações não lidas (GET /api/notificacoes/contagem). Só em memória; zera ao sair. */
   naoLidas: number;
   recarregarNaoLidas: () => Promise<void>;
+  /** Valor de `nao_lidas` vindo de GET /api/atualizacoes (TempoRealProvider). */
+  definirNaoLidas: (n: number) => void;
   /** Mensagem recebida da API/SDK para exibir na tela de login ou de erro. */
   aviso: string | null;
   entrar: (email: string, senha: string) => Promise<string | null>;
@@ -153,20 +155,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [tratarErro]);
 
-  // Contagem inicial e polling a cada 60s apenas com a aba visível (e ao voltar a ela).
-  React.useEffect(() => {
-    if (estado !== 'ativo') return;
-    const tick = () => {
-      if (document.visibilityState === 'visible') void recarregarNaoLidas();
-    };
-    tick();
-    const id = window.setInterval(tick, 60_000);
-    document.addEventListener('visibilitychange', tick);
-    return () => {
-      window.clearInterval(id);
-      document.removeEventListener('visibilitychange', tick);
-    };
-  }, [estado, recarregarNaoLidas]);
+  // O contador é alimentado pelo TempoRealProvider (GET /api/atualizacoes a cada 10 s com a aba
+  // visível); sem esse endpoint, o próprio provider volta a consultar a contagem a cada 60 s.
+  const definirNaoLidas = React.useCallback((n: number) => {
+    if (typeof n === 'number' && Number.isFinite(n)) setNaoLidas(n);
+  }, []);
 
   const carregarEu = React.useCallback(async () => {
     try {
@@ -251,6 +244,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       relatorios,
       naoLidas,
       recarregarNaoLidas,
+      definirNaoLidas,
       aviso,
       entrar,
       sair,
@@ -265,6 +259,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       relatorios,
       naoLidas,
       recarregarNaoLidas,
+      definirNaoLidas,
       aviso,
       entrar,
       sair,

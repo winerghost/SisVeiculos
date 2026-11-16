@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { AppShell } from '@/components/app-shell';
 import { CartaoRequisicao } from '@/components/cartao-requisicao';
+import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -20,10 +21,14 @@ const ABAS: { status: Status; rotulo: string }[] = [
 
 function Painel() {
   const [aba, setAba] = React.useState<Status>('solicitada');
-  const listas = useCarga(async () => {
-    const [a, b, c] = await Promise.all(ABAS.map((x) => api.requisicoes(x.status)));
-    return { solicitada: a, autorizada: b, em_uso: c } as Record<string, ListaRequisicoes>;
-  });
+  const listas = useCarga(
+    async () => {
+      const [a, b, c] = await Promise.all(ABAS.map((x) => api.requisicoes(x.status)));
+      return { solicitada: a, autorizada: b, em_uso: c } as Record<string, ListaRequisicoes>;
+    },
+    '',
+    { recursos: ['requisicoes'] },
+  );
   const acao = useAcao(async () => {
     await listas.recarregar();
   });
@@ -75,6 +80,7 @@ function Painel() {
 
       {listas.erro ? <Alerta className="mb-4">{listas.erro}</Alerta> : null}
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
+      <DialogoKmAlto confirmacao={acao.confirmacaoKm} />
 
       <div id="painel-lista" role="tabpanel" aria-labelledby={`aba-${aba}`}>
         {listas.carregando ? (

@@ -112,6 +112,8 @@ def validar_criacao(corpo: Any) -> dict[str, Any]:
 
 
 KM_MAX = 2_147_483_647  # limite do integer do Postgres
+# Distância total (chegada - saída) acima disto pede confirmação explícita na chegada (v1 fixa).
+KM_LIMITE_CONFIRMACAO = 2000
 
 
 def validar_km(valor: Any, campo: str) -> int:

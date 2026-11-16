@@ -213,6 +213,7 @@ class Config:
     # Notificações: leitura/escrita por usuário; despachante de e-mail dos críticos (1 worker).
     limite_notificacoes: str = "120 per minute"  # GET /api/notificacoes*, por usuário
     limite_notificacoes_escrita: str = "60 per minute"  # POST .../lida e .../lidas, por usuário
+    limite_atualizacoes: str = "30 per minute"  # GET /api/atualizacoes (polling), por usuário
     email_notif_intervalo_segundos: int = 30  # pausa entre ciclos do despachante
     email_notif_max_por_hora: int = 20  # teto de e-mails de notificação por hora (processo)
     # Web Push (VAPID). A chave privada só vem do ambiente e nunca aparece em repr/log.

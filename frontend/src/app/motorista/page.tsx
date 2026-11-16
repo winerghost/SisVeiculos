@@ -10,6 +10,7 @@ import { AppShell } from '@/components/app-shell';
 import { AbasArquivadas } from '@/components/abas-arquivadas';
 import { AvisoOrganizarRegiao } from '@/components/aviso-organizar';
 import { CartaoViagem } from '@/components/cartao-viagem';
+import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -38,7 +39,9 @@ const GRUPOS: { chave: string; titulo: string; status: Status[]; vazio: string }
 
 function Viagens() {
   const [arquivadas, setArquivadas] = React.useState(false);
-  const lista = useCarga(() => api.viagensMotorista(arquivadas), String(arquivadas));
+  const lista = useCarga(() => api.viagensMotorista(arquivadas), String(arquivadas), {
+    recursos: ['requisicoes'],
+  });
   const acao = useAcao(async () => {
     await lista.recarregar();
   });
@@ -84,6 +87,7 @@ function Viagens() {
       />
       {lista.erro ? <Alerta className="mb-4">{lista.erro}</Alerta> : null}
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
+      <DialogoKmAlto confirmacao={acao.confirmacaoKm} />
       <h2 ref={titulo} tabIndex={-1} className="sr-only">
         {arquivadas ? 'Viagens arquivadas' : 'Viagens'}
       </h2>

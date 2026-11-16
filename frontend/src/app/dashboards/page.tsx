@@ -24,9 +24,9 @@ const ehPainel = (p: string): p is PainelId => (CHAVES as string[]).includes(p);
 
 function Conteudo() {
   const { eu } = useAuth();
-  const lista = useCarga(() => api.paineisDashboard());
+  const lista = useCarga(() => api.paineisDashboard(), '', { recursos: ['configuracoes'] });
   // Só para exibir descrições e opções de filtro; uma falha aqui não bloqueia os painéis.
-  const veiculos = useCarga(() => api.veiculos());
+  const veiculos = useCarga(() => api.veiculos(), '', { recursos: ['requisicoes', 'veiculos'] });
   const [escolhido, setEscolhido] = React.useState<PainelId | null>(null);
 
   const paineis = (lista.dados?.paineis ?? []).filter((p) => ehPainel(p.chave));

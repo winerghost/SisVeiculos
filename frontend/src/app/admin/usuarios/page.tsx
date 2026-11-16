@@ -35,6 +35,7 @@ function Conteudo() {
   const lista = useCarga(
     () => admin.usuarios({ q, role, ativo, limite: LIMITE, offset }),
     `${q}|${role}|${ativo}|${offset}`,
+    { recursos: ['usuarios'] },
   );
 
   const itens = lista.dados?.itens ?? [];

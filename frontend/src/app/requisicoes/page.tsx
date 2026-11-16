@@ -13,6 +13,7 @@ import { AppShell } from '@/components/app-shell';
 import { AbasArquivadas } from '@/components/abas-arquivadas';
 import { AvisoOrganizarRegiao } from '@/components/aviso-organizar';
 import { CartaoRequisicao } from '@/components/cartao-requisicao';
+import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
@@ -20,8 +21,10 @@ import { Button } from '@/components/ui/button';
 function Conteudo() {
   const { eu } = useAuth();
   const [arquivadas, setArquivadas] = React.useState(false);
-  const reqs = useCarga(() => api.requisicoes(undefined, arquivadas), String(arquivadas));
-  const veiculos = useCarga(() => api.veiculos());
+  const reqs = useCarga(() => api.requisicoes(undefined, arquivadas), String(arquivadas), {
+    recursos: ['requisicoes'],
+  });
+  const veiculos = useCarga(() => api.veiculos(), '', { recursos: ['requisicoes', 'veiculos'] });
   const acao = useAcao(async () => {
     await Promise.all([reqs.recarregar(), veiculos.recarregar()]);
   });
@@ -83,6 +86,7 @@ function Conteudo() {
 
       {reqs.erro ? <Alerta className="mb-4">{reqs.erro}</Alerta> : null}
       {acao.erro ? <Alerta className="mb-4">{acao.erro}</Alerta> : null}
+      <DialogoKmAlto confirmacao={acao.confirmacaoKm} />
 
       <h2
         ref={titulo}

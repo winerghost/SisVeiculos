@@ -19,7 +19,7 @@ import { BlocoSaudacoes } from '@/components/bloco-saudacoes';
  * nunca chegam aqui (a API só informa se estão configuradas).
  */
 export function SecaoIA() {
-  const cfg = useCarga(() => admin.ia());
+  const cfg = useCarga(() => admin.ia(), '', { recursos: ['configuracoes'] });
   const envio = useEnvio();
   const [teste, setTeste] = React.useState<ResultadoTesteIA | null>(null);
   const [clicado, setClicado] = React.useState<string | null>(null);

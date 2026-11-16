@@ -41,6 +41,7 @@ import type {
   InscricaoPush,
   PreviaRelatorio,
   Requisicao,
+  RespostaAtualizacoes,
   RespostaChecklists,
   RespostaPainel,
   RespostaPaineis,
@@ -100,6 +101,47 @@ async function chamar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
     );
   }
   return corpo as T;
+}
+
+/**
+ * GET /api/atualizacoes com If-None-Match manual (o fetch usa no-store, então o navegador não
+ * envia o ETag sozinho). 304 = nada mudou (`dados` null). Erros seguem o formato da API.
+ */
+async function chamarAtualizacoes(
+  etag: string | null,
+): Promise<{ dados: RespostaAtualizacoes | null; etag: string | null }> {
+  const { data } = await supabase().auth.getSession();
+  const token = data.session?.access_token;
+  const cabecalhos = new Headers();
+  if (token) cabecalhos.set('Authorization', `Bearer ${token}`);
+  if (etag) cabecalhos.set('If-None-Match', etag);
+  let resp: Response;
+  try {
+    resp = await fetch('/api/atualizacoes', { headers: cabecalhos, cache: 'no-store' });
+  } catch {
+    throw new ApiErro(0, 'sem_conexao', 'Sem conexão com o servidor. Tente novamente.');
+  }
+  if (resp.status === 304) return { dados: null, etag };
+  let corpo: unknown = null;
+  try {
+    corpo = await resp.json();
+  } catch {
+    corpo = null;
+  }
+  if (!resp.ok) {
+    const e = (corpo as CorpoErro)?.erro;
+    throw new ApiErro(
+      resp.status,
+      e?.codigo ?? 'erro',
+      e?.mensagem ?? 'Não foi possível concluir a operação.',
+    );
+  }
+  const r = corpo as RespostaAtualizacoes | null;
+  // Corpo fora do contrato (ex.: SW antigo devolvendo outra coisa): trata como falha de rede.
+  if (!r || typeof r !== 'object' || !r.recursos || typeof r.recursos !== 'object') {
+    throw new ApiErro(0, 'sem_conexao', 'Sem conexão com o servidor. Tente novamente.');
+  }
+  return { dados: r, etag: resp.headers.get('ETag') };
 }
 
 /** Nome do arquivo no Content-Disposition (filename* tem prioridade); sem cabeçalho, usa o padrão. */
@@ -347,6 +389,8 @@ export const api = {
       `/notificacoes${query({ ...p, somente_nao_lidas: String(p.somente_nao_lidas) })}`,
     ),
   contagemNotificacoes: () => chamar<{ nao_lidas: number }>('/notificacoes/contagem'),
+  /** Versões por recurso para a atualização em tempo real (ver lib/tempo-real.tsx). */
+  atualizacoes: (etag: string | null) => chamarAtualizacoes(etag),
   marcarNotificacaoLida: (id: string) =>
     chamar<{ id: string; lida_em: string }>(`/notificacoes/${enc(id)}/lida`, JSON_POST()),
   marcarNotificacoesLidas: () => chamar<{ marcadas: number }>('/notificacoes/lidas', JSON_POST()),

@@ -179,7 +179,7 @@ function BlocoQr({ v, aoRotacionar }: { v: VeiculoAdmin; aoRotacionar: () => Pro
 }
 
 function Conteudo() {
-  const lista = useCarga(() => admin.veiculos());
+  const lista = useCarga(() => admin.veiculos(), '', { recursos: ['veiculos'] });
   const acao = useEnvio();
   const [form, setForm] = React.useState<{ aberto: boolean; alvo: VeiculoAdmin | null }>({
     aberto: false,

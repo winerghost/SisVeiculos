@@ -30,7 +30,7 @@ const dois = (n: number) => String(n).padStart(2, '0');
 function Formulario() {
   const { eu, tratarErro } = useAuth();
   const router = useRouter();
-  const veiculos = useCarga(() => api.veiculos());
+  const veiculos = useCarga(() => api.veiculos(), '', { recursos: ['requisicoes', 'veiculos'] });
   const [nome, setNome] = React.useState(eu?.nome ?? '');
   const [unidade, setUnidade] = React.useState(eu?.unidade ?? '');
   // ?veiculo=<id> (vindo do leitor de QR) só pré-seleciona; a API revalida no envio.

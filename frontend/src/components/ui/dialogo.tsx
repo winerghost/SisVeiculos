@@ -14,6 +14,7 @@ export function Dialogo({
   descricao,
   onFechar,
   role = 'alertdialog',
+  bloqueado = false,
   children,
 }: {
   aberto: boolean;
@@ -21,6 +22,8 @@ export function Dialogo({
   descricao?: string;
   onFechar: () => void;
   role?: 'dialog' | 'alertdialog';
+  /** Envio em andamento: Esc e clique no fundo não fecham (o resultado ainda vai chegar). */
+  bloqueado?: boolean;
   children: React.ReactNode;
 }) {
   const ref = React.useRef<HTMLDialogElement>(null);
@@ -45,13 +48,17 @@ export function Dialogo({
       aria-labelledby={tituloId}
       aria-describedby={descricao ? descId : undefined}
       onClose={onFechar}
+      onCancel={(e) => {
+        // Esc: o <dialog> fecharia sozinho; durante o envio, fica aberto.
+        if (bloqueado) e.preventDefault();
+      }}
       // Eventos do diálogo não podem iniciar o arrasto do cartão que o contém no DOM.
       onPointerDown={(e) => e.stopPropagation()}
       onPointerMove={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
       onClick={(e) => {
         // Clique no fundo (o próprio <dialog>, fora da caixa de conteúdo) = voltar.
-        if (e.target === e.currentTarget) onFechar();
+        if (e.target === e.currentTarget && !bloqueado) onFechar();
       }}
       className={cn(
         'dialogo-entra m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-borda bg-white p-0 text-texto',

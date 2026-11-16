@@ -96,7 +96,11 @@ class ServicoAtualizacoes:
 
     def versoes(self, perfil: Perfil) -> dict[str, Any]:
         """Uma chamada ao banco. O dono é sempre o perfil autenticado (nunca vem do cliente)."""
-        crus = self._repo.versoes_atualizacao(perfil.id)
+        crus = dict(self._repo.versoes_atualizacao(perfil.id))
+        # `acoes_permitidas`, campos exigidos (km, checklist, motorista) e a própria visibilidade
+        # das requisições dependem das Configurações: mudou um recurso, a tela de requisições
+        # precisa recarregar. O backend decide essa dependência; o cliente só compara strings.
+        crus["requisicoes"] = f"{crus['requisicoes']}|{crus['configuracoes']}"
         recursos = {r: _opaco(self._chave, perfil.id, r, str(crus[r])) for r in RECURSOS_COMUNS}
         # `usuarios` só para admin: decidido pelo papel vindo do banco (g.perfil), não do cliente.
         if perfil.role == "admin":

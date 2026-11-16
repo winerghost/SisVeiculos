@@ -173,6 +173,14 @@ export interface ChamadaPasskey {
 }
 
 /** Código público (16-32 [a-z0-9]) que a API fake reconhece; qualquer outro dá 404 uniforme. */
+/** Corpo de GET /api/atualizacoes com versões opacas fixas (sobrescreva `notificacoes`). */
+export function respostaAtualizacoes(naoLidas: number, notificacoes = 'n0') {
+  return {
+    recursos: { requisicoes: 'r0', notificacoes, veiculos: 'v0', configuracoes: 'c0' },
+    nao_lidas: naoLidas,
+  };
+}
+
 export const CODIGO_QR_VALIDO = 'a1b2c3d4e5f6g7h8i9j0';
 export const CODIGO_QR_ROTACIONADO = 'z9y8x7w6v5u4t3s2r1q0';
 
@@ -496,6 +504,14 @@ export async function mockarApi(page: Page, opcoes: Opcoes = {}) {
     }),
   );
   await page.route('**/auth/v1/logout*', (route) => route.fulfill({ status: 204 }));
+
+  // Tempo real (GET /api/atualizacoes): versões fixas e sino zerado. mockarNotificacoes, quando
+  // usado, registra a própria rota depois (tem precedência) com o contador da lista dela.
+  await page.route('**/api/atualizacoes', (route) =>
+    papelDoToken(route)
+      ? route.fulfill({ json: respostaAtualizacoes(0), headers: { ETag: '"e2e-fixo"' } })
+      : erro(route, 401, 'nao_autenticado', 'Sessão inválida ou expirada. Faça login novamente.'),
+  );
 
   await page.route('**/api/eu', async (route) => {
     const papel = papelDoToken(route);

@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import { respostaAtualizacoes } from './mock-api';
 
 // API fake das notificações (contrato combinado com o backend). Usada junto com mockarApi.
 // Título, texto e destino vêm prontos, como no servidor: o front só exibe.
@@ -52,7 +53,7 @@ export async function mockarNotificacoes(page: Page, opcoes: OpcoesNotificacoes 
   };
   const marcadas: string[] = [];
   const consultas: { limite: number; offset: number; somente_nao_lidas: string }[] = [];
-  const state = { todasMarcadas: 0, contagens: 0 };
+  const state = { todasMarcadas: 0, contagens: 0, atualizacoes: 0 };
 
   const papelDoToken = (route: Route): Papel | null => {
     const auth = route.request().headers()['authorization'] ?? '';
@@ -63,6 +64,15 @@ export async function mockarNotificacoes(page: Page, opcoes: OpcoesNotificacoes 
   const naoLidas = (p: Papel) => lista[p].filter((n) => n.lida_em === null).length;
   const ordenadas = (p: Papel) =>
     [...lista[p]].sort((a, b) => Date.parse(b.criada_em) - Date.parse(a.criada_em));
+
+  // Tempo real: o sino vem daqui (nao_lidas) e a versão de `notificacoes` acompanha a lista.
+  await page.route('**/api/atualizacoes', (route) => {
+    const papel = papelDoToken(route);
+    if (!papel) return erroApi(route, 401, 'nao_autenticado', 'Autenticação necessária.');
+    state.atualizacoes += 1;
+    const versao = lista[papel].map((n) => `${n.id}:${n.lida_em ?? ''}`).join('|');
+    return route.fulfill({ json: respostaAtualizacoes(naoLidas(papel), versao) });
+  });
 
   await page.route(/\/api\/notificacoes(\/.*)?(\?.*)?$/, async (route) => {
     const papel = papelDoToken(route);

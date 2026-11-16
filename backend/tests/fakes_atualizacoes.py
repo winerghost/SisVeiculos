@@ -94,10 +94,20 @@ class AtualizacoesMemoria:
         return {
             "requisicoes": _h(req),
             "notificacoes": _h(notif),
+            # Cadastro + ocupação (migration 20261203120000): abrir/fechar requisição alheia muda.
             "veiculos": _h(
-                sorted(
-                    (k, sorted((c, repr(x)) for c, x in v.items()))
-                    for k, v in self.veiculos.items()
+                (
+                    sorted(
+                        (k, sorted((c, repr(x)) for c, x in v.items()))
+                        for k, v in self.veiculos.items()
+                    ),
+                    sorted(
+                        {
+                            r["veiculo_id"]
+                            for r in self.requisicoes.values()
+                            if r["status"] in ("solicitada", "autorizada", "em_uso")
+                        }
+                    ),
                 )
             ),
             "configuracoes": _h(repr(self.config)),

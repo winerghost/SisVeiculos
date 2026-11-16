@@ -111,15 +111,18 @@ test('dois cliques e dois 401 simultâneos geram um único logout', async ({ pag
   await page.waitForTimeout(500);
   expect(logouts).toHaveLength(1);
 
-  // Dois 401 ao mesmo tempo (contagem de notificações disparada duas vezes).
+  // Dois 401 ao mesmo tempo (tempo real e contagem de notificações; visibilidade disparada duas
+  // vezes).
   logouts.length = 0;
   await logar(page);
-  await page.route('**/api/notificacoes/contagem', (route) =>
-    route.fulfill({
-      status: 401,
-      json: { erro: { codigo: 'nao_autenticado', mensagem: 'Sessão expirada.' } },
-    }),
-  );
+  for (const rota of ['**/api/notificacoes/contagem', '**/api/atualizacoes']) {
+    await page.route(rota, (route) =>
+      route.fulfill({
+        status: 401,
+        json: { erro: { codigo: 'nao_autenticado', mensagem: 'Sessão expirada.' } },
+      }),
+    );
+  }
   await page.evaluate(() => {
     document.dispatchEvent(new Event('visibilitychange'));
     document.dispatchEvent(new Event('visibilitychange'));

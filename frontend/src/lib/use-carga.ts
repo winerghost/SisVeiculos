@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { ApiErro } from './api';
 import { useAuth } from './auth';
 import { emEdicao, useTempoReal } from './tempo-real';
 import type { RecursoTempoReal } from './tipos';
@@ -36,7 +37,9 @@ export function useCarga<T>(buscar: () => Promise<T>, chave = '', opcoes: Opcoes
   const ultimaBusca = React.useRef(0);
 
   const liberar = tempoReal?.liberar;
-  const recarregar = React.useCallback(async () => {
+  // `silencioso` (recarga do tempo real): falha transitória mantém os dados na tela, sem alerta;
+  // a próxima mudança de versão tenta de novo. 401/403 seguem o tratamento padrão (tratarErro).
+  const executar = React.useCallback(async (silencioso: boolean) => {
     const minha = ++ultimaBusca.current;
     // Qualquer recarga (ação, botão, tempo real) já traz o estado atual: some a faixa desta tela.
     liberar?.(id);
@@ -47,11 +50,18 @@ export function useCarga<T>(buscar: () => Promise<T>, chave = '', opcoes: Opcoes
       setErro(null);
     } catch (e) {
       if (minha !== ultimaBusca.current) return;
-      setErro(tratarErro(e));
+      const msg = tratarErro(e);
+      // Transitória = sem rede, 429 ou 5xx. Outras respostas (403, 404, 409 recurso desligado)
+      // são o novo estado informado pela API e aparecem normalmente.
+      const transitoria =
+        !(e instanceof ApiErro) || e.status === 0 || e.status === 429 || e.status >= 500;
+      if (!silencioso || !transitoria) setErro(msg);
     } finally {
       if (minha === ultimaBusca.current) setCarregando(false);
     }
   }, [tratarErro, liberar, id]);
+  const recarregar = React.useCallback(() => executar(false), [executar]);
+  const recarregarSilencioso = React.useCallback(() => executar(true), [executar]);
 
   React.useEffect(() => {
     void recarregar();
@@ -66,13 +76,13 @@ export function useCarga<T>(buscar: () => Promise<T>, chave = '', opcoes: Opcoes
     const recursos = recursosChave.split(',') as RecursoTempoReal[];
     const cancelar = assinar(recursos, () => {
       if (emEdicao()) segurar(id, recursos, () => void recarregar());
-      else void recarregar();
+      else void recarregarSilencioso();
     });
     return () => {
       cancelar();
       liberar?.(id);
     };
-  }, [assinar, segurar, liberar, recursosChave, recarregar, id]);
+  }, [assinar, segurar, liberar, recursosChave, recarregar, recarregarSilencioso, id]);
 
   return { dados, setDados, erro, carregando, recarregar };
 }

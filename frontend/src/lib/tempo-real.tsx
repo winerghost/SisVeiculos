@@ -16,6 +16,10 @@ const INTERVALO_MS = 10_000;
 const MAX_ATRASO_MS = 60_000;
 /** Sem o endpoint (backend antigo): só o contador do sino, como antes. */
 const INTERVALO_SEM_ENDPOINT_MS = 60_000;
+/** Sem o endpoint: tenta de novo o /api/atualizacoes a cada N ciclos (deploy novo do backend). */
+const CICLOS_ATE_REPROVAR = 5;
+/** Espalha a recarga do /eu entre as abas quando as Configurações mudam (evita pico de 429). */
+const JITTER_EU_MS = 2_000;
 const DEBOUNCE_MS = 300;
 
 type Ouvinte = () => void;
@@ -74,7 +78,7 @@ export function TempoRealProvider({ children }: { children: React.ReactNode }) {
   const {
     estado,
     tratarErro,
-    recarregar: recarregarEu,
+    atualizarEu,
     definirNaoLidas,
     recarregarNaoLidas,
   } = useAuth();
@@ -88,9 +92,9 @@ export function TempoRealProvider({ children }: { children: React.ReactNode }) {
   const [seguros, setSeguros] = React.useState<ReadonlySet<RecursoTempoReal>>(new Set());
 
   // Referências estáveis às funções do AuthProvider, para o laço não reiniciar a cada render.
-  const auth = React.useRef({ tratarErro, recarregarEu, definirNaoLidas, recarregarNaoLidas });
+  const auth = React.useRef({ tratarErro, atualizarEu, definirNaoLidas, recarregarNaoLidas });
   React.useEffect(() => {
-    auth.current = { tratarErro, recarregarEu, definirNaoLidas, recarregarNaoLidas };
+    auth.current = { tratarErro, atualizarEu, definirNaoLidas, recarregarNaoLidas };
   });
 
   const atualizarSeguros = React.useCallback(() => {
@@ -156,6 +160,8 @@ export function TempoRealProvider({ children }: { children: React.ReactNode }) {
     let emCurso = false;
     let atraso = INTERVALO_MS;
     let semEndpoint = false;
+    let ciclosSemEndpoint = 0;
+    let timerEu: number | undefined;
     let versoes: Record<string, string> | null = null;
     let etag: string | null = null;
 
@@ -172,14 +178,16 @@ export function TempoRealProvider({ children }: { children: React.ReactNode }) {
       timer = undefined;
       emCurso = true;
       try {
-        if (semEndpoint) {
+        if (semEndpoint && ++ciclosSemEndpoint < CICLOS_ATE_REPROVAR) {
           await auth.current.recarregarNaoLidas();
           agendar(INTERVALO_SEM_ENDPOINT_MS);
           return;
         }
+        ciclosSemEndpoint = 0;
         const r = await api.atualizacoes(etag);
         if (parado) return;
         atraso = INTERVALO_MS;
+        semEndpoint = false;
         if (r.dados) {
           etag = r.etag;
           auth.current.definirNaoLidas(r.dados.nao_lidas);
@@ -189,26 +197,43 @@ export function TempoRealProvider({ children }: { children: React.ReactNode }) {
               (k) => versoes?.[k] !== undefined && versoes[k] !== novas[k],
             );
             if (mudaram.length > 0) invalidar(mudaram);
-            // Configurações mudaram: recursos e ações do /eu podem ter mudado também.
-            if (mudaram.includes('configuracoes')) void auth.current.recarregarEu();
+            // Configurações mudaram: recursos e ações do /eu podem ter mudado também. Recarga
+            // silenciosa (falha não derruba a tela) e espalhada no tempo entre as abas.
+            if (mudaram.includes('configuracoes') && timerEu === undefined) {
+              timerEu = window.setTimeout(() => {
+                timerEu = undefined;
+                if (!parado) void auth.current.atualizarEu();
+              }, Math.random() * JITTER_EU_MS);
+            }
           }
           versoes = { ...novas };
         }
         agendar(INTERVALO_MS);
       } catch (e) {
         if (parado) return;
-        if (e instanceof ApiErro && (e.status === 401 || e.status === 403)) {
+        if (
+          e instanceof ApiErro &&
+          (e.status === 401 ||
+            (e.status === 403 && (e.codigo === 'mfa_requerido' || e.codigo === 'conta_inativa')))
+        ) {
           // Sessão encerrada, conta inativa ou MFA: tratamento existente, sem insistir.
           auth.current.tratarErro(e);
           parado = true;
           return;
         }
         if (e instanceof ApiErro && e.status === 404) {
+          // Backend sem o endpoint: o sino volta ao modo antigo JÁ (não espera 60 s).
           semEndpoint = true;
+          ciclosSemEndpoint = 0;
+          await auth.current.recarregarNaoLidas();
           agendar(INTERVALO_SEM_ENDPOINT_MS);
           return;
         }
-        // Sem rede, 429 ou 5xx: espera crescente 10 → 20 → 40 → 60 s.
+        // Sem rede, 429, 5xx (ex.: função do banco ainda não aplicada) ou outro 403: o sino não
+        // fica vazio nem congelado; a contagem vem do endpoint próprio enquanto isso.
+        await auth.current.recarregarNaoLidas();
+        if (parado) return;
+        // Espera crescente 10 → 20 → 40 → 60 s.
         atraso = Math.min(atraso * 2, MAX_ATRASO_MS);
         agendar(atraso);
       } finally {
@@ -242,6 +267,7 @@ export function TempoRealProvider({ children }: { children: React.ReactNode }) {
     return () => {
       parado = true;
       if (timer !== undefined) window.clearTimeout(timer);
+      if (timerEu !== undefined) window.clearTimeout(timerEu);
       document.removeEventListener('visibilitychange', agora);
       window.removeEventListener('focus', agora);
       window.removeEventListener('pageshow', agora);

@@ -17,6 +17,8 @@ import { Spinner } from '@/components/ui/spinner';
 import { Switch } from '@/components/ui/switch';
 
 const TAMANHO_PAGINA = 20;
+/** Teto de `limite` aceito pela API (LIMITE_MAX em services/notificacoes.py). */
+const LIMITE_MAXIMO = 100;
 
 /** Só aceita caminho interno relativo vindo do servidor (nunca URL externa). */
 function destinoSeguro(destino: string | null): string | null {
@@ -104,14 +106,21 @@ function Conteudo() {
     return () => window.clearInterval(id);
   }, []);
 
+  // Quantos itens a tela mostra agora. Na recarga (tempo real, marcar todas, filtro) a lista
+  // inteira é refeita do topo com esse tamanho e as páginas extras são descartadas: sem isso,
+  // uma notificação nova empurraria itens para fora da 1ª página e eles sumiriam (lacuna) ou o
+  // total ficaria velho. O contador do sino vem do GET /api/atualizacoes (sem chamada extra).
+  const carregados = React.useRef(TAMANHO_PAGINA);
   const primeira = useCarga(
     async () => {
+      const limite = Math.min(LIMITE_MAXIMO, Math.max(TAMANHO_PAGINA, carregados.current));
       const r = await api.notificacoes({
-        limite: TAMANHO_PAGINA,
+        limite,
         offset: 0,
         somente_nao_lidas: somenteNaoLidas,
       });
-      void recarregarNaoLidas();
+      setExtras(null);
+      setLidas({});
       return r;
     },
     String(somenteNaoLidas),
@@ -124,6 +133,9 @@ function Conteudo() {
     lidas[x.id] ? { ...x, lida_em: lidas[x.id] ?? null } : x,
   );
   const total = extras?.total ?? primeira.dados?.total ?? 0;
+  React.useEffect(() => {
+    carregados.current = itens.length;
+  });
   const erro = erroAcao ?? primeira.erro;
 
   async function maisItens() {
@@ -163,9 +175,7 @@ function Conteudo() {
     setErroAcao(null);
     try {
       await api.marcarNotificacoesLidas();
-      setExtras(null);
-      setLidas({});
-      await primeira.recarregar();
+      await Promise.all([primeira.recarregar(), recarregarNaoLidas()]);
     } catch (e) {
       setErroAcao(tratarErro(e));
     } finally {
@@ -185,6 +195,7 @@ function Conteudo() {
         <Switch
           checked={somenteNaoLidas}
           onChange={() => {
+            carregados.current = TAMANHO_PAGINA;
             setExtras(null);
             setErroAcao(null);
             setSomenteNaoLidas((v) => !v);

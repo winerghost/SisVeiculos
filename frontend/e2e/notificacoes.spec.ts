@@ -182,23 +182,24 @@ test('marcar todas como lidas', async ({ page }) => {
   expect(mock.state.todasMarcadas).toBe(1);
 });
 
-test('polling de 60 s atualiza o contador, só com a aba visível', async ({ page }) => {
+test('tempo real de 10 s atualiza o contador, só com a aba visível', async ({ page }) => {
   await page.clock.install();
   const { mock } = await abrir(page, 'solicitante', { solicitante: [nova()] });
   await expect(sino(page, 'Notificações, 1 não lida')).toBeVisible();
 
   mock.adicionar('solicitante', nova());
-  await page.clock.fastForward(61_000);
+  await page.clock.fastForward(11_000);
   await expect(sino(page, 'Notificações, 2 não lidas')).toBeVisible();
 
-  // Aba oculta: o intervalo dispara, mas nada é consultado.
+  // Aba oculta: nada é consultado.
   await page.evaluate(() =>
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }),
   );
-  const antes = mock.state.contagens;
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  const antes = mock.state.atualizacoes;
   mock.adicionar('solicitante', nova());
   await page.clock.fastForward(61_000);
-  expect(mock.state.contagens).toBe(antes);
+  expect(mock.state.atualizacoes).toBe(antes);
   await expect(sino(page, 'Notificações, 2 não lidas')).toBeVisible();
 
   // Ao voltar à aba, atualiza na hora.
@@ -260,4 +261,51 @@ test('destino malicioso do servidor não navega para fora do app', async ({ page
   await expect(sino(page, 'Notificações, 0 não lidas')).toBeVisible();
   await expect(page).toHaveURL(/\/notificacoes\/?$/);
   expect(mock.marcadas).toHaveLength(3);
+});
+
+test('sem o endpoint de tempo real (404) o sino usa a contagem na hora', async ({ page }) => {
+  const { mock } = await abrir(page, 'solicitante', { solicitante: [nova(), nova()] });
+  await page.route('**/api/atualizacoes', (route) =>
+    route.fulfill({
+      status: 404,
+      json: { erro: { codigo: 'nao_encontrado', mensagem: 'Não encontrado.' } },
+    }),
+  );
+  await page.reload();
+  await expect(sino(page, 'Notificações, 2 não lidas')).toBeVisible();
+  expect(mock.state.contagens).toBeGreaterThan(0);
+});
+
+test('com o tempo real em erro (503) o sino não fica vazio', async ({ page }) => {
+  await abrir(page, 'autorizador', { autorizador: [nova(), nova(), nova()] });
+  await page.route('**/api/atualizacoes', (route) =>
+    route.fulfill({
+      status: 503,
+      json: { erro: { codigo: 'indisponivel', mensagem: 'Serviço de dados indisponível.' } },
+    }),
+  );
+  await page.reload();
+  await expect(sino(page, 'Notificações, 3 não lidas')).toBeVisible();
+});
+
+test('notificação nova com várias páginas carregadas não abre lacuna na lista', async ({
+  page,
+}) => {
+  await page.clock.install();
+  const lista = Array.from({ length: 25 }, (_, i) => nova({ titulo: `Aviso ${i + 1}` }, 25 - i));
+  const { mock } = await abrir(page, 'solicitante', { solicitante: lista });
+  await sino(page, 'Notificações, 25 não lidas').click();
+  await page.getByRole('button', { name: 'Carregar mais' }).click();
+  await expect(page.getByRole('button', { name: /Aviso 1\b/ })).toBeVisible();
+
+  mock.adicionar('solicitante', nova({ titulo: 'Aviso recente' }, 0));
+  await page.clock.fastForward(11_000);
+  await expect(page.getByRole('button', { name: /Aviso recente/ })).toBeVisible();
+  // A recarga refaz a lista do topo com o mesmo tamanho (25): o antigo 20º não some (nada de
+  // lacuna) e o mais antigo passa para a próxima página, com o total novo.
+  const item = (i: number) => page.getByRole('button', { name: new RegExp(`Aviso ${i}(?!\\d)`) });
+  for (let i = 2; i <= 25; i += 1) await expect(item(i)).toHaveCount(1);
+  await page.getByRole('button', { name: 'Carregar mais' }).click();
+  for (let i = 1; i <= 25; i += 1) await expect(item(i)).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Carregar mais' })).toHaveCount(0);
 });

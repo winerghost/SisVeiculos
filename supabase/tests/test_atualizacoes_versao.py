@@ -249,6 +249,23 @@ def test_veiculo_muda_para_todos(cena: Cena) -> None:
     assert versao(cena.sol_a)["veiculos"] != v1
 
 
+def test_veiculos_muda_com_ocupacao_alheia(cena: Cena) -> None:
+    """Migration 20261203120000 (N1): abrir/fechar requisicao de B muda `veiculos` para A (a
+    disponibilidade do GET /api/veiculos mudou); transicao entre status abertos e edicao nao."""
+    vid = h.novo_veiculo(cena.admin)  # cadastro antes: so a ocupacao muda daqui em diante
+    v0 = versao(cena.sol_a)["veiculos"]
+    with h.conectar() as c:
+        rid_b = h.inserir_requisicao(c, cena.sol_b, vid)
+    v1 = versao(cena.sol_a)["veiculos"]
+    assert v1 != v0
+    h.autorizar(rid_b, cena.aut)  # continua ocupado
+    with h.conectar() as c:
+        c.execute("update public.requisicoes set observacao = 'outra' where id = %s", (rid_b,))
+    assert versao(cena.sol_a)["veiculos"] == v1
+    h.cancelar(rid_b, cena.aut)  # libera o veiculo
+    assert versao(cena.sol_a)["veiculos"] != v1
+
+
 def test_usuarios_muda_com_perfil_e_nao_com_passkey_autenticada(cena: Cena) -> None:
     u0 = versao(cena.admin)["usuarios"]
     h.alterar_unidade(cena.sol_a, cena.admin, "PU")

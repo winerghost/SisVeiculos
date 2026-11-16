@@ -32,6 +32,8 @@ interface Contexto {
   sair: () => Promise<void>;
   verificarMfa: (codigo: string) => Promise<string | null>;
   recarregar: () => Promise<void>;
+  /** Recarrega o /eu em segundo plano: falha transitória mantém a sessão e a tela atual. */
+  atualizarEu: () => Promise<void>;
   /** Trata 401/403 de qualquer chamada e devolve a mensagem a exibir. */
   tratarErro: (e: unknown) => string;
 }
@@ -184,6 +186,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [tratarErro]);
 
+  // Recarga em segundo plano (tempo real: Configurações mudaram). Diferente do carregamento
+  // inicial, falha transitória (rede, 429, 5xx) NÃO troca a tela por "falha": mantém o `eu`
+  // atual e a próxima mudança de versão tenta de novo. 401/403 seguem o tratamento padrão.
+  const atualizarEu = React.useCallback(async () => {
+    let novo: Eu;
+    try {
+      novo = await api.eu();
+    } catch (e) {
+      tratarErro(e);
+      return;
+    }
+    setEu(novo);
+    // Menu: 403/404 = acesso retirado (oculta); falha transitória mantém o que já estava.
+    const semAcesso = (e: unknown) =>
+      e instanceof ApiErro && (e.status === 403 || e.status === 404);
+    api
+      .paineisDashboard()
+      .then((r) => setPaineis(r.paineis))
+      .catch((e: unknown) => {
+        if (semAcesso(e)) setPaineis(null);
+      });
+    api
+      .relatorios()
+      .then(setRelatorios)
+      .catch((e: unknown) => {
+        if (semAcesso(e)) setRelatorios(null);
+      });
+  }, [tratarErro]);
+
   React.useEffect(() => {
     let ativo = true;
     void (async () => {
@@ -250,6 +281,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sair,
       verificarMfa,
       recarregar: carregarEu,
+      atualizarEu,
       tratarErro,
     }),
     [
@@ -265,6 +297,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sair,
       verificarMfa,
       carregarEu,
+      atualizarEu,
       tratarErro,
     ],
   );

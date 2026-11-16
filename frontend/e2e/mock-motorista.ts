@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import { respostaAtualizacoes } from './mock-api';
 import { gruposAcao, recursos } from './recursos';
 
 // API fake do Perfil Motorista (contrato provisório: GET /api/motorista/viagens[/<id>]). As regras
@@ -213,6 +214,11 @@ export async function mockarMotorista(page: Page, opcoes: OpcoesMotorista = {}) 
   );
   await page.route('**/api/notificacoes/contagem', (route) =>
     route.fulfill({ json: { nao_lidas: 0 } }),
+  );
+  await page.route('**/api/atualizacoes', (route) =>
+    autenticado(route)
+      ? route.fulfill({ json: respostaAtualizacoes(0) })
+      : erro(route, 401, 'nao_autenticado', 'Sessão inválida ou expirada.'),
   );
   await page.route(/\/api\/(dashboards|relatorios)(\/.*)?(\?.*)?$/, (route) =>
     erro(route, 403, 'sem_permissao', 'Você não tem permissão para esta ação.'),

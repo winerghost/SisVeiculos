@@ -179,6 +179,30 @@ def test_configuracoes_e_veiculos_mudam(client, auth, repo, c):  # type: ignore[
     assert recursos(client, auth, c.sol)["veiculos"] != depois["veiculos"]
 
 
+def test_configuracao_invalida_requisicoes(client, auth, c):  # type: ignore[no-untyped-def]
+    """M3: ligar/desligar um recurso muda `acoes_permitidas`; a tela de requisições recarrega."""
+    antes = {p.id: recursos(client, auth, p)["requisicoes"] for p in (c.sol, c.aut, c.adm)}
+    r = client.put("/api/admin/configuracoes", headers=auth(c.adm.id), json={"checklist": True})
+    assert r.status_code == 200, r.get_json()
+    for p in (c.sol, c.aut, c.adm):
+        assert recursos(client, auth, p)["requisicoes"] != antes[p.id]
+
+
+def test_ocupacao_alheia_muda_veiculos(client, auth, repo, c):  # type: ignore[no-untyped-def]
+    """N1: abrir/fechar requisição de outro usuário muda a disponibilidade em GET /api/veiculos;
+    a versão `veiculos` do solicitante muda junto (a de `requisicoes` não)."""
+    v2 = repo.novo_veiculo()
+    antes = recursos(client, auth, c.sol)
+    rid_b = levar_a(client, auth, repo, c, "solicitada", dono=c.outro, veiculo=v2)
+    meio = recursos(client, auth, c.sol)
+    assert meio["veiculos"] != antes["veiculos"]
+    assert meio["requisicoes"] == antes["requisicoes"]
+    assert acao(client, auth, c.aut, rid_b, "autorizar").status_code == 200
+    assert recursos(client, auth, c.sol)["veiculos"] == meio["veiculos"]  # segue ocupado
+    assert acao(client, auth, c.aut, rid_b, "cancelar").status_code == 200
+    assert recursos(client, auth, c.sol)["veiculos"] != meio["veiculos"]
+
+
 # -- ETag / 304 -------------------------------------------------------------------------------
 def test_etag_e_304(client, auth, repo, c):  # type: ignore[no-untyped-def]
     r = client.get(URL, headers=auth(c.sol.id))

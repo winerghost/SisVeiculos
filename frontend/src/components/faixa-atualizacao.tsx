@@ -13,9 +13,8 @@ export function FaixaAtualizacao() {
   const tr = useTempoReal();
   const seguros = tr?.seguros;
   const visivel = !!seguros && seguros.size > 0;
-  const texto = seguros?.has('requisicoes')
-    ? 'Esta requisição foi atualizada.'
-    : 'Esta tela foi atualizada.';
+  // Texto neutro: a faixa aparece também em listas (/autorizar, /viagem), não só no detalhe.
+  const texto = 'Há atualizações nesta tela.';
   return (
     <div aria-live="polite" className="px-5">
       {visivel ? (

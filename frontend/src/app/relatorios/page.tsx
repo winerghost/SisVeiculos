@@ -7,7 +7,12 @@ import { Download, Eye, Info, Mail, Share2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { FORMATOS, paraCorpo, paraQuery, salvarArquivo, valoresEfetivos } from '@/lib/relatorios';
-import type { EnvioRelatorio, FormatoRelatorio, PreviaRelatorio } from '@/lib/tipos';
+import type {
+  EnvioRelatorio,
+  FormatoRelatorio,
+  PreviaRelatorio,
+  RelatorioCatalogo,
+} from '@/lib/tipos';
 import { useCarga } from '@/lib/use-carga';
 import { useEnvio } from '@/lib/use-envio';
 import { AppShell } from '@/components/app-shell';
@@ -28,6 +33,22 @@ function lerQuery(p: URLSearchParams) {
     if (k !== 'tipo') valores[k] = v;
   });
   return { tipo: p.get('tipo'), valores };
+}
+
+/**
+ * Só exibe o que a API informou: o e-mail some quando um filtro listado está ligado e a seleção
+ * de colunas (se houver) inclui uma coluna listada. O servidor recusa de qualquer forma.
+ */
+function avisoEmail(
+  rel: RelatorioCatalogo,
+  valores: Record<string, string>,
+  colunas: string[] | null,
+): string | null {
+  const ind = rel.email_indisponivel_com;
+  if (!ind) return null;
+  const ligado = ind.filtros.some((f) => valores[f] === 'true');
+  const naSelecao = !colunas?.length || colunas.some((c) => ind.colunas.includes(c));
+  return ligado && naSelecao ? ind.mensagem : null;
 }
 
 function Conteudo() {
@@ -67,6 +88,7 @@ function Conteudo() {
   const consulta = paraQuery(efetivos, colunas);
   const disponiveis = relatorio.colunas_disponiveis ?? [];
   const { canais } = dados;
+  const semEmail = canais.email ? avisoEmail(relatorio, efetivos, colunas) : null;
 
   const limpar = () => {
     setPrevia(null);
@@ -231,7 +253,7 @@ function Conteudo() {
                 </Button>
               ))
             : null}
-          {canais.email ? (
+          {canais.email && !semEmail ? (
             <Button
               type="button"
               variante="contorno"
@@ -263,6 +285,13 @@ function Conteudo() {
           ) : null}
         </div>
       </div>
+
+      {semEmail ? (
+        <p className="mt-3 flex gap-3 rounded-xl bg-[#e8ecf2] p-3 text-texto-2">
+          <Info aria-hidden className="mt-0.5 size-5 shrink-0" />
+          {semEmail}
+        </p>
+      ) : null}
 
       <div aria-live="polite" className="mt-4">
         {acao.ocupado ? (

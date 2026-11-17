@@ -301,6 +301,7 @@ def test_desligar_autorizador_km_nao_apaga_km_gravado(cena: Cena) -> None:
 
 def test_km_gravado_continua_imutavel(cena: Cena) -> None:
     cena.cfg("quilometragem", True)
+    cena.cfg("autorizador_km", True)  # desde 20261204120000 (B5), sem a flag do papel: AG046
     rid = cena.autorizada()
     _saida(rid, cena.aut, 10)
     with pytest.raises(psycopg.Error) as exc:

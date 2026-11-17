@@ -335,10 +335,15 @@ class RepoMemoria(
         status_permitidos: list[str],
         *,
         ator_id: str,
+        anterior: Any = ...,
     ) -> Requisicao | None:
+        """`anterior` como o .is_/.eq do PostgREST; omitido (Ellipsis), sem a condição: só
+        para testes que chamam o fake direto. O serviço sempre passa o motorista lido."""
         with self._lock:
             r = self.requisicoes.get(requisicao_id)
             if r is None or r["status"] not in status_permitidos:
+                return None
+            if anterior is not ... and r.get("motorista_id") != anterior:  # nada casa
                 return None
             # Como o PostgREST: o UPDATE leva motorista_id + a coluna de transporte juntos.
             self._trigger_motorista(r, {"motorista_id": motorista_id}, ator_id, r["status"])

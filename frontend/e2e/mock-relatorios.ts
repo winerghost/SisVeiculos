@@ -166,6 +166,11 @@ export async function mockarRelatorios(page: Page, opcoes: OpcoesRelatorios = {}
                     },
                   ],
                   colunas_disponiveis: COLUNAS_DISPONIVEIS,
+                  email_indisponivel_com: {
+                    filtros: ['incluir_observacao'],
+                    colunas: ['observacao'],
+                    mensagem: 'A observação não é enviada por e-mail; use o download.',
+                  },
                 }
               : base;
           }),

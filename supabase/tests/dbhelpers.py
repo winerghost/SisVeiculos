@@ -342,7 +342,20 @@ def novo_convite(
             (cid, email, role, token_hash, admin),
         )
     if expirado:
+        # Espera o RELOGIO DO BANCO (clock_timestamp, o mesmo do gatilho) passar de expira_em, em vez de
+        # confiar so no sleep do host: no Docker do Windows o relogio da VM pode atrasar/recuar e o
+        # convite ainda nao estar expirado para o servidor (falha intermitente AG004 em vez de AG006).
         time.sleep(1.5)
+        for _ in range(40):
+            with conectar() as c:
+                row = c.execute(
+                    "select expira_em <= clock_timestamp() from public.convites where id = %s", (cid,)
+                ).fetchone()
+            if row and row[0]:
+                break
+            time.sleep(0.25)
+        else:
+            raise AssertionError("convite de teste nao expirou no relogio do banco")
     return cid, token_hash
 
 

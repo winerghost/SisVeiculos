@@ -107,10 +107,13 @@ MSG_DESTINO_SEM_PAPEL = (
     "Este relatório só pode ser enviado a destinatários com permissão para consultá-lo."
 )
 MSG_DESTINO_EXTERNO = (
-    "Relatórios com nomes, trajetos, observações ou trilha de auditoria só podem ser enviados "
+    "Relatórios com nomes, trajetos ou trilha de auditoria só podem ser enviados "
     "por e-mail a endereços de domínio institucional. Baixe o arquivo pela tela ou desmarque "
     "essas opções."
 )
+# LGPD (B4, aprovado pelo dono em 2026-11-16): a observação é texto livre e um e-mail enviado não
+# pode ser recolhido. Nunca vai por e-mail, para nenhum papel; o download pela tela continua.
+MSG_OBSERVACAO_SEM_EMAIL = "A observação não é enviada por e-mail; use o download."
 
 # Execução dos envios em segundo plano (a requisição devolve 202 sem esperar o SMTP). Um processo
 # gunicorn com 8 threads: 2 trabalhadores de e-mail bastam. Os testes substituem este objeto.
@@ -703,6 +706,16 @@ class ServicoRelatorios:
             and (c.recurso is None or bool(getattr(cfg, c.recurso)))
         ]
 
+    def _email_indisponivel_com(self, rel: Relatorio, perfil: Perfil) -> dict[str, Any] | None:
+        """Filtros e colunas que tornam o envio por e-mail indisponível (a tela só exibe)."""
+        if "incluir_observacao" not in self._filtros_do_perfil(rel, perfil):
+            return None
+        return {
+            "filtros": ["incluir_observacao"],
+            "colunas": ["observacao"],
+            "mensagem": MSG_OBSERVACAO_SEM_EMAIL,
+        }
+
     def catalogo(self, perfil: Perfil) -> dict[str, Any]:
         cfg = self._config_recursos()
         hoje = self._hoje()
@@ -718,6 +731,7 @@ class ServicoRelatorios:
                     for n in self._filtros_do_perfil(r, perfil)
                 ],
                 "colunas_disponiveis": self._colunas_disponiveis(r, perfil, cfg),
+                "email_indisponivel_com": self._email_indisponivel_com(r, perfil),
             }
             for r in visiveis
         ]
@@ -1122,10 +1136,11 @@ class ServicoRelatorios:
 
     def _exigir_destino_institucional(self, rel: Relatorio, ef: dict[str, Any], email: str) -> None:
         """LGPD: nomes, trajetos e a trilha de auditoria (responsáveis nominais) só por e-mail a
-        domínio institucional. Sem domínio configurado, nada disso sai por e-mail."""
-        com_pii = bool(
-            ef.get("incluir_nomes") or ef.get("incluir_trajeto") or ef.get("incluir_observacao")
-        ) or (rel.tipo == "auditoria")
+        domínio institucional. Sem domínio configurado, nada disso sai por e-mail. A observação
+        nunca chega aqui: `enviar_email` a recusa antes."""
+        com_pii = bool(ef.get("incluir_nomes") or ef.get("incluir_trajeto")) or (
+            rel.tipo == "auditoria"
+        )
         if com_pii and _dominio_do_email(email) not in dominios_institucionais(self._cfg):
             raise ErroApi(MSG_DESTINO_EXTERNO, "destinatario_externo_pii", 422)
 
@@ -1135,6 +1150,9 @@ class ServicoRelatorios:
         formato, filtros, destinatario_id = self._corpo_envio(corpo)
         email = self._email_do_destinatario(perfil, destinatario_id, rel)
         ef = self._validar(rel, perfil, filtros)
+        if ef.get("incluir_observacao") or "observacao" in (ef.get("colunas") or ()):
+            # Antes de consultar/gerar: nada é buscado, auditado nem reservado (cota intacta).
+            raise ErroApi(MSG_OBSERVACAO_SEM_EMAIL, "observacao_sem_email", 422)
         self._exigir_destino_institucional(rel, ef, email)
         c = self._consultar(rel, perfil, ef)
         arq = self._gerar(c, formato)  # 422 se passar do limite, antes de gastar cota

@@ -422,20 +422,27 @@ def test_quilometragem_ligada_autorizador_km_ligada_demais_atores_seguem_obrigan
     assert _km(rid) == (100, 130)
 
 
-def test_vigilante_km_desligada_aceita_km_enviado_e_valida_coerencia(
+def test_vigilante_km_desligada_recusa_km_enviado(
     cena: Cena,
 ) -> None:
+    # Desde 20261204120000 (B5): com vigilante_km desligada, gravar km novo e recusado (AG046),
+    # na saida e na chegada; sem km a transicao segue valida.
     cena.cfg("quilometragem", True)
     rid = cena.autorizada()
-    _saida(rid, cena.vig, 500)
-    assert _km(rid) == (500, None)
     _falha(
-        "update public.requisicoes set status='concluida', chegada_registrada_por=%s, km_chegada=499 where id=%s",
+        "update public.requisicoes set status='em_uso', saida_registrada_por=%s, km_saida=500 where id=%s",
         (cena.vig, rid),
-        "23514",  # CHECK km_chegada >= km_saida segue valendo
+        "AG046",
     )
-    _chegada(rid, cena.vig, 520)
-    assert _km(rid) == (500, 520)
+    _saida(rid, cena.vig)
+    assert _km(rid) == (None, None)
+    _falha(
+        "update public.requisicoes set status='concluida', chegada_registrada_por=%s, km_chegada=520 where id=%s",
+        (cena.vig, rid),
+        "AG046",
+    )
+    _chegada(rid, cena.vig)
+    assert _km(rid) == (None, None)
 
 
 def test_vigilante_km_ligada_vigilante_precisa_informar_km(cena: Cena) -> None:
@@ -466,6 +473,7 @@ def test_misto_saida_autorizador_chegada_vigilante_sem_km_com_flag_desligada(
     cena: Cena,
 ) -> None:
     cena.cfg("quilometragem", True)
+    cena.cfg("autorizador_km", True)  # saida do autorizador com km (B5: exige a flag do papel)
     rid = cena.autorizada()
     _saida(rid, cena.aut, 300)
     _chegada(rid, cena.vig)  # vigilante_km desligada: dispensado
@@ -486,6 +494,7 @@ def test_desligar_vigilante_km_nao_apaga_km_gravado(cena: Cena) -> None:
 
 def test_km_gravado_continua_imutavel(cena: Cena) -> None:
     cena.cfg("quilometragem", True)
+    cena.cfg("vigilante_km", True)  # desde 20261204120000 (B5), sem a flag do papel: AG046
     rid = cena.autorizada()
     _saida(rid, cena.vig, 10)
     _falha(

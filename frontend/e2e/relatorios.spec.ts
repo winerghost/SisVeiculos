@@ -454,3 +454,28 @@ test('colunas com flag ligada na tela vêm marcadas; prévia avisa o que só vai
     'observacao'.replace('observacao', 'observacao'),
   );
 });
+
+test('observação ligada: e-mail some conforme a API e o download continua', async ({ page }) => {
+  await abrir(page, 'autorizador', { selecaoColunas: true, email: true });
+  const email = page.getByRole('button', { name: 'Enviar por e-mail' });
+  const aviso = page.getByText('A observação não é enviada por e-mail; use o download.');
+  await expect(email).toBeVisible();
+  await expect(aviso).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Filtros' }).click();
+  await page.getByRole('dialog').getByRole('switch', { name: 'Incluir observação' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Aplicar' }).click();
+  await expect(email).toHaveCount(0);
+  await expect(aviso).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Baixar CSV' })).toBeVisible();
+
+  // Sem a coluna escolhida, a observação não sai: a API não bloqueia e o botão volta.
+  await page.getByRole('button', { name: 'Colunas' }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('checkbox', { name: /^Observação/ })
+    .uncheck();
+  await page.getByRole('dialog').getByRole('button', { name: 'Aplicar' }).click();
+  await expect(email).toBeVisible();
+  await expect(aviso).toHaveCount(0);
+});

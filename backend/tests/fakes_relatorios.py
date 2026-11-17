@@ -258,6 +258,12 @@ class RelatoriosMemoria:
         with self._lock_envios:  # o advisory lock do banco
             if "@" in str(filtros):
                 raise erro_db("AG027")
+            # Espelha 20261204120100: observação pedida => AG027, sem linha e sem gastar cota.
+            colunas = filtros.get("colunas")
+            if filtros.get("incluir_observacao") not in (None, False) or (
+                isinstance(colunas, list) and "observacao" in colunas
+            ):
+                raise erro_db("AG027")
             if not self.config.relatorio_email:
                 raise erro_db("AG026")
             d = self.perfis.get(destinatario)

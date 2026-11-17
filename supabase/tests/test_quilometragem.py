@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 import os
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -218,12 +218,37 @@ def test_desligado_km_nao_e_obrigatorio(atores: Atores) -> None:
     assert _kms(rid) == (None, None)
 
 
-def test_desligado_banco_nao_descarta_km_valido(atores: Atores) -> None:
-    """Fronteira: ignorar a entrada com recurso desligado e do BACKEND; o banco so guarda dado valido."""
+def test_desligado_km_enviado_e_recusado(atores: Atores) -> None:
+    """Desde 20261204120000 (B5): com o recurso desligado o banco RECUSA km novo (AG046), na saida e na
+    chegada (antes so o backend o ignorava). Sem km a transicao segue valida."""
     rid = _autorizada(atores)
-    _iniciar(rid, atores.autorizador, 100)
-    _concluir(rid, atores.autorizador, 150)
-    assert _kms(rid) == (100, 150)
+    with pytest.raises(psycopg.Error) as exc:
+        _iniciar(rid, atores.autorizador, 100)
+    assert h.sqlstate(exc) == "AG046"
+    assert h.status_de(rid) == "autorizada"
+    _iniciar(rid, atores.autorizador)
+    with pytest.raises(psycopg.Error) as exc:
+        _concluir(rid, atores.autorizador, 150, km_saida=100)
+    assert h.sqlstate(exc) == "AG046"
+    assert h.status_de(rid) == "em_uso"
+    _concluir(rid, atores.autorizador)
+    assert _kms(rid) == (None, None)
+
+
+def test_ligado_sem_flag_do_papel_km_enviado_e_recusado(atores: Atores) -> None:
+    """Quilometragem ligada e autorizador_km desligada: o autorizador nao e obrigado e nao pode gravar
+    km (AG046)."""
+    rid = _autorizada(atores)
+    with km_ligada(atores.admin):
+        with pytest.raises(psycopg.Error) as exc:
+            _iniciar(rid, atores.autorizador, 100)
+        assert h.sqlstate(exc) == "AG046"
+        _iniciar(rid, atores.autorizador)
+        with pytest.raises(psycopg.Error) as exc:
+            _concluir(rid, atores.autorizador, 150, km_saida=100)
+        assert h.sqlstate(exc) == "AG046"
+        _concluir(rid, atores.autorizador)
+    assert _kms(rid) == (None, None)
 
 
 # --- recurso LIGADO ----------------------------------------------------------------
@@ -253,7 +278,7 @@ def test_ligado_chegada_exige_km_chegada(atores: Atores) -> None:
 
 def test_ligado_chegada_igual_a_saida_vale(atores: Atores) -> None:
     rid = _autorizada(atores)
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         _iniciar(rid, atores.autorizador, 500)
         _concluir(rid, atores.autorizador, 500)
     assert _kms(rid) == (500, 500)
@@ -272,11 +297,11 @@ def test_ligado_com_viagem_em_curso_sem_km_saida(atores: Atores) -> None:
 
 
 # --- invariantes sempre ----------------------------------------------------------------
-@pytest.mark.parametrize("ligado", [False, True])
-def test_chegada_menor_que_saida_recusada(atores: Atores, ligado: bool) -> None:
+# Desde 20261204120000 (B5) so se grava km com o recurso e a flag do papel ligados; desligado, a
+# tentativa da AG046 (testes acima). As invariantes (CHECK) valem sempre que o km pode ser gravado.
+def test_chegada_menor_que_saida_recusada(atores: Atores) -> None:
     rid = _autorizada(atores)
-    ctx: AbstractContextManager[None] = km_ligada(atores.admin) if ligado else nullcontext()
-    with ctx:
+    with km_ligada(atores.admin, autorizador_km=True):
         _iniciar(rid, atores.autorizador, 1000)
         with pytest.raises(psycopg.Error) as exc:
             _concluir(rid, atores.autorizador, 999)
@@ -287,19 +312,44 @@ def test_chegada_menor_que_saida_recusada(atores: Atores, ligado: bool) -> None:
 
 def test_km_negativo_recusado(atores: Atores) -> None:
     rid = _autorizada(atores)
-    with pytest.raises(psycopg.Error) as exc:
-        _iniciar(rid, atores.autorizador, -1)
-    assert h.sqlstate(exc) == CHECK
+    with km_ligada(atores.admin, autorizador_km=True):
+        with pytest.raises(psycopg.Error) as exc:
+            _iniciar(rid, atores.autorizador, -1)
+        assert h.sqlstate(exc) == CHECK
     assert h.status_de(rid) == "autorizada"
 
 
 def test_km_chegada_sem_km_saida_recusado(atores: Atores) -> None:
+    """Pelos gatilhos a recusa vem antes (AG046 desligado; AG012 ligado, ver
+    test_ligado_chegada_so_com_km_chegada_da_ag012). O CHECK segue como defesa em profundidade: com os
+    gatilhos de usuario suspensos numa transacao descartavel, ele sozinho recusa."""
     rid = _autorizada(atores)
     _iniciar(rid, atores.autorizador)
     with pytest.raises(psycopg.Error) as exc:
         _concluir(rid, atores.autorizador, 10)
+    assert h.sqlstate(exc) == "AG046"
+    # linha concluida sem km (chegada_real_em preenchida): so ck_requisicoes_km_chegada_exige_saida e
+    # violado, sem depender da ordem de avaliacao dos CHECKs.
+    _concluir(rid, atores.autorizador)
+    assert h.DSN
+    c = psycopg.connect(h.DSN)  # sem autocommit: termina SEMPRE em rollback (DDL transacional)
+    try:
+        # os gatilhos das migrations sao ENABLE ALWAYS: desliga-os so nesta transacao (padrao de
+        # test_dashboards.conn); o rollback restaura.
+        try:
+            c.execute("alter table public.requisicoes disable trigger user")
+        except psycopg.Error:
+            c.rollback()
+            pytest.skip("papel de conexao sem permissao para desligar gatilhos na transacao de teste")
+        with pytest.raises(psycopg.Error) as exc:
+            c.execute("update public.requisicoes set km_chegada = 10 where id = %s", (rid,))
+    finally:
+        c.rollback()
+        c.close()
     assert h.sqlstate(exc) == CHECK
-    assert h.status_de(rid) == "em_uso"
+    assert "ck_requisicoes_km_chegada_exige_saida" in str(exc.value)
+    assert h.status_de(rid) == "concluida"
+    assert _kms(rid) == (None, None)
 
 
 def test_km_saida_fora_de_em_uso_recusado(atores: Atores) -> None:
@@ -313,9 +363,12 @@ def test_km_imutavel_e_so_na_transicao(atores: Atores) -> None:
     # sem transicao: nao pode preencher km depois
     _falha("update public.requisicoes set km_saida = 10 where id = %s", (rid,), "AG004")
     rid2 = _autorizada(atores)
-    _iniciar(rid2, atores.autorizador, 10)
-    _falha("update public.requisicoes set km_saida = 11 where id = %s", (rid2,), "AG004")
-    _concluir(rid2, atores.autorizador, 20)
+    with km_ligada(atores.admin, autorizador_km=True):
+        # ligado tambem: preencher km sem transicao segue AG004
+        _falha("update public.requisicoes set km_saida = 10 where id = %s", (rid,), "AG004")
+        _iniciar(rid2, atores.autorizador, 10)
+        _falha("update public.requisicoes set km_saida = 11 where id = %s", (rid2,), "AG004")
+        _concluir(rid2, atores.autorizador, 20)
     # concluida congelada
     _falha("update public.requisicoes set km_chegada = 21 where id = %s", (rid2,), "AG001")
 
@@ -324,10 +377,11 @@ def test_km_imutavel_e_so_na_transicao(atores: Atores) -> None:
 def test_concluida_nao_altera_km_saida_ja_gravado(atores: Atores) -> None:
     """Na propria transicao para concluida, km_saida ja gravado nao muda (AG004)."""
     rid = _autorizada(atores)
-    _iniciar(rid, atores.autorizador, 10)
-    with pytest.raises(psycopg.Error) as exc:
-        _concluir(rid, atores.autorizador, 20, km_saida=11)
-    assert h.sqlstate(exc) == "AG004"
+    with km_ligada(atores.admin, autorizador_km=True):
+        _iniciar(rid, atores.autorizador, 10)
+        with pytest.raises(psycopg.Error) as exc:
+            _concluir(rid, atores.autorizador, 20, km_saida=11)
+        assert h.sqlstate(exc) == "AG004"
     assert h.status_de(rid) == "em_uso"
     assert _kms(rid) == (10, None)
 
@@ -358,9 +412,10 @@ def test_ligado_chegada_so_com_km_chegada_da_ag012(atores: Atores) -> None:
 # --- desligar nunca apaga ---------------------------------------------------------------
 def test_desligar_nao_apaga_dados(atores: Atores) -> None:
     rid = _autorizada(atores)
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         _iniciar(rid, atores.autorizador, 300)
         _concluir(rid, atores.autorizador, 345)
+    _definir_autorizador_km(False, atores.admin)  # antes da quilometragem (AG010)
     _definir_km(False, atores.admin)
     assert _kms(rid) == (300, 345)
     assert _ler_recursos()[0] is False
@@ -382,7 +437,7 @@ def test_desligar_nao_apaga_dados(atores: Atores) -> None:
 # --- auditoria --------------------------------------------------------------------------
 def test_auditoria_leva_km_sem_dado_pessoal(atores: Atores) -> None:
     rid = _autorizada(atores)
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         _iniciar(rid, atores.autorizador, 700)
         _concluir(rid, atores.autorizador, 760)
     with h.conectar() as c:

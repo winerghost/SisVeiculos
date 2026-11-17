@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -34,9 +35,11 @@ from test_quilometragem import (
     _autorizada,
     _concluir,
     _definir_abastecimento,
+    _definir_autorizador_km,
     _definir_km,
     _dsn_local,
     _iniciar,
+    _ler_autorizador_km,
     _ler_recursos,
 )
 
@@ -65,13 +68,17 @@ def atores() -> Atores:
 
 @pytest.fixture(autouse=True)
 def _estado_recursos() -> Iterator[None]:
-    """Desliga quilometragem/abastecimento antes (abastecimento primeiro, AG010) e restaura depois."""
+    """Desliga autorizador_km/quilometragem/abastecimento antes (dependentes primeiro, AG010) e restaura
+    depois."""
     if not _dsn_local():
         pytest.skip("DSN nao parece banco local/descartavel (TEST_DATABASE_ALLOW_REMOTE=1 forca)")
     orig_km, orig_ab = _ler_recursos()
+    orig_aut_km = _ler_autorizador_km()
     por = h.admin_ativo_qualquer() or h.criar_usuario("admin-cfg", "admin")
     if orig_ab:
         _definir_abastecimento(False, por)
+    if orig_aut_km:
+        _definir_autorizador_km(False, por)
     if orig_km:
         _definir_km(False, por)
     try:
@@ -80,10 +87,28 @@ def _estado_recursos() -> Iterator[None]:
         atual_km, atual_ab = _ler_recursos()
         if atual_ab:
             _definir_abastecimento(False, por)
+        if _ler_autorizador_km():
+            _definir_autorizador_km(False, por)
         if atual_km != orig_km:
             _definir_km(orig_km, por)
         if orig_ab:
             _definir_abastecimento(True, por)
+        if orig_aut_km:
+            _definir_autorizador_km(True, por)
+
+
+@contextmanager
+def _km_gravavel(admin: uuid.UUID) -> Iterator[None]:
+    """Desde 20261204120000 (B5) o autorizador so grava km com quilometragem E autorizador_km ligadas
+    (desligado: AG046). Liga as duas e, ao sair, volta ao estado desligado da fixture (flag do papel
+    antes da quilometragem, AG010). O km gravado continua (desligar nunca apaga)."""
+    _definir_km(True, admin)
+    _definir_autorizador_km(True, admin)
+    try:
+        yield
+    finally:
+        _definir_autorizador_km(False, admin)
+        _definir_km(False, admin)
 
 
 def _kmp(rid: uuid.UUID | str) -> int | None:
@@ -97,8 +122,9 @@ def _kmp(rid: uuid.UUID | str) -> int | None:
 
 def _concluida(a: Atores, km_saida: int = 100, km_chegada: int = 150) -> uuid.UUID:
     rid = _autorizada(a)
-    _iniciar(rid, a.autorizador, km_saida)
-    _concluir(rid, a.autorizador, km_chegada)
+    with _km_gravavel(a.admin):
+        _iniciar(rid, a.autorizador, km_saida)
+        _concluir(rid, a.autorizador, km_chegada)
     return rid
 
 
@@ -151,7 +177,8 @@ def test_rls_continua_ativo() -> None:
 def test_nulo_sem_km_e_so_saida(atores: Atores) -> None:
     rid = _autorizada(atores)
     assert _kmp(rid) is None
-    _iniciar(rid, atores.autorizador, 100)
+    with _km_gravavel(atores.admin):
+        _iniciar(rid, atores.autorizador, 100)
     assert _kmp(rid) is None
 
 
@@ -169,7 +196,8 @@ def test_chegada_sem_km_fica_nulo(atores: Atores) -> None:
 
 def test_valor_do_cliente_e_ignorado_em_linha_aberta(atores: Atores) -> None:
     rid = _autorizada(atores)
-    _iniciar(rid, atores.autorizador, 100)
+    with _km_gravavel(atores.admin):
+        _iniciar(rid, atores.autorizador, 100)
     with h.conectar() as c:
         c.execute("update public.requisicoes set km_percorrido = 999 where id = %s", (rid,))
     assert _kmp(rid) is None

@@ -186,16 +186,36 @@ def test_rls_da_configuracoes_intacto(papel: str) -> None:
         for p in ("insert", "update", "delete", "truncate"):
             assert c.execute("select has_table_privilege(%s, 'public.configuracoes', %s)",
                              (papel, p)).fetchone() == (False,), (papel, p)
-    # nenhuma policy de escrita ABERTA a anon/authenticated. As policies de negacao de 20261107121000
-    # (configuracoes_sem_insert/update/delete: using (false) / with check (false)) nao abrem nada.
+    # Toda policy de escrita que alcanca anon/authenticated tem de ser de NEGACAO, com a expressao
+    # aplicavel ao comando PRESENTE e literalmente 'false' (sem coalesce: expressao ausente nao conta
+    # como negacao). As de 20261107121000 sao configuracoes_sem_insert (with check (false)),
+    # configuracoes_sem_update (using (false) with check (false)) e configuracoes_sem_delete
+    # (using (false)). Exige ao menos uma, para o teste nao passar vazio se as policies sumirem.
     with h.conectar() as c:
-        assert c.execute(
-            "select count(*) from pg_policy where polrelid = 'public.configuracoes'::regclass "
+        policies = c.execute(
+            "select polname, polcmd, pg_get_expr(polqual, polrelid), "
+            "pg_get_expr(polwithcheck, polrelid) from pg_policy "
+            "where polrelid = 'public.configuracoes'::regclass "
             "and polcmd in ('a', 'w', 'd', '*') and (polroles = '{0}' or "
-            "exists (select 1 from pg_roles r where r.oid = any(polroles) and r.rolname = %s)) "
-            "and not (coalesce(pg_get_expr(polqual, polrelid), 'false') = 'false' "
-            "and coalesce(pg_get_expr(polwithcheck, polrelid), 'false') = 'false')", (papel,)
-        ).fetchone() == (0,)
+            "exists (select 1 from pg_roles r where r.oid = any(polroles) and r.rolname = %s))",
+            (papel,),
+        ).fetchall()
+    assert len(policies) >= 1, papel
+    # as tres negacoes (insert, update, delete) tem de existir para o papel
+    assert {p[1] for p in policies} >= {"a", "w", "d"}, (papel, policies)
+    # expressoes exigidas por comando: insert so tem with check; delete so tem using;
+    # update e ALL tem de trazer as duas explicitas.
+    exigidas = {"a": (False, True), "d": (True, False), "w": (True, True), "*": (True, True)}
+    for nome, cmd, qual, withcheck in policies:
+        exige_qual, exige_check = exigidas[cmd]
+        if exige_qual:
+            assert qual == "false", (papel, nome, "using", qual)
+        else:
+            assert qual is None, (papel, nome, "using", qual)
+        if exige_check:
+            assert withcheck == "false", (papel, nome, "with check", withcheck)
+        else:
+            assert withcheck is None, (papel, nome, "with check", withcheck)
 
 
 def test_migration_idempotente() -> None:

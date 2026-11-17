@@ -119,11 +119,13 @@ class Repositorio(Protocol):
         status_permitidos: list[str],
         *,
         ator_id: str,
+        anterior: Any = ...,
     ) -> Requisicao | None:
         """UPDATE condicional de `motorista_id` (`where status in status_permitidos`).
-        None se ninguém casou. `motorista_id` None desatribui. O trigger do banco exige
-        `motorista_alterado_por` = `ator_id` (autorizador/admin do JWT) no MESMO UPDATE; sem ele,
-        AG002. Só chamar quando `motorista_id` realmente muda (senão AG004)."""
+        `anterior`: só casa se o motorista atual for este (None = sem motorista); omitido, sem
+        essa condição. None se ninguém casou. `motorista_id` None desatribui. O trigger do banco
+        exige `motorista_alterado_por` = `ator_id` (autorizador/admin do JWT) no MESMO UPDATE;
+        sem ele, AG002. Só chamar quando `motorista_id` realmente muda (senão AG004)."""
         ...
 
     def registrar_transicao_motorista(

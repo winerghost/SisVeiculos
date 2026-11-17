@@ -641,6 +641,14 @@ export interface RelatorioCatalogo {
   descricao: string;
   filtros: FiltroRelatorio[];
   colunas_disponiveis?: ColunaDisponivel[];
+  /** Filtros/colunas que, segundo a API, tornam o e-mail indisponível (ex.: observação). */
+  email_indisponivel_com?: EmailIndisponivelCom | null;
+}
+
+export interface EmailIndisponivelCom {
+  filtros: string[];
+  colunas: string[];
+  mensagem: string;
 }
 
 export interface RespostaRelatorios {

@@ -192,6 +192,7 @@ MSG_KM_OBRIGATORIO = (
     "chegada (se a saída foi registrada sem km, envie km_saida e km_chegada juntos)."
 )
 MSG_KM_JA_GRAVADO = "A quilometragem já registrada não pode ser alterada."
+MSG_KM_DESLIGADO = "O registro de km foi desligado; recarregue a tela."
 MSG_KM_CHEGADA_MENOR = "O km de chegada não pode ser menor que o km de saída."
 MSG_KM_INVALIDO = "Quilometragem inválida: use números inteiros, sem negativos."
 MSG_KM_ESTOURO = "Quilometragem acima do valor máximo aceito (2147483647)."
@@ -339,6 +340,8 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
         return RequisicaoInvalida(MSG_FOTO_INVALIDA, "foto_invalida")
     if codigo == "AG012":
         return RequisicaoInvalida(MSG_KM_OBRIGATORIO, "km_obrigatorio")
+    if codigo == "AG046":  # km com o recurso (ou a flag do papel) desligado: mensagem fixa
+        return Conflito(MSG_KM_DESLIGADO, "km_desligado")
     if codigo == "AG004" and "uilometragem" in texto:
         return Conflito(MSG_KM_JA_GRAVADO, "km_ja_registrado")
     if codigo == "23514" and "ck_requisicoes_km_chegada_maior_igual_saida" in texto:
@@ -1440,16 +1443,28 @@ class SupabaseRepositorio:
         status_permitidos: list[str],
         *,
         ator_id: str,
+        anterior: Any = ...,
     ) -> Requisicao | None:
+        """`anterior`: motorista lido antes (None = sem motorista); o UPDATE só casa se o
+        motorista atual for ele. Omitido (Ellipsis): sem a condição. O serviço sempre passa."""
+
         # `motorista_alterado_por` viaja no MESMO UPDATE: o trigger valida o ator e o zera.
-        res = _exec(
-            lambda: self._c.table("requisicoes")
-            .update({"motorista_id": motorista_id, "motorista_alterado_por": ator_id})
-            .eq("id", requisicao_id)
-            .in_("status", status_permitidos)
-            .execute(),
-            repetir_lock=True,
-        )
+        # Condicionado ao motorista lido (`anterior`): numa designação simultânea, quem perdeu
+        # não casa linha (None -> 409) e o tipo designado/trocado/removido nunca sai errado.
+        def _executar() -> Any:
+            q = (
+                self._c.table("requisicoes")
+                .update({"motorista_id": motorista_id, "motorista_alterado_por": ator_id})
+                .eq("id", requisicao_id)
+                .in_("status", status_permitidos)
+            )
+            if anterior is None:
+                q = q.is_("motorista_id", "null")
+            elif anterior is not ...:
+                q = q.eq("motorista_id", anterior)
+            return q.execute()
+
+        res = _exec(_executar, repetir_lock=True)
         return filtrar_colunas(res.data[0]) if res.data else None
 
     def registrar_transicao_motorista(

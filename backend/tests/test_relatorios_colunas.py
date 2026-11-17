@@ -283,18 +283,90 @@ def test_email_coluna_invalida_400_e_sem_envio(client, auth, c, ligado, repo):  
     assert SmtpFalso.instancias == [] and repo.envios == {}
 
 
-def test_email_com_observacao_exige_dominio_institucional(  # type: ignore[no-untyped-def]
+def test_email_com_observacao_e_recusado_mesmo_com_dominio_institucional(  # type: ignore[no-untyped-def]
     client, auth, c, ligado, repo, monkeypatch
 ):
+    """B4: a observação nunca vai por e-mail (nem a domínio institucional, nem para admin).
+    A recusa vem antes de consultar/gerar: nada é buscado, auditado nem reservado."""
     nova_req(repo, c.adm, observacao=OBS)
     _dominios(client, monkeypatch, "institucional.gov.br")
-    repo.contas_auth[c.adm.id]["email"] = "alguem@gmail.com"
-    corpo = {"destinatario_id": c.adm.id, "filtros": {"incluir_observacao": True}}
-    r = enviar(client, auth, c.aut, "movimentacao", **corpo)
-    assert r.status_code == 422 and r.get_json()["erro"]["codigo"] == "destinatario_externo_pii"
-    assert SmtpFalso.instancias == []
     repo.contas_auth[c.adm.id]["email"] = "alguem@institucional.gov.br"
-    assert enviar(client, auth, c.aut, "movimentacao", **corpo).status_code == 202
+    eventos_antes = len(repo.eventos)
+    for ator in (c.aut, c.adm):
+        for filtros in (
+            {"incluir_observacao": True},
+            {"incluir_observacao": "true"},
+            {"incluir_observacao": True, "colunas": ["codigo", "observacao"]},
+        ):
+            r = enviar(
+                client, auth, ator, "movimentacao", destinatario_id=c.adm.id, filtros=filtros
+            )
+            assert r.status_code == 422, filtros
+            assert r.get_json()["erro"] == {
+                "codigo": "observacao_sem_email",
+                "mensagem": "A observação não é enviada por e-mail; use o download.",
+            }
+    assert repo.chamadas_de("movimentacao") == []
+    assert repo.envios == {} and len(repo.eventos) == eventos_antes
+    assert SmtpFalso.instancias == []
+    # o download pela tela continua levando a observação
+    r = get(client, auth, c.aut, ARQUIVO, incluir_observacao="true")
+    assert r.status_code == 200 and OBS.encode() in r.data
+
+
+def test_email_coluna_observacao_sem_flag_e_400_e_flag_sem_coluna_e_202(  # type: ignore[no-untyped-def]
+    client, auth, c, ligado, repo
+):
+    nova_req(repo, c.adm, observacao=OBS)
+    r = enviar(
+        client, auth, c.aut, "movimentacao", destinatario_id=c.adm.id,
+        filtros={"colunas": ["codigo", "observacao"]},
+    )  # fmt: skip
+    assert r.status_code == 400 and repo.envios == {} and SmtpFalso.instancias == []
+    r = enviar(
+        client, auth, c.aut, "movimentacao", destinatario_id=c.adm.id,
+        filtros={"incluir_observacao": True, "colunas": ["codigo"]},
+    )  # fmt: skip
+    assert r.status_code == 202
+    (inst,) = SmtpFalso.instancias
+    assert OBS.encode() not in next(inst.mensagens[0].iter_attachments()).get_payload(decode=True)
+
+
+def test_catalogo_informa_que_observacao_nao_vai_por_email(client, auth, c, repo):  # type: ignore[no-untyped-def]
+    """B4: a tela só exibe o que a API informa; sem o flag no perfil, nada a informar."""
+    for ator in (c.aut, c.adm):
+        rels = {r["tipo"]: r for r in get(client, auth, ator, BASE).get_json()["relatorios"]}
+        assert rels["movimentacao"]["email_indisponivel_com"] == {
+            "filtros": ["incluir_observacao"],
+            "colunas": ["observacao"],
+            "mensagem": "A observação não é enviada por e-mail; use o download.",
+        }
+        assert all(
+            r["email_indisponivel_com"] is None for t, r in rels.items() if t != "movimentacao"
+        )
+    sol = get(client, auth, c.sol, BASE).get_json()["relatorios"]
+    assert all(r["email_indisponivel_com"] is None for r in sol)
+
+
+def test_fake_recusa_observacao_como_o_banco(repo):  # type: ignore[no-untyped-def]
+    """O fake espelha reservar_envio_email (20261204120100): AG027 e nenhuma linha criada."""
+    from tests.fakes_admin import erro_db
+
+    esperado = erro_db("AG027")
+    base = {
+        "solicitante": "s", "destinatario": "d", "tipo": "movimentacao", "formato": "csv",
+        "max_por_hora": 10,
+    }  # fmt: skip
+    for filtros in (
+        {"incluir_observacao": True},
+        {"incluir_observacao": "true"},
+        {"incluir_observacao": 1},
+        {"colunas": ["codigo", "observacao"]},
+    ):
+        with pytest.raises(type(esperado)) as e:
+            repo.reservar_envio_email(**base, filtros=filtros)
+        assert str(e.value) == str(esperado)
+    assert repo.envios == {}
 
 
 def test_email_da_trilha_nao_leva_observacao_sem_flag(client, auth, c, ligado, repo):  # type: ignore[no-untyped-def]

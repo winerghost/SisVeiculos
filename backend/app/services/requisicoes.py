@@ -814,7 +814,11 @@ class ServicoRequisicoes:
             return self.apresentar(perfil, req)  # sem mudança: nada a gravar (o banco recusaria)
         # O ator (autorizador/admin do JWT) viaja no mesmo UPDATE: exigência do trigger do banco.
         atualizada = self._repo.atribuir_motorista(
-            req["id"], alvo, list(ESTADOS_ATRIBUICAO), ator_id=perfil.id
+            req["id"],
+            alvo,
+            list(ESTADOS_ATRIBUICAO),
+            ator_id=perfil.id,
+            anterior=req.get("motorista_id"),  # outro mudou no meio do caminho: None -> 409
         )
         if atualizada is None:
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
@@ -841,7 +845,7 @@ class ServicoRequisicoes:
         criada = self._repo.inserir_requisicao(dados)
         # Só após o banco confirmar. n8n desligado: nada é montado (nem Admin API).
         if self._notificador.ativo:
-            self._notificador.notificar(
+            self._entregar(
                 "requisicao.criada",
                 criada,
                 contatos=self._contatos_webhook(criada, "requisicao.criada"),
@@ -911,13 +915,21 @@ class ServicoRequisicoes:
         contatos = self._contatos_webhook(atualizada, evento, config, perfis)
         resumo = self._resumo_webhook(atualizada, evento)
         if detalhes is None:
-            self._notificador.notificar(
-                evento, atualizada, contatos=contatos, resumo=resumo, blocos=blocos
-            )
+            self._entregar(evento, atualizada, contatos=contatos, resumo=resumo, blocos=blocos)
         else:
-            self._notificador.notificar(
+            self._entregar(
                 evento, atualizada, detalhes, contatos=contatos, resumo=resumo, blocos=blocos
             )
+
+    def _entregar(self, evento: str, *args: Any, **kwargs: Any) -> None:
+        """Entrega ao notificador sem nunca quebrar a ação (o banco já gravou).
+
+        Defesa em profundidade: o N8nWebhook já não lança, mas um notificador com defeito não
+        pode virar 500. Log: só o nome do evento e o tipo da exceção (a mensagem pode ter PII)."""
+        try:
+            self._notificador.notificar(evento, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - best-effort após o commit
+            log.warning("n8n: notificacao falhou evento=%s (%s)", evento, type(exc).__name__)
 
     def _notificar_motorista_alterado(
         self, anterior: str | None, atualizada: Requisicao, config: Configuracoes
@@ -931,7 +943,7 @@ class ServicoRequisicoes:
         evento = EVENTO_MOTORISTA_ALTERADO
         novo = atualizada.get("motorista_id")
         tipo = "designado" if anterior is None else ("removido" if novo is None else "trocado")
-        self._notificador.notificar(
+        self._entregar(
             evento,
             atualizada,
             contatos=self._contatos_webhook(atualizada, evento, config),

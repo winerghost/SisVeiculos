@@ -30,7 +30,17 @@ pytestmark = [
 
 NEGADO = "42501"
 # Dependentes primeiro (desligar nesta ordem; religar na ordem inversa).
-FLAGS = ("autorizador_km", "vigilante_km", "abastecimento_manutencao", "quilometragem", "checklist")
+# Dependentes primeiro (desligar nesta ordem; religar na ordem inversa).
+FLAGS = (
+    "autorizador_km",
+    "vigilante_km",
+    "abastecimento_manutencao",
+    "quilometragem",
+    "motorista_localizacao",
+    "motorista_registra",
+    "motorista",
+    "checklist",
+)
 
 
 def _estado() -> dict[str, bool]:
@@ -265,6 +275,7 @@ def test_vigilante_registra_saida_e_chegada_sem_flag_e_sem_designacao(
 
 
 def test_vigilante_registra_requisicao_designada_a_outro_motorista(cena: Cena) -> None:
+    cena.cfg("motorista", True)  # designar motorista exige o recurso ligado (requisicoes_validar_motorista)
     rid = cena.autorizada()
     with h.conectar() as c:
         c.execute(

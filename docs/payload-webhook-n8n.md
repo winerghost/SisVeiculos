@@ -34,7 +34,7 @@ sem IA. Montado à parte por allowlist fixa desses campos; `observacao` **nunca*
 
 | Chave | Descrição |
 |---|---|
-| `evento` | `requisicao.criada/autorizada/negada/saida/chegada/cancelada`, `checklist.registrado` |
+| `evento` | `requisicao.criada/autorizada/negada/saida/chegada/cancelada/motorista_alterado`, `checklist.registrado` |
 | `evento_id` | uuid4 estável (igual em reentregas; deduplicar por ele ou por `X-Evento-Id`) |
 | `requisicao_id` | id da requisição |
 | `status`, `veiculo_id`, `unidade` | allowlist mínima |
@@ -42,6 +42,8 @@ sem IA. Montado à parte por allowlist fixa desses campos; `observacao` **nunca*
 | `versao` | `1` sem `detalhes`; `2` com `detalhes` |
 | `contatos` | só eventos `requisicao.*` (ver abaixo); ausente em `checklist.registrado` ou se a leitura falhar (best-effort) |
 | `resumo` | só eventos `requisicao.*` (ver abaixo); ausente em `checklist.registrado` ou se a leitura falhar (best-effort) |
+| `cancelamento` | só em `requisicao.cancelada` (ver abaixo) |
+| `motorista_alteracao` | só em `requisicao.motorista_alterado` (ver abaixo) |
 
 ## `contatos` (todos os eventos de requisição)
 
@@ -76,6 +78,37 @@ Vem da requisição em memória quando ela tem os campos; senão o backend relê
 não der para ler, a chave **fica ausente** e o evento segue; o log traz só
 `n8n: resumo indisponivel evento=... (<tipo da exceção>)`, sem PII.
 
+## Blocos por evento (aprovados em 2026-11-16, sem dado pessoal)
+
+Montados no serviço e filtrados por uma allowlist fixa por evento (`BLOCOS_POR_EVENTO`, em
+`backend/app/notificacoes/n8n.py`): bloco ou campo fora dela é descartado. Não mudam a `versao`.
+
+### `cancelamento` (`requisicao.cancelada`)
+
+| Chave | Conteúdo |
+|---|---|
+| `origem` | `solicitante` quando quem cancelou é o dono da requisição (inclusive autorizador/admin cancelando a própria); `equipe` nos demais casos |
+| `status_anterior` | `solicitada` ou `autorizada` |
+
+Quem cancelou (id, nome, contato) **não** é enviado. Uso no n8n: avisar o solicitante quando
+`origem = equipe` (pendência B1).
+
+### `motorista_alteracao` (`requisicao.motorista_alterado`)
+
+Emitido depois do commit de `POST /api/requisicoes/<id>/motorista` (designação, troca ou remoção do
+motorista em `autorizada`/`em_uso`) com o recurso Motorista ligado. Sem mudança (mesmo motorista),
+recusa (400/403/404/409) ou recurso desligado: nenhum evento. A designação feita **na autorização**
+segue saindo só em `requisicao.autorizada`.
+
+| Chave | Conteúdo |
+|---|---|
+| `tipo` | `designado` (não havia motorista), `trocado` ou `removido` (passou a `null`) |
+| `status` | `autorizada` ou `em_uso` |
+
+`contatos.motorista` já traz o **novo** motorista (`null` na remoção). O motorista anterior não sai
+em lugar nenhum do evento (opção A1). O evento leva `contatos` e `resumo` como os demais
+`requisicao.*`, sem `detalhes` (`versao` 1).
+
 ## `detalhes` (só saída e chegada)
 
 | Chave | Presença | Conteúdo |
@@ -98,4 +131,5 @@ coberto pelo teste de regressão `test_toda_chave_da_requisicao_vai_em_detalhes_
 `backend/app/notificacoes/n8n.py`, `backend/app/services/requisicoes.py`,
 `backend/tests/test_notificacoes.py`, `backend/tests/test_motorista_localizacao.py`,
 `backend/tests/test_telefone.py` (telefone e `contatos`), `backend/tests/test_webhook_resumo.py`
-(`resumo`).
+(`resumo`), `backend/tests/test_webhook_motorista_cancelamento.py` (`cancelamento` e
+`requisicao.motorista_alterado`).

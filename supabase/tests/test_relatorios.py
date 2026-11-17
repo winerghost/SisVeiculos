@@ -695,7 +695,8 @@ def test_registrar_auditoria_relatorios(real: "psycopg.Connection") -> None:
 
 def test_registrar_auditoria_antigas_continuam(real: "psycopg.Connection") -> None:
     ator = h.criar_usuario("rel-aud2", "autorizador")
-    sql = "select public.registrar_auditoria('perfis', null, %s, %s, null, null, '{\"k\": 1}'::jsonb)"
+    sql = "select public.registrar_auditoria('perfis', null, %s, %s, null, null, '{\"recurso\": \"acessos\"}'::jsonb)"
+    # 20261204120200 (B3): detalhes dessas acoes seguem lista branca ('recurso' vale nas duas).
     for acao in ("acao_administrativa", "acesso_negado"):
         assert real.execute(sql, (acao, ator)).fetchone() is not None
     for acao in ("criada", "transicao", "configuracao_alterada", "checklist_registrado", "desconhecida"):

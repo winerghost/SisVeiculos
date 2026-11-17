@@ -54,6 +54,13 @@ def _flag_atual() -> bool:
 
 
 def _esvaziar_fila() -> None:
+    """Tira da fila (ignorado) tudo que estiver pendente/falhou/enviando, venha de onde vier.
+
+    A fila e GLOBAL (reservar_push_notificacao nao filtra por usuario). Ligar a flag gera
+    'configuracao_alterada' para TODOS os admins ativos menos o ator: rodando so este arquivo ha ~1 admin,
+    mas na suite inteira ha centenas (outros arquivos criam admins e nunca apagam). Por isso esvazia-se
+    tambem DEPOIS de ligar a flag (fixture `fila`).
+    """
     with h.conectar() as c:
         c.execute("update public.notificacoes set push_status = 'ignorado' "
                   "where push_status in ('pendente','falhou','enviando')")
@@ -107,13 +114,22 @@ def _insc(iid: str | uuid.UUID) -> tuple:
 
 
 def _inserir(usuario: uuid.UUID, *, push: str = "pendente", dias: float = 0, tentativas: int = 0,
-             critica: bool = False, tipo: str = "configuracao_alterada") -> uuid.UUID:
+             critica: bool = False, tipo: str = "configuracao_alterada",
+             codigo: str | None = None) -> uuid.UUID:
+    """Insere uma notificacao de teste.
+
+    `codigo` e obrigatorio para tipo 'sistema_falha_envio' (ck_notificacoes_sistema_com_codigo). Linha 'falhou'
+    nasce com push_reservado_em de 10 min atras, como no fluxo real (so chega a 'falhou' passando por
+    'enviando', que carimba a reserva); sem isso a reserva nunca a reenviaria (null < x e nulo).
+    """
     nid = uuid.uuid4()
     with h.conectar() as c:
         c.execute(
             "insert into public.notificacoes (id, usuario_id, tipo, critica, criada_em, push_status, "
-            "push_tentativas) values (%s, %s, %s, %s, now() - make_interval(secs => %s), %s, %s)",
-            (nid, usuario, tipo, critica, dias * 86400, push, tentativas))
+            "push_tentativas, codigo, push_reservado_em) values (%s, %s, %s, %s, "
+            "now() - make_interval(secs => %s), %s, %s, %s, "
+            "case when %s = 'falhou' then now() - interval '10 minutes' end)",
+            (nid, usuario, tipo, critica, dias * 86400, push, tentativas, codigo, push))
     return nid
 
 
@@ -130,7 +146,9 @@ def _reservar(limite: int = 20) -> list[dict]:
 @pytest.fixture
 def fila(adm: uuid.UUID) -> dict:
     _flag(True, adm)
-    return {"adm": adm, "u": h.criar_usuario("wp-fila", "autorizador")}
+    u = h.criar_usuario("wp-fila", "autorizador")
+    _esvaziar_fila()  # descarta as notificacoes geradas por ligar a flag (ver _esvaziar_fila)
+    return {"adm": adm, "u": u}
 
 
 # --- flag e auditoria ----------------------------------------------------------------------------
@@ -147,7 +165,7 @@ def test_flag_existe_desligada_por_padrao_e_e_auditada(adm: uuid.UUID) -> None:
     with h.conectar() as c:
         linhas = c.execute(
             "select de, para, ator_id from public.auditoria where acao = 'configuracao_alterada' "
-            "and detalhes ->> 'recurso' = 'notificacao_push' order by criada_em desc, id desc limit 2"
+            "and detalhes ->> 'recurso' = 'notificacao_push' order by ocorrido_em desc, id desc limit 2"
         ).fetchall()
         total = c.execute("select count(*) from public.auditoria where acao = 'configuracao_alterada' "
                           "and detalhes ->> 'recurso' = 'notificacao_push'").fetchone()[0]  # type: ignore[index]
@@ -168,7 +186,7 @@ def test_flags_antigas_continuam_auditadas(adm: uuid.UUID) -> None:
         v = c.execute("select checklist from public.configuracoes").fetchone()[0]  # type: ignore[index]
         c.execute("update public.configuracoes set checklist = %s, alterado_por = %s", (not v, adm))
         n = c.execute("select count(*) from public.auditoria where acao = 'configuracao_alterada' "
-                      "and detalhes ->> 'recurso' = 'checklist' and criada_em > now() - interval '1 minute'"
+                      "and detalhes ->> 'recurso' = 'checklist' and ocorrido_em > now() - interval '1 minute'"
                       ).fetchone()[0]  # type: ignore[index]
         c.execute("update public.configuracoes set checklist = %s, alterado_por = %s", (v, adm))
     assert n >= 1
@@ -454,7 +472,7 @@ def test_linhas_antigas_ja_estao_ignoradas_e_default_e_pendente() -> None:
 
 def test_reservar_move_para_enviando_com_formato_e_limite(fila: dict) -> None:
     for _ in range(5):
-        _inserir(fila["u"], tipo="sistema_falha_envio", critica=True)
+        _inserir(fila["u"], tipo="sistema_falha_envio", critica=True, codigo="teste")
     r = _reservar(3)
     assert len(r) == 3
     assert set(r[0]) == {"id", "tipo", "usuario_id", "requisicao_id", "codigo", "critica"}
@@ -542,7 +560,9 @@ def test_falhou_so_reenvia_apos_espera_e_ate_3_tentativas(fila: dict) -> None:
         assert [x["id"] for x in _reservar(5)] == [str(n)], tentativa
         assert _estado(n)[1] == tentativa
         _chamar("select public.marcar_push_notificacao(%s, 'falhou', 'http_500')", (n,))
-        assert _reservar(5) == []  # espera de 2 min
+        assert _reservar(5) == []  # espera de 2 min (na 3a falha, a reserva ja encerra como esgotada, B7)
+        if tentativa == 3:
+            break  # 'ignorado' e terminal: nao envelhecer a reserva (AG001)
         with h.conectar() as c:
             c.execute("update public.notificacoes set push_reservado_em = now() - interval '10 minutes' "
                       "where id = %s", (n,))
@@ -577,8 +597,12 @@ def test_flag_desligada_marca_ignorado_desligado_e_nao_devolve_nada(fila: dict) 
     assert _estado(pend)[:3] == ("ignorado", 0, "desligado")
     assert _estado(falhou)[:3] == ("ignorado", 1, "desligado")
     # religar nao ressuscita o que foi ignorado
+    # (religar gera 'configuracao_alterada' novas para os outros admins; elas podem ser reservadas, estas nao)
     _flag(True, fila["adm"])
-    assert _reservar(10) == []
+    reservadas = {x["id"] for x in _reservar(100)}
+    assert not reservadas & {str(pend), str(falhou)}
+    assert _estado(pend)[:3] == ("ignorado", 0, "desligado")
+    assert _estado(falhou)[:3] == ("ignorado", 1, "desligado")
 
 
 def test_limite_de_reserva_e_ajustado(fila: dict) -> None:

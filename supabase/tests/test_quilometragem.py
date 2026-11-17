@@ -70,6 +70,22 @@ def _definir_abastecimento(ligado: bool, por: uuid.UUID) -> None:
         )
 
 
+def _definir_autorizador_km(ligado: bool, por: uuid.UUID) -> None:
+    """autorizador_km exige quilometragem (AG010): ligar depois dela, desligar antes."""
+    with h.conectar() as c:
+        c.execute(
+            "update public.configuracoes set autorizador_km = %s, alterado_por = %s where id = true",
+            (ligado, por),
+        )
+
+
+def _ler_autorizador_km() -> bool:
+    with h.conectar() as c:
+        row = c.execute("select autorizador_km from public.configuracoes").fetchone()
+    assert row is not None
+    return bool(row[0])
+
+
 def _ler_recursos() -> tuple[bool, bool]:
     with h.conectar() as c:
         row = c.execute("select quilometragem, abastecimento_manutencao from public.configuracoes").fetchone()
@@ -90,7 +106,10 @@ def _estado_recursos() -> Iterator[None]:
     if not _dsn_local():
         pytest.skip("DSN nao parece banco local/descartavel (TEST_DATABASE_ALLOW_REMOTE=1 forca)")
     orig_km, orig_ab = _ler_recursos()
+    orig_aut_km = _ler_autorizador_km()
     por = h.admin_ativo_qualquer() or h.criar_usuario("admin-cfg", "admin")
+    if orig_aut_km:  # depende de quilometragem: sai antes dela
+        _definir_autorizador_km(False, por)
     if orig_ab:
         _definir_abastecimento(False, por)
     if orig_km:
@@ -98,6 +117,8 @@ def _estado_recursos() -> Iterator[None]:
     try:
         yield
     finally:
+        if _ler_autorizador_km():  # nunca mexer em km com autorizador_km ligado (AG010)
+            _definir_autorizador_km(False, por)
         atual_km, atual_ab = _ler_recursos()
         if atual_ab:  # nunca mexer em km com abastecimento ligado (AG010)
             _definir_abastecimento(False, por)
@@ -105,12 +126,20 @@ def _estado_recursos() -> Iterator[None]:
             _definir_km(orig_km, por)
         if orig_ab:
             _definir_abastecimento(True, por)
+        if orig_aut_km:
+            _definir_autorizador_km(True, por)
 
 
 @contextmanager
-def km_ligada(admin: uuid.UUID) -> Iterator[None]:
-    """Liga o recurso; desligar/restaurar e da fixture autouse."""
+def km_ligada(admin: uuid.UUID, *, autorizador_km: bool = False) -> Iterator[None]:
+    """Liga o recurso; desligar/restaurar e da fixture autouse.
+
+    Desde 20261119120200 o KM e obrigatorio pelo PAPEL do ator: o autorizador/admin so e obrigado a lancar
+    (AG012) com autorizador_km ligado. Os testes de obrigatoriedade com ator autorizador passam True.
+    """
     _definir_km(True, admin)
+    if autorizador_km:
+        _definir_autorizador_km(True, admin)
     yield
 
 
@@ -200,7 +229,7 @@ def test_desligado_banco_nao_descarta_km_valido(atores: Atores) -> None:
 # --- recurso LIGADO ----------------------------------------------------------------
 def test_ligado_saida_exige_km_saida(atores: Atores) -> None:
     rid = _autorizada(atores)
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         with pytest.raises(psycopg.Error) as exc:
             _iniciar(rid, atores.autorizador)
         assert h.sqlstate(exc) == "AG012"
@@ -212,7 +241,7 @@ def test_ligado_saida_exige_km_saida(atores: Atores) -> None:
 
 def test_ligado_chegada_exige_km_chegada(atores: Atores) -> None:
     rid = _autorizada(atores)
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         _iniciar(rid, atores.autorizador, 1000)
         with pytest.raises(psycopg.Error) as exc:
             _concluir(rid, atores.autorizador)
@@ -234,7 +263,7 @@ def test_ligado_com_viagem_em_curso_sem_km_saida(atores: Atores) -> None:
     """Recurso ligado com a viagem ja em uso: a chegada precisa trazer os dois km."""
     rid = _autorizada(atores)
     _iniciar(rid, atores.autorizador)  # desligado
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         with pytest.raises(psycopg.Error) as exc:
             _concluir(rid, atores.autorizador, 200)
         assert h.sqlstate(exc) == "AG012"
@@ -319,7 +348,7 @@ def test_ligado_chegada_so_com_km_chegada_da_ag012(atores: Atores) -> None:
     """Mesma transicao, so km_chegada, recurso ligado: AG012 (gatilho) antes do CHECK 23514."""
     rid = _autorizada(atores)
     _iniciar(rid, atores.autorizador)  # desligado: em_uso sem km
-    with km_ligada(atores.admin):
+    with km_ligada(atores.admin, autorizador_km=True):
         with pytest.raises(psycopg.Error) as exc:
             _concluir(rid, atores.autorizador, 50)
         assert h.sqlstate(exc) == "AG012"

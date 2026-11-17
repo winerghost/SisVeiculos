@@ -912,6 +912,13 @@ def test_sem_pii_em_notificacoes_nem_nas_linhas_de_auditoria_do_gatilho(e: dict)
     assert tipos <= TIPOS
 
 
+INDICES_NOTIFICACOES = {
+    "notificacoes_pkey", "ix_notificacoes_usuario_lida_criada", "ix_notificacoes_email_fila",
+    "ix_notificacoes_criada_em", "ix_notificacoes_requisicao_id", "ux_notificacoes_dedupe",
+    "ix_notificacoes_push_fila", "ix_notificacoes_push_esgotadas",
+}
+
+
 def test_migration_e_idempotente_e_mantem_o_gatilho_unico(e: dict) -> None:
     with h.reaplicando_migration() as c:  # rollback: nao deixa o gatilho antigo para os testes seguintes
         (antes,) = c.execute("select count(*) from public.notificacoes").fetchone() or (0,)
@@ -921,10 +928,11 @@ def test_migration_e_idempotente_e_mantem_o_gatilho_unico(e: dict) -> None:
         (gatilhos,) = c.execute(
             "select count(*) from pg_trigger where tgrelid = 'public.auditoria'::regclass "
             "and tgname = 'trg_auditoria_notificar'").fetchone() or (0,)
-        (indices,) = c.execute(
-            "select count(*) from pg_indexes where schemaname='public' and tablename='notificacoes'"
-        ).fetchone() or (0,)
-    assert depois >= antes and gatilhos == 1 and indices == 6  # pkey + 4 indices + dedupe
+        indices = {r[0] for r in c.execute(
+            "select indexname from pg_indexes where schemaname='public' and tablename='notificacoes'"
+        ).fetchall()}
+    # pkey + 4 indices + dedupe (20261110120000) + fila/esgotadas do push (20261120120000/120100)
+    assert depois >= antes and gatilhos == 1 and indices == INDICES_NOTIFICACOES
     rid = _nova_req(e["sol"])  # continua funcionando depois de reaplicar
     assert _dest(rid, "requisicao_nova") == _staff_ativo()
 

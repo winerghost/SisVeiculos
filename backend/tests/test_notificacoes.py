@@ -51,6 +51,7 @@ class Gravador:
         self.detalhes: list[tuple[str, dict[str, Any] | None]] = []
         self.contatos: list[dict[str, Any] | None] = []
         self.resumos: list[dict[str, Any] | None] = []
+        self.blocos: list[dict[str, dict[str, Any]] | None] = []
 
     ativo = True
 
@@ -62,11 +63,13 @@ class Gravador:
         *,
         contatos: dict[str, Any] | None = None,
         resumo: dict[str, Any] | None = None,
+        blocos: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.chamadas.append((evento, dict(requisicao)))
         self.detalhes.append((evento, detalhes))
         self.contatos.append(contatos)
         self.resumos.append(resumo)
+        self.blocos.append(blocos)
 
     def fechar(self) -> None:
         return None
@@ -89,6 +92,7 @@ class Quebrado:
         *,
         contatos: dict[str, Any] | None = None,
         resumo: dict[str, Any] | None = None,
+        blocos: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         raise RuntimeError("n8n fora")
 

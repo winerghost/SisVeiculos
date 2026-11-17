@@ -91,7 +91,7 @@ def test_cada_chave_e_auditada_uma_linha_com_ator(chave: str, adm: uuid.UUID) ->
     with h.conectar() as c:
         total = c.execute(f"select count(*) from public.auditoria where {filtro}", (chave,)).fetchone()[0]  # type: ignore[index]
         linhas = c.execute(
-            f"select de, para, ator_id from public.auditoria where {filtro} order by criada_em desc, id desc limit 2",
+            f"select de, para, ator_id from public.auditoria where {filtro} order by ocorrido_em desc, id desc limit 2",
             (chave,),
         ).fetchall()
     assert total == antes + 2
@@ -150,7 +150,7 @@ def test_regras_antigas_preservadas(adm: uuid.UUID) -> None:
         v = c.execute("select checklist from public.configuracoes").fetchone()[0]  # type: ignore[index]
         c.execute("update public.configuracoes set checklist = %s, alterado_por = %s", (not v, adm))
         n = c.execute("select count(*) from public.auditoria where acao = 'configuracao_alterada' "
-                      "and detalhes ->> 'recurso' = 'checklist' and criada_em > now() - interval '1 minute'"
+                      "and detalhes ->> 'recurso' = 'checklist' and ocorrido_em > now() - interval '1 minute'"
                       ).fetchone()[0]  # type: ignore[index]
         c.execute("update public.configuracoes set checklist = %s, alterado_por = %s", (v, adm))
     assert n >= 1
@@ -186,12 +186,15 @@ def test_rls_da_configuracoes_intacto(papel: str) -> None:
         for p in ("insert", "update", "delete", "truncate"):
             assert c.execute("select has_table_privilege(%s, 'public.configuracoes', %s)",
                              (papel, p)).fetchone() == (False,), (papel, p)
-    # nenhuma policy de escrita aberta a anon/authenticated
+    # nenhuma policy de escrita ABERTA a anon/authenticated. As policies de negacao de 20261107121000
+    # (configuracoes_sem_insert/update/delete: using (false) / with check (false)) nao abrem nada.
     with h.conectar() as c:
         assert c.execute(
             "select count(*) from pg_policy where polrelid = 'public.configuracoes'::regclass "
             "and polcmd in ('a', 'w', 'd', '*') and (polroles = '{0}' or "
-            "exists (select 1 from pg_roles r where r.oid = any(polroles) and r.rolname = %s))", (papel,)
+            "exists (select 1 from pg_roles r where r.oid = any(polroles) and r.rolname = %s)) "
+            "and not (coalesce(pg_get_expr(polqual, polrelid), 'false') = 'false' "
+            "and coalesce(pg_get_expr(polwithcheck, polrelid), 'false') = 'false')", (papel,)
         ).fetchone() == (0,)
 
 

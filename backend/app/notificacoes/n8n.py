@@ -19,6 +19,11 @@ Garantias:
   ({nome_solicitante, hora_saida, hora_saida_fmt, trajeto}) para o n8n montar a mensagem de
   WhatsApp. Allowlist fixa desses 4 campos (nunca `observacao`); `checklist.registrado` não leva.
   Não altera `versao`. Nunca vai a log nem à resposta da API.
+- Blocos por evento (aprovados em 2026-11-16, sem dado pessoal): `requisicao.cancelada` leva
+  `cancelamento` ({origem: "equipe"|"solicitante", status_anterior}) e
+  `requisicao.motorista_alterado` (designação, troca ou remoção do motorista depois da
+  autorização) leva `motorista_alteracao` ({tipo: "designado"|"trocado"|"removido", status}).
+  Allowlist fixa por evento (`BLOCOS_POR_EVENTO`): bloco ou campo fora dela é descartado.
 - Nunca loga URL, token, corpo ou resposta; só o tipo da exceção e o nome do evento.
 - Assinatura: `X-Assinatura: sha256=HMAC(chave, "<timestamp>.<corpo>")` e `X-Timestamp`
   (segundos Unix) para o n8n rejeitar replay. A chave é `N8N_HMAC_SECRET`; se ausente, cai no
@@ -61,6 +66,7 @@ EVENTOS = frozenset(
         "requisicao.saida",
         "requisicao.chegada",
         "requisicao.cancelada",
+        "requisicao.motorista_alterado",
         "checklist.registrado",
     }
 )
@@ -68,6 +74,11 @@ EVENTOS = frozenset(
 _CAMPOS_REQ = ("status", "veiculo_id", "unidade")
 # Allowlist do bloco `resumo` (exceção LGPD aprovada; nunca `observacao`).
 CAMPOS_RESUMO = ("nome_solicitante", "hora_saida", "hora_saida_fmt", "trajeto")
+# Blocos extras permitidos por evento (nenhum identifica pessoa): evento -> bloco -> campos.
+BLOCOS_POR_EVENTO: dict[str, dict[str, tuple[str, ...]]] = {
+    "requisicao.cancelada": {"cancelamento": ("origem", "status_anterior")},
+    "requisicao.motorista_alterado": {"motorista_alteracao": ("tipo", "status")},
+}
 _HOSTS_PROIBIDOS = frozenset({"localhost", "localhost.localdomain", "ip6-localhost"})
 _SUFIXOS_PROIBIDOS = (".localhost", ".local", ".internal", ".intranet", ".lan", ".home.arpa")
 _ROTULO = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
@@ -88,6 +99,7 @@ class Notificador(Protocol):
         *,
         contatos: dict[str, Any] | None = None,
         resumo: dict[str, Any] | None = None,
+        blocos: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Nunca bloqueia e nunca lança."""
         ...
@@ -110,6 +122,7 @@ class NotificadorNulo:
         *,
         contatos: dict[str, Any] | None = None,
         resumo: dict[str, Any] | None = None,
+        blocos: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         return None
 
@@ -192,12 +205,14 @@ def montar_payload(
     *,
     contatos: dict[str, Any] | None = None,
     resumo: dict[str, Any] | None = None,
+    blocos: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Payload mínimo por allowlist; com `detalhes` (só saída e chegada) acrescenta o bloco
     completo aprovado e sobe a versão para 2. `contatos` (todos os eventos de requisição,
     exceção LGPD aprovada) leva id, nome, telefone e e-mail de login de solicitante,
     autorizador e motorista. `resumo` (só eventos `requisicao.*`, exceção aprovada) leva só os
-    campos de `CAMPOS_RESUMO`; não altera `versao`.
+    campos de `CAMPOS_RESUMO`; não altera `versao`. `blocos` só entram pela allowlist
+    `BLOCOS_POR_EVENTO` (bloco e campos fixos por evento); não alteram `versao`.
 
     `evento_id` (uuid4) é estável por evento; o n8n deduplica por ele."""
     payload: dict[str, Any] = {
@@ -212,6 +227,10 @@ def montar_payload(
         payload["contatos"] = contatos
     if resumo is not None and evento.startswith("requisicao."):
         payload["resumo"] = {c: resumo.get(c) for c in CAMPOS_RESUMO}
+    for nome, campos in BLOCOS_POR_EVENTO.get(evento, {}).items():
+        bloco = (blocos or {}).get(nome)
+        if isinstance(bloco, dict):
+            payload[nome] = {c: bloco.get(c) for c in campos}
     if detalhes:
         payload["detalhes"] = detalhes
         payload["versao"] = VERSAO_PAYLOAD_DETALHES
@@ -268,6 +287,7 @@ class N8nWebhook:
         *,
         contatos: dict[str, Any] | None = None,
         resumo: dict[str, Any] | None = None,
+        blocos: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         try:
             if evento not in EVENTOS or self._parar.is_set():
@@ -275,7 +295,13 @@ class N8nWebhook:
             evento_id = str(uuid.uuid4())  # gerado uma vez; reutilizado nas retentativas
             corpo = json.dumps(
                 montar_payload(
-                    evento, requisicao, evento_id, detalhes, contatos=contatos, resumo=resumo
+                    evento,
+                    requisicao,
+                    evento_id,
+                    detalhes,
+                    contatos=contatos,
+                    resumo=resumo,
+                    blocos=blocos,
                 ),
                 separators=(",", ":"),
                 ensure_ascii=False,

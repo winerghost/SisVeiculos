@@ -137,6 +137,7 @@ EVENTO_POR_ACAO = {
     "registrar_chegada": "requisicao.chegada",
     "cancelar": "requisicao.cancelada",
 }
+EVENTO_MOTORISTA_ALTERADO = "requisicao.motorista_alterado"
 
 # Webhook n8n em saída/chegada: a linha da requisição e a do veículo vão INTEIRAS, lidas com
 # select('*') por métodos próprios do repositório (`obter_requisicao_completa`,
@@ -792,10 +793,14 @@ class ServicoRequisicoes:
         return mid
 
     def atribuir_motorista(self, perfil: Perfil, requisicao_id: str, corpo: Any) -> dict[str, Any]:
-        """Atribui, troca (ou remove, com null) o motorista de requisição autorizada/em uso."""
+        """Atribui, troca (ou remove, com null) o motorista de requisição autorizada/em uso.
+
+        Após o commit notifica o n8n (`requisicao.motorista_alterado`); sem mudança, nada."""
         if perfil.role not in STAFF:
             raise SemPermissao("Você não tem permissão para esta ação.")
-        self.exigir_motorista_ligado()
+        config = self._repo.ler_configuracoes()
+        if not config.motorista:
+            raise RecursoDesligado(MSG_MOTORISTA_DESLIGADO)
         req = self.obter(perfil, requisicao_id)
         if not isinstance(corpo, dict) or set(corpo) != {"motorista_id"}:
             raise RequisicaoInvalida("Envie um objeto JSON apenas com 'motorista_id'.")
@@ -813,6 +818,7 @@ class ServicoRequisicoes:
         )
         if atualizada is None:
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
+        self._notificar_motorista_alterado(req.get("motorista_id"), atualizada, config)
         return self.apresentar(perfil, atualizada)
 
     def horario_referencia(self) -> dict[str, Any]:
@@ -866,10 +872,21 @@ class ServicoRequisicoes:
         atualizada = self._repo.transicionar(req["id"], req["status"], campos)
         if atualizada is None:  # outra requisição mudou o estado no meio do caminho
             raise TransicaoInvalida("A requisição foi alterada por outra pessoa. Atualize a tela.")
-        self._notificar_acao(acao, atualizada, config)  # após o commit
+        blocos = None
+        if acao == "cancelar":
+            # Sem dado pessoal: só quem originou (equipe x o próprio dono) e o estado anterior.
+            origem = "solicitante" if perfil.id == req["usuario_id"] else "equipe"
+            blocos = {"cancelamento": {"origem": origem, "status_anterior": req["status"]}}
+        self._notificar_acao(acao, atualizada, config, blocos)  # após o commit
         return self.apresentar(perfil, atualizada)
 
-    def _notificar_acao(self, acao: str, atualizada: Requisicao, config: Configuracoes) -> None:
+    def _notificar_acao(
+        self,
+        acao: str,
+        atualizada: Requisicao,
+        config: Configuracoes,
+        blocos: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         """Notifica o n8n; saída e chegada levam `detalhes` (aprovação LGPD), best-effort.
 
         Reaproveita o `config` já lido na ação e, em saída/chegada, as pessoas que
@@ -894,11 +911,33 @@ class ServicoRequisicoes:
         contatos = self._contatos_webhook(atualizada, evento, config, perfis)
         resumo = self._resumo_webhook(atualizada, evento)
         if detalhes is None:
-            self._notificador.notificar(evento, atualizada, contatos=contatos, resumo=resumo)
+            self._notificador.notificar(
+                evento, atualizada, contatos=contatos, resumo=resumo, blocos=blocos
+            )
         else:
             self._notificador.notificar(
-                evento, atualizada, detalhes, contatos=contatos, resumo=resumo
+                evento, atualizada, detalhes, contatos=contatos, resumo=resumo, blocos=blocos
             )
+
+    def _notificar_motorista_alterado(
+        self, anterior: str | None, atualizada: Requisicao, config: Configuracoes
+    ) -> None:
+        """`requisicao.motorista_alterado` após o commit da designação, troca ou remoção.
+
+        `contatos.motorista` já é o NOVO motorista (None na remoção); o anterior não sai (A1,
+        aprovada em 2026-11-16). n8n desligado: nada é montado."""
+        if not self._notificador.ativo:
+            return
+        evento = EVENTO_MOTORISTA_ALTERADO
+        novo = atualizada.get("motorista_id")
+        tipo = "designado" if anterior is None else ("removido" if novo is None else "trocado")
+        self._notificador.notificar(
+            evento,
+            atualizada,
+            contatos=self._contatos_webhook(atualizada, evento, config),
+            resumo=self._resumo_webhook(atualizada, evento),
+            blocos={"motorista_alteracao": {"tipo": tipo, "status": atualizada.get("status")}},
+        )
 
     def _resumo_webhook(self, req: Requisicao, evento: str) -> dict[str, Any] | None:
         """Bloco `resumo` de TODO evento de requisição (exceção LGPD aprovada em 2026-11-15).

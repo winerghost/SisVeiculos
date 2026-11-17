@@ -258,9 +258,11 @@ def test_veiculos_muda_com_ocupacao_alheia(cena: Cena) -> None:
         rid_b = h.inserir_requisicao(c, cena.sol_b, vid)
     v1 = versao(cena.sol_a)["veiculos"]
     assert v1 != v0
-    h.autorizar(rid_b, cena.aut)  # continua ocupado
+    # observacao so muda enquanto 'solicitada' (requisicoes_validar, AG004): edita antes de autorizar.
     with h.conectar() as c:
         c.execute("update public.requisicoes set observacao = 'outra' where id = %s", (rid_b,))
+    assert versao(cena.sol_a)["veiculos"] == v1
+    h.autorizar(rid_b, cena.aut)  # continua ocupado
     assert versao(cena.sol_a)["veiculos"] == v1
     h.cancelar(rid_b, cena.aut)  # libera o veiculo
     assert versao(cena.sol_a)["veiculos"] != v1

@@ -148,6 +148,7 @@ def test_vigilante_checklist_com_fotos_e_requisicao_designada_a_outro(
     cena: Cena,
 ) -> None:
     cena.cfg("checklist", True)
+    cena.cfg("motorista", True)  # designar motorista exige o recurso ligado (requisicoes_validar_motorista)
     rid = cena.autorizada()
     with h.conectar() as c:
         c.execute(

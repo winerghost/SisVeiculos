@@ -43,6 +43,7 @@ RECURSOS = (
     "leitor_qr_veiculos",
     "voz_campos",
     "passkeys",
+    "compartilhar_imagem",
 )
 
 

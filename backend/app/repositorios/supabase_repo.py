@@ -72,7 +72,8 @@ COLUNAS_CONFIG = (
     "quilometragem,abastecimento_manutencao,checklist,mfa,relatorio_email,relatorio_whatsapp,"
     "notificacao_email_criticos,motorista,motorista_registra,motorista_localizacao,"
     "vigilante_km,autorizador_decide_propria,autorizador_km,motorista_km,notificacao_push,"
-    "indicador_conectividade,feedback_tatil,leitor_qr_veiculos,voz_campos,passkeys"
+    "indicador_conectividade,feedback_tatil,leitor_qr_veiculos,voz_campos,passkeys,"
+    "compartilhar_imagem"
 )
 
 
@@ -140,6 +141,7 @@ def _configuracoes(r: dict[str, Any]) -> Configuracoes:
         leitor_qr_veiculos=bool(r.get("leitor_qr_veiculos")),
         voz_campos=bool(r.get("voz_campos")),
         passkeys=bool(r.get("passkeys")),
+        compartilhar_imagem=bool(r.get("compartilhar_imagem")),
     )
 
 

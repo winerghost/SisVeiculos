@@ -262,3 +262,24 @@ body {
 .dialogo-entra::backdrop {
   background: rgb(14 27 46 / 0.5);
 }
+
+/* Speed dial de compartilhamento (/requisicoes/detalhe): itens sobem em cascata via --i, ≤ 200 ms.
+   A regra global de movimento reduzido zera duração e atraso. Só visual. */
+.speed-dial-item {
+  animation: speed-dial-entra 0.18s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 0.03s);
+}
+.speed-dial-fab {
+  transition:
+    transform 0.15s ease-out,
+    background-color 0.15s ease-out;
+}
+.speed-dial-aviso {
+  animation: subir-suave 0.2s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+@keyframes speed-dial-entra {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+}

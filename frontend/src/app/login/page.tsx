@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { TelaMfa } from '@/components/tela-mfa';
 import { Splash } from '@/components/splash';
+import { destinoAposLogin } from '@/lib/voltar';
 
 export default function Login() {
   const { estado, aviso, entrar } = useAuth();
@@ -31,7 +32,9 @@ export default function Login() {
   }, []);
 
   React.useEffect(() => {
-    if (estado === 'ativo') router.replace('/requisicoes');
+    // Vale também depois do segundo fator (TelaMfa leva o estado a 'ativo' nesta mesma tela).
+    // `voltar` só é usado depois de validado como caminho interno (lib/voltar).
+    if (estado === 'ativo') router.replace(destinoAposLogin(window.location.search));
   }, [estado, router]);
 
   if (estado === 'mfa') return <TelaMfa />;

@@ -53,6 +53,7 @@ def test_token_valido_carrega_role_do_banco(client, repo, auth):  # type: ignore
         "leitor_qr_veiculos": False,
         "voz_campos": False,
         "passkeys": False,
+        "compartilhar_imagem": False,
     }
 
 

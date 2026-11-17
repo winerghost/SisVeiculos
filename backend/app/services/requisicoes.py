@@ -124,6 +124,7 @@ CATEGORIA_ACAO: dict[str, str] = {
     "atribuir_motorista": "designar",
     "ver_checklist": "consultar",
     "ver_localizacao": "consultar",
+    "compartilhar_imagem": "consultar",
     "arquivar": "organizar",
     "desarquivar": "organizar",
 }
@@ -440,6 +441,10 @@ class ServicoRequisicoes:
             acoes.append("ver_checklist")
         if perfil.role == "admin" and req.get("saida_real_em"):
             acoes.append("ver_localizacao")  # só o admin lê as coordenadas (LGPD)
+        if config.compartilhar_imagem:
+            # Quem chegou aqui já pode ver a requisição (filtro de dono/papel em `obter`/`listar`);
+            # a imagem é gerada no aparelho só com o que a API já devolveu a este usuário.
+            acoes.append("compartilhar_imagem")
         if self._pode_arquivar(perfil, req, config):
             if arquivadas is None:
                 arquivadas = self._repo.ids_arquivados(perfil.id, {req["id"]})

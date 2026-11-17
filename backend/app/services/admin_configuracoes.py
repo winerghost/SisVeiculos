@@ -133,6 +133,13 @@ CATALOGO: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "sensíveis. O login por e-mail e senha continua funcionando normalmente.",
         (),
     ),
+    "compartilhar_imagem": (
+        "Compartilhar requisição como imagem",
+        "Permite gerar, no próprio aparelho, uma imagem da requisição para compartilhar ou baixar. "
+        "A imagem não leva fotos, e-mail, telefone, checklist nem localização; a observação só "
+        "entra se o usuário marcar. Depois de compartilhada, a imagem sai do controle do sistema.",
+        (),
+    ),
 }
 ROTULOS_RECURSOS = {k: v[0] for k, v in CATALOGO.items()}
 

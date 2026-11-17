@@ -993,6 +993,7 @@ def test_exportar_cobre_todas_as_colunas_e_audita(
         "notificacao_push",
         "relatorio_email",
         "relatorio_whatsapp",
+        "compartilhar_imagem",  # 20261205120000: fora da exportacao (decisao LGPD)
     }
     with h.conectar() as c:
         for tabela in TABELAS:

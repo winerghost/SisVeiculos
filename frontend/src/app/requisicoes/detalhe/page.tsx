@@ -13,6 +13,7 @@ import { LinhaDoTempo } from '@/components/linha-do-tempo';
 import { BotoesAcao, versaoChecklist } from '@/components/cartao-requisicao';
 import { LocalizacaoRegistroSecao } from '@/components/localizacao-registro';
 import { ChecklistRegistrado } from '@/components/checklist-registrado';
+import { MenuCompartilhar } from '@/components/compartilhar/menu-compartilhar';
 import { DialogoKmAlto } from '@/components/dialogo-km-alto';
 import { Alerta } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
@@ -98,6 +99,10 @@ function Detalhe({ id }: { id: string }) {
         onAcao={(rq, a, c) => void acao.executar(rq, a, c)}
         aoRegistrarChecklist={req.recarregar}
       />
+
+      {/* Espaço para o FAB fixo não cobrir os botões de ação no fim da rolagem. */}
+      <div aria-hidden className="h-24" />
+      <MenuCompartilhar req={r} />
     </>
   );
 }

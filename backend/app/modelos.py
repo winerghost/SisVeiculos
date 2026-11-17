@@ -50,6 +50,7 @@ class Configuracoes:
     leitor_qr_veiculos: bool = False  # leitor de QR que só identifica o veículo
     voz_campos: bool = False  # ditado por voz (Web Speech API)
     passkeys: bool = False  # WebAuthn: reautenticação/fator adicional
+    compartilhar_imagem: bool = False  # PNG da requisição gerado no aparelho (LGPD)
 
     def como_dict(self) -> dict[str, bool]:
         return {
@@ -73,4 +74,5 @@ class Configuracoes:
             "leitor_qr_veiculos": self.leitor_qr_veiculos,
             "voz_campos": self.voz_campos,
             "passkeys": self.passkeys,
+            "compartilhar_imagem": self.compartilhar_imagem,
         }

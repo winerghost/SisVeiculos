@@ -51,6 +51,7 @@ Só abre requisição se o veículo estiver livre. Decisão: uma requisição ab
 - MFA: ligado, o login de `admin` e `autorizador` exige segundo fator (TOTP do Supabase Auth); a verificação é feita no backend. `solicitante` segue só com senha. Desligado, vale só senha para todos.
 - Notificações push (Web Push, sem Capacitor): ligado, o backend envia avisos genéricos (sem dados da requisição) aos aparelhos inscritos; exige chaves VAPID no servidor, HTTPS e, no iOS/iPadOS 16.4+, o PWA na tela inicial. Os destinatários vêm das notificações internas (regras do banco); não depende do n8n. Novos tipos de notificação não podem levar dados pessoais ao push.
 - Passkeys (WebAuthn, 1ª etapa): ligado, o usuário cadastra passkeys e as usa para reautenticação; o Supabase Auth segue como único emissor de JWT e o login por senha não muda; a verificação criptográfica é do Flask; exige HTTPS e WEBAUTHN_* no servidor.
+- Compartilhar requisição como imagem: ligado, a API inclui `compartilhar_imagem` em `acoes_permitidas` (grupo `consultar`) para quem já pode ver a requisição (não muda quem vê) e o detalhe oferece compartilhar/baixar um PNG; "Copiar link" (exige login) existe sempre. Exceção LGPD aprovada (2026-11-17): a imagem é gerada no próprio aparelho só com os dados já devolvidos pela API, sem fotos, e-mail, telefone, checklist nem localização; a observação só entra se o usuário marcar. Fica fora da exportação/importação de dados.
 - Desligar um recurso nunca apaga dados já gravados.
 
 ## Banco

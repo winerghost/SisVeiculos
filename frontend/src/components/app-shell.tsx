@@ -18,6 +18,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { ID_TITULO_PAGINA } from '@/lib/foco';
+import { urlDeLogin } from '@/lib/voltar';
 import { Button } from '@/components/ui/button';
 import { Alerta } from '@/components/ui/alert';
 import { Avatar } from '@/components/avatar';
@@ -61,8 +62,18 @@ export function AppShell({
   const router = useRouter();
   const caminho = usePathname();
 
+  // Esta tela já teve sessão? Se sim, a ida ao login é logout/expiração e segue sem `voltar`;
+  // se não (link aberto sem sessão), o login devolve o usuário a esta tela depois de entrar.
+  const teveSessao = React.useRef(false);
   React.useEffect(() => {
-    if (estado === 'anonimo') router.replace('/login');
+    if (estado === 'ativo' || estado === 'mfa' || estado === 'falha') teveSessao.current = true;
+  }, [estado]);
+
+  React.useEffect(() => {
+    if (estado !== 'anonimo') return;
+    router.replace(
+      teveSessao.current ? '/login' : urlDeLogin(window.location.pathname, window.location.search),
+    );
   }, [estado, router]);
 
   if (estado === 'carregando' || estado === 'anonimo') return <Carregando />;

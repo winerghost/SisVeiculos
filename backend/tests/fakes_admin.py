@@ -561,6 +561,9 @@ class AuthAdminMemoria:
         self.falhar_convite = False
         self.falhar_bloqueio = False
         self.falhar_reenvio_acesso = False
+        # Erro específico a levantar (ex.: LimiteEmail), no lugar do ErroInterno genérico.
+        self.erro_convite: Exception | None = None
+        self.erro_reenvio_acesso: Exception | None = None
         self.consultas_email: list[set[str]] = []  # ids pedidos a emails_por_id
         self.falhar_emails = False
         self.erro_emails_webhook: Exception | None = None  # ex.: TimeoutError (prazo do webhook)
@@ -583,6 +586,8 @@ class AuthAdminMemoria:
         return parse_qs(urlsplit(redirect).query)["convite"][0]
 
     def convidar(self, email: str, *, nome: str | None, redirect_to: str | None) -> str:
+        if self.erro_convite is not None:
+            raise self.erro_convite
         if self.falhar_convite:
             raise ErroInterno("Serviço de autenticação indisponível. Tente novamente.")
         if self.atraso_convidar is not None:
@@ -627,6 +632,8 @@ class AuthAdminMemoria:
         return IndiceEmails(mapa, self.indice_truncado)
 
     def reenviar_acesso(self, email: str, *, redirect_to: str) -> None:
+        if self.erro_reenvio_acesso is not None:
+            raise self.erro_reenvio_acesso
         if self.falhar_reenvio_acesso:
             raise ErroInterno("Serviço de autenticação indisponível. Tente novamente.")
         self.envios.append((email, redirect_to))

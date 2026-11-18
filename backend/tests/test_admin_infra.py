@@ -15,9 +15,9 @@ import pytest
 from postgrest.exceptions import APIError
 
 from app.config import Config
-from app.errors import ContaExistente, ErroApi, ErroInterno, SistemaOcupado
+from app.errors import ContaExistente, ErroApi, ErroInterno, LimiteEmail, SistemaOcupado
 from app.repositorios import supabase_repo
-from app.repositorios.auth_admin import SupabaseAuthAdmin
+from app.repositorios.auth_admin import MSG_LIMITE_EMAIL, SupabaseAuthAdmin
 from app.repositorios.supabase_repo import SupabaseRepositorio, _exec, traduzir_erro_banco
 from app.services.admin_usuarios import ServicoUsuarios
 from app.services.requisicoes import ServicoRequisicoes
@@ -371,9 +371,11 @@ def test_reenviar_acesso_usa_recover_implicito_sem_pkce():  # type: ignore[no-un
 
 
 def test_reenviar_acesso_erro_http_ou_rede_vira_503_sem_pii(caplog):  # type: ignore[no-untyped-def]
-    a = auth_com_http(lambda req: httpx.Response(429, json={"msg": "a@gmail.com"}))
-    with pytest.raises(ErroInterno):
+    a = auth_com_http(lambda req: httpx.Response(500, json={"msg": "a@gmail.com"}))
+    with pytest.raises(ErroInterno) as exc:
         a.reenviar_acesso("a@gmail.com", redirect_to="https://x/y?convite=SEGREDO")
+    assert exc.value.status == 503
+    assert exc.value.mensagem == "Serviço de autenticação indisponível. Tente novamente."
 
     def cai(req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("falha com a@gmail.com SEGREDO", request=req)
@@ -381,6 +383,49 @@ def test_reenviar_acesso_erro_http_ou_rede_vira_503_sem_pii(caplog):  # type: ig
     with pytest.raises(ErroInterno):
         auth_com_http(cai).reenviar_acesso("a@gmail.com", redirect_to="https://x/y?convite=SEGREDO")
     assert "a@gmail.com" not in caplog.text and "SEGREDO" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "resposta",
+    [
+        httpx.Response(429, json={"code": 429, "error_code": "over_email_send_rate_limit"}),
+        httpx.Response(429, text="sem json a@gmail.com"),
+        httpx.Response(400, json={"error_code": "over_request_rate_limit", "msg": "a@gmail.com"}),
+    ],
+)
+def test_reenviar_acesso_limite_de_envio_vira_429_sem_pii(resposta, caplog):  # type: ignore[no-untyped-def]
+    caplog.set_level(logging.DEBUG)
+    # Como em produção (app/__init__.py): httpx/httpcore ficam em WARNING, pois registram a URL.
+    # Sem isto o teste dependia de outro teste ter criado o app antes.
+    for nome in ("httpx", "httpcore"):
+        caplog.set_level(logging.WARNING, logger=nome)
+    a = auth_com_http(lambda req: resposta)
+    with pytest.raises(LimiteEmail) as exc:
+        a.reenviar_acesso("a@gmail.com", redirect_to="https://x/y?convite=SEGREDO")
+    assert exc.value.status == 429 and exc.value.codigo == "limite_email"
+    assert exc.value.mensagem == MSG_LIMITE_EMAIL
+    assert "a@gmail.com" not in caplog.text and "SEGREDO" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "atributos",
+    [
+        {"status": 429},
+        {"code": "over_email_send_rate_limit"},
+        {"error_code": "over_request_rate_limit"},
+    ],
+)
+def test_auth_convidar_limite_de_envio_vira_429_sem_pii(atributos, caplog):  # type: ignore[no-untyped-def]
+    caplog.set_level(logging.DEBUG)
+    adm = MagicMock()
+    e = Exception("email rate limit exceeded para a@gmail.com")
+    for k, v in atributos.items():
+        setattr(e, k, v)
+    adm.invite_user_by_email.side_effect = e
+    with pytest.raises(LimiteEmail) as exc:
+        auth_com(adm).convidar("a@gmail.com", nome="N", redirect_to=None)
+    assert exc.value.status == 429 and exc.value.mensagem == MSG_LIMITE_EMAIL
+    assert "a@gmail.com" not in caplog.text
 
 
 @pytest.mark.parametrize("atributo", ["code", "error_code"])

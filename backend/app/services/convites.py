@@ -44,6 +44,10 @@ ESTADOS = ("aberto", "expirado", "usado", "revogado")
 
 _log = logging.getLogger(__name__)
 
+MSG_REENVIO_INCOMPLETO = (
+    "O e-mail foi enviado, mas o convite não foi atualizado. Reenvie o convite novamente."
+)
+
 
 COOLDOWN_REENVIO_S = 60  # um convite recém-emitido não é reenviado antes disso
 MAX_REENVIOS_POR_DESTINO = 5  # por e-mail, em JANELA_REENVIO_S (além do limite por IP da rota)
@@ -197,10 +201,20 @@ class ServicoConvites:
         Sem `substitui` (criação): grava e entrega; se a entrega falhar, revoga o recém-criado
         para não bloquear novo convite ao mesmo e-mail (índice de convite aberto).
 
-        Com `substitui` (reenvio): a RPC `reenviar_convite` revoga o antigo e grava o novo numa
-        única transação (FOR UPDATE; um reenvio concorrente recebe AG038). Só DEPOIS o e-mail
-        é entregue; se a entrega falhar, o novo é revogado (o antigo já foi revogado pela RPC,
-        então o e-mail fica livre e o admin pode reenviar/criar de novo).
+        Com `substitui` (reenvio): o e-mail com o token novo é entregue PRIMEIRO, com o convite
+        antigo ainda válido. Só se a entrega der certo a RPC `reenviar_convite` revoga o antigo
+        e grava o novo numa única transação (FOR UPDATE; um reenvio concorrente recebe AG038).
+        Assim, se o Auth recusar o envio (ex.: 429 por limite de e-mails), o banco não muda e o
+        convidado continua com o link que já tem.
+
+        Se a RPC falhar DEPOIS do envio (raro: concorrência ou falha de infraestrutura), o token
+        `?convite=` do e-mail antigo segue gravado, mas o novo convite do Supabase pode ter
+        trocado o token de verificação (OTP) do Auth: o e-mail antigo deixa de funcionar e o
+        novo traz um token de convite inexistente. O admin recebe `reenvio_incompleto` e pode
+        reenviar na hora (o cooldown conta do `criado_em` do antigo, que não mudou).
+
+        Conta já com perfil (`conta_existente`): nada muda no banco; o convite antigo continua
+        aberto (o aceite é recusado pelo banco) até o admin revogá-lo.
         """
         token = secrets.token_urlsafe(32)
         dados = {
@@ -214,17 +228,28 @@ class ServicoConvites:
         if telefone is not None:  # `convites.telefone`: a RPC de aceite o copia para o perfil
             dados["telefone"] = telefone
         if substitui is not None:
+            # Falha na entrega sobe aqui, antes de qualquer escrita: o convite antigo fica intacto.
+            self._entregar(email, nome, token)
             try:
-                convite = self._repo.reenviar_convite(
+                return self._repo.reenviar_convite(
                     substitui["id"],
                     ator_id=admin.id,
                     token_hash=dados["token_hash"],
                     expira_em=dados["expira_em"],
                 )
             except ConviteInvalido:  # AG007: o convite não existe mais
+                _log.warning("reenvio: e-mail entregue, mas o convite sumiu (AG007)")
                 raise NaoEncontrado("Convite não encontrado.") from None
-        else:
-            convite = self._repo.inserir_convite(dados)
+            except ErroApi as e:
+                # O e-mail novo saiu com um token que não foi gravado (ver docstring).
+                _log.warning("reenvio: e-mail entregue, mas a troca falhou: %s", e.codigo)
+                if e.status < 500:  # regra de negócio (403, 409 encerrado...): mensagem própria
+                    raise
+                raise ErroApi(MSG_REENVIO_INCOMPLETO, "reenvio_incompleto", 503) from None
+            except Exception as e:  # qualquer outra falha também deixa o e-mail sem convite
+                _log.warning("reenvio: e-mail entregue, mas a troca falhou: %s", type(e).__name__)
+                raise ErroApi(MSG_REENVIO_INCOMPLETO, "reenvio_incompleto", 503) from None
+        convite = self._repo.inserir_convite(dados)
         try:
             self._entregar(email, nome, token)
         except Exception:
@@ -258,8 +283,9 @@ class ServicoConvites:
 
     def reenviar(self, admin: Perfil, convite_id: str) -> dict[str, Any]:
         """Valida papel e cooldown, gera o token e chama a RPC atômica (revoga o atual e grava
-        o novo: mesmo e-mail, papel e unidade). O e-mail só sai depois; se falhar, o novo é
-        revogado. O CONTROLE em memória é só otimização: a garantia é do banco (AG038)."""
+        o novo: mesmo e-mail, papel e unidade). O e-mail sai ANTES da troca; se a entrega falhar
+        (ex.: 429), o banco não muda e o link antigo segue válido. O CONTROLE em memória é só
+        otimização: a garantia é do banco (AG038)."""
         exigir_admin(admin)
         self._exigir_configurado()
         antigo = self._exigir_reenviavel(self._carregar(convite_id))

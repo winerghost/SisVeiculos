@@ -149,6 +149,15 @@ class CotaEnvioExcedida(ErroApi):
     status, codigo = 429, "cota_envio_excedida"
 
 
+class LimiteEmail(ErroApi):
+    """O provedor de e-mail do Supabase Auth recusou o envio por limite de taxa (HTTP 429,
+    `over_email_send_rate_limit`/`over_request_rate_limit`)."""
+
+    status, codigo = 429, "limite_email"
+    # O limite de e-mail do Supabase Auth é por hora: 60 s levaria a outro 429 em seguida.
+    retry_after = 300
+
+
 class SistemaOcupado(ErroApi):
     """Lock do banco (55P03) ou deadlock (40P01) persistente após as novas tentativas."""
 

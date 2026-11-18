@@ -11,9 +11,10 @@ import logging
 from typing import Any, Protocol, TypedDict
 
 import httpx
-from supabase import Client, ClientOptions, create_client
+from supabase import Client
 
 from app.errors import ErroInterno
+from app.repositorios.cliente_http import cliente_http, criar_cliente_supabase
 
 log = logging.getLogger(__name__)
 
@@ -103,12 +104,10 @@ class SupabaseArmazenamento:
         http: httpx.Client | None = None,
     ) -> None:
         # `cliente` e `http` existem para injeção nos testes (MockTransport / dublê do storage).
-        self._c: Client = cliente or create_client(
-            url,
-            service_role_key,
-            options=ClientOptions(storage_client_timeout=TIMEOUT_STORAGE),
+        self._c: Client = cliente or criar_cliente_supabase(
+            url, service_role_key, timeout=TIMEOUT_STORAGE
         )
-        self._http = http or httpx.Client(timeout=TIMEOUT_STORAGE)
+        self._http = http or cliente_http(TIMEOUT_STORAGE)
 
     def _bucket(self) -> Any:
         return self._c.storage.from_(BUCKET)

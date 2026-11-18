@@ -19,6 +19,24 @@ Recurso opcional, **desligado por padrão**. Plano e contrato entre times: [plan
 3. O `sw.js` exibe o aviso; ao tocar, abre a tela de destino (login exigido para ver detalhes).
 4. Inscrição expirada (404/410) é revogada; falhas repetidas também.
 
+## Logout e novo login (migration 20261206120000)
+Ativou uma vez, não precisa reativar a cada login no **mesmo** aparelho e com o **mesmo** usuário.
+- Logout: `DELETE /api/push/inscricoes` com `{endpoint, logout: true}` revoga no servidor com a
+  marca `revogada_por_logout` (o aparelho para de receber os avisos de quem saiu) e responde
+  `{revogada}`. O front só mantém a inscrição do navegador se `revogada` for `true`; se for
+  `false`, der erro ou passar de 1,5 s, cancela a inscrição local (como antes).
+- Login: com permissão concedida e inscrição no navegador, o front chama
+  `POST /api/push/reativar` `{endpoint}` → `{reativada}`. O banco (`reativar_inscricao_push`) só
+  religa se o endpoint for do próprio usuário, a revogação tiver sido por logout há até 30 dias,
+  o perfil estiver ativo e houver vaga no limite de 10. Qualquer outro caso: `false`, sem revelar
+  o dono. Exige o recurso ligado e VAPID (senão 404); a marca de logout nasce mesmo com o recurso
+  desligado.
+- Outro usuário no mesmo aparelho (portaria): nada é religado; ele vê o botão "Ativar avisos" e só
+  o clique (opt-in) passa o aparelho para ele (`POST /api/push/inscricoes`).
+- "Desativar" manual: `DELETE` sem `logout` (204) e cancelamento local; nunca religa sozinho.
+- Sessão que expira (401) sem logout: o `DELETE` falha e a inscrição local é cancelada; o usuário
+  ativa de novo pelo botão.
+
 ## Compatibilidade
 | Plataforma | Suporte |
 | --- | --- |
@@ -57,7 +75,10 @@ caso de vazamento ou necessidade; avise os usuários.
 - [ ] Aviso não traz dados pessoais.
 - [ ] Inscrição expirada (revogada no navegador): é marcada como revogada, sem erro ao usuário.
 - [ ] Falha do serviço push (bloqueie o host): a operação original segue e o envio é reprocessado/descartado sem travar.
-- [ ] Logout revoga a inscrição do aparelho.
+- [ ] Logout revoga a inscrição do aparelho (nenhum aviso de quem saiu chega).
+- [ ] Logout e login do MESMO usuário: avisos voltam sem clicar em "Ativar".
+- [ ] Logout de A e login de B no mesmo aparelho: B vê "Ativar avisos"; A não recebe nada ali.
+- [ ] "Desativar" e depois logout/login: continua desativado.
 - [ ] Sem duplicidade para a mesma notificação.
 
 ## Antes da produção

@@ -398,11 +398,18 @@ export const api = {
   /** Web Push: a API decide se está habilitado; a chave pública vai ao pushManager.subscribe. */
   pushConfig: () => chamar<PushConfig>('/push/config'),
   pushInscrever: (d: InscricaoPush) => chamar<unknown>('/push/inscricoes', JSON_POST(d)),
-  pushRevogar: (endpoint: string) =>
-    chamar<unknown>('/push/inscricoes', {
+  /**
+   * `logout`: o servidor marca a revogação como logout (só o mesmo usuário religa depois) e
+   * responde `{revogada}`. Sem `logout` ("Desativar"), responde 204 sem corpo (null).
+   */
+  pushRevogar: (endpoint: string, logout = false) =>
+    chamar<{ revogada: boolean } | null>('/push/inscricoes', {
       method: 'DELETE',
-      body: JSON.stringify({ endpoint }),
+      body: JSON.stringify(logout ? { endpoint, logout: true } : { endpoint }),
     }),
+  /** Religa a inscrição deste aparelho se o servidor permitir (mesmo usuário, saída por logout). */
+  pushReativar: (endpoint: string) =>
+    chamar<{ reativada: boolean }>('/push/reativar', JSON_POST({ endpoint })),
 
   /** Passkeys (WebAuthn): a API valida tudo; o cliente só repassa as opções e a credencial. */
   passkeys: () => chamar<ListaPasskeys>('/passkeys'),

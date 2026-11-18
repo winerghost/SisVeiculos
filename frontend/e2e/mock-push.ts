@@ -147,6 +147,14 @@ export interface ApiPush {
   /** POST /push/inscricoes responde com erro (uma vez por item; depois sucesso). */
   errosInscrever?: { status: number; codigo: string; mensagem: string }[];
   errosRevogar?: { status: number; codigo: string; mensagem: string }[];
+  /** Atraso (ms) do DELETE, para estourar o prazo do logout. */
+  atrasoRevogar?: number;
+  /** DELETE com logout: `revogada` da resposta (padrão: true = o endpoint era do usuário). */
+  revogadaNoLogout?: boolean;
+  /** Resposta de POST /push/reativar (padrão: true = aparelho do próprio usuário). */
+  reativada?: boolean;
+  /** POST /push/reativar responde com erro (uma vez por item; depois sucesso). */
+  errosReativar?: { status: number; codigo: string; mensagem: string }[];
   /** Atraso (ms) do POST, para provocar clique duplo. */
   atrasoPost?: number;
 }
@@ -154,9 +162,11 @@ export interface ApiPush {
 export async function mockarApiPush(page: Page, cfg: ApiPush = {}) {
   const posts: { corpo: Record<string, unknown>; autorizacao: string }[] = [];
   const deletes: Record<string, unknown>[] = [];
+  const reativacoes: Record<string, unknown>[] = [];
   const state = { configs: 0 };
   const errosIns = [...(cfg.errosInscrever ?? [])];
   const errosRev = [...(cfg.errosRevogar ?? [])];
+  const errosReat = [...(cfg.errosReativar ?? [])];
 
   const erro = (route: Route, e: { status: number; codigo: string; mensagem: string }) =>
     route.fulfill({ status: e.status, json: { erro: { codigo: e.codigo, mensagem: e.mensagem } } });
@@ -192,12 +202,28 @@ export async function mockarApiPush(page: Page, cfg: ApiPush = {}) {
     }
     if (req.method() === 'DELETE') {
       deletes.push(req.postDataJSON() as Record<string, unknown>);
+      if (cfg.atrasoRevogar) await new Promise((r) => setTimeout(r, cfg.atrasoRevogar));
       const e = errosRev.shift();
       if (e) return erro(route, e);
-      return route.fulfill({ status: 204 });
+      const corpo = req.postDataJSON() as Record<string, unknown>;
+      // Contrato do backend: só o logout responde com corpo; o "Desativar" é 204.
+      if (corpo?.['logout'] === true) {
+        return route
+          .fulfill({ json: { revogada: cfg.revogadaNoLogout ?? true } })
+          .catch(() => undefined);
+      }
+      return route.fulfill({ status: 204 }).catch(() => undefined);
     }
     return route.fallback();
   });
 
-  return { posts, deletes, state };
+  await page.route('**/api/push/reativar', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    reativacoes.push(route.request().postDataJSON() as Record<string, unknown>);
+    const e = errosReat.shift();
+    if (e) return erro(route, e);
+    return route.fulfill({ json: { reativada: cfg.reativada ?? true } });
+  });
+
+  return { posts, deletes, reativacoes, state };
 }

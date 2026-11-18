@@ -75,17 +75,13 @@ export function AtivarPush() {
           if (ativo) setEstado('inativo');
           return;
         }
-        // Reenvio idempotente: o servidor reatribui o endpoint ao usuário atual (aparelho
-        // compartilhado). Só afirma "ativo" se a API confirmar.
-        const json = insc.toJSON();
-        const p256dh = json.keys?.p256dh;
-        const auth = json.keys?.auth;
-        if (!json.endpoint || !p256dh || !auth) {
-          if (ativo) setEstado('inativo');
-          return;
-        }
+        // O servidor decide se a inscrição deste aparelho vale para este usuário: religa só se
+        // for dele (ativa ou revogada pelo logout dele). Aparelho de outra pessoa: "inativo", e
+        // passá-lo a este usuário exige o botão (opt-in explícito). Só afirma "ativo" se a API
+        // confirmar.
+        let reativada = false;
         try {
-          await api.pushInscrever({ endpoint: json.endpoint, keys: { p256dh, auth } });
+          reativada = (await api.pushReativar(insc.endpoint)).reativada === true;
         } catch (e) {
           if (ativo) {
             setErro(tratarErroRef.current(e));
@@ -93,7 +89,9 @@ export function AtivarPush() {
           }
           return;
         }
-        if (ativo) setEstado('ativo');
+        // Não confirmada para este usuário: cancela a inscrição local (avisos de outra conta).
+        if (!reativada) await insc.unsubscribe().catch(() => false);
+        if (ativo) setEstado(reativada ? 'ativo' : 'inativo');
       } catch {
         // Recurso desligado/indisponível: some sem ruído (o sino interno segue funcionando).
         if (ativo) setEstado('oculto');

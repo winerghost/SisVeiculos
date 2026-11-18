@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { api, ApiErro } from './api';
-import { inscricaoAtual } from './push';
+import { detectarSuporte, inscricaoAtual } from './push';
 import { supabase } from './supabase';
 import type { Eu, PainelMenu, RespostaRelatorios } from './tipos';
 
@@ -51,19 +51,42 @@ async function revogarPushDesteAparelho(): Promise<void> {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
     const insc = await inscricaoAtual();
     if (!insc) return;
+    // O servidor revoga marcando "logout": o aparelho para de receber os avisos de quem saiu e
+    // só o MESMO usuário pode religá-lo no próximo login (o servidor decide; ver religar abaixo).
+    let confirmada = false;
     try {
-      // Revogação no servidor é melhor esforço, com prazo próprio.
-      await Promise.race([
-        api.pushRevogar(insc.endpoint),
-        new Promise<void>((r) => window.setTimeout(r, 1500)),
+      confirmada = await Promise.race([
+        // `revogada` false = o endpoint não era deste usuário (ex.: de quem saiu sem logout).
+        api.pushRevogar(insc.endpoint, true).then((r) => r?.revogada === true),
+        new Promise<boolean>((r) => window.setTimeout(() => r(false), 1500)),
       ]);
     } catch {
-      // Sem rede/401/recurso desligado: o cancelamento local abaixo segue mesmo assim.
+      confirmada = false;
     }
-    // Sempre cancela a inscrição LOCAL, para o aparelho não receber avisos do usuário anterior.
-    await insc.unsubscribe();
+    // Sem confirmação do servidor (sem rede, 401, prazo): cancela a inscrição LOCAL, para o
+    // aparelho nunca seguir recebendo avisos do usuário que saiu.
+    if (!confirmada) await insc.unsubscribe();
   } catch {
     // Sem service worker/inscrição: segue o logout.
+  }
+}
+
+/**
+ * Após o login: se o navegador já tem permissão e inscrição, pede ao servidor para religá-la.
+ * O servidor só religa se o aparelho for do próprio usuário e tiver saído por logout; outro
+ * usuário continua precisando do botão "Ativar avisos". Silencioso e sem bloquear o login.
+ */
+async function religarPushDesteAparelho(): Promise<void> {
+  try {
+    if (detectarSuporte() !== 'ok' || Notification.permission !== 'granted') return;
+    const insc = await inscricaoAtual();
+    if (!insc) return;
+    const { reativada } = await api.pushReativar(insc.endpoint);
+    // O servidor não confirmou este aparelho para este usuário (ex.: era de outra pessoa que não
+    // saiu): cancela a inscrição local para o aparelho não seguir recebendo avisos de outra conta.
+    if (reativada !== true) await insc.unsubscribe().catch(() => false);
+  } catch {
+    // Recurso desligado, sem rede ou limite: a tela de notificações segue oferecendo o botão.
   }
 }
 
@@ -168,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setEu(await api.eu());
       setAviso(null);
       setEstado('ativo');
+      void religarPushDesteAparelho();
       // Só em memória (sem persistência). Qualquer falha (inclusive 403) apenas oculta o menu.
       api
         .paineisDashboard()

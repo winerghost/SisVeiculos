@@ -559,8 +559,15 @@ class Repositorio(Protocol):
         """Cria ou reatribui o endpoint ao usuário (um endpoint pertence a um usuário por vez)."""
         ...
 
-    def revogar_inscricao_push(self, usuario_id: str, endpoint: str) -> None:
-        """Revoga só a inscrição do próprio usuário; endpoint alheio ou ausente não muda nada."""
+    def revogar_inscricao_push(self, usuario_id: str, endpoint: str, logout: bool = False) -> int:
+        """Revoga só a inscrição do próprio usuário; endpoint alheio ou ausente não muda nada.
+        `logout=True` marca a revogação como logout (migration 20261206120000): só essa pode
+        ser religada por `reativar_inscricao_push`. Devolve quantas linhas revogou (0 ou 1)."""
+        ...
+
+    def reativar_inscricao_push(self, usuario_id: str, endpoint: str) -> bool:
+        """Religa a inscrição do PRÓPRIO usuário revogada por logout há até 30 dias (perfil ativo,
+        dentro do limite). Já ativa dele: True. Alheia, inexistente ou outro motivo: False."""
         ...
 
     def listar_inscricoes_push(self, usuario_id: str) -> list[dict[str, Any]]:

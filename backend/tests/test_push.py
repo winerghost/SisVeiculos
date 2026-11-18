@@ -272,3 +272,108 @@ def test_admin_liga_flag(client, auth, repo, c) -> None:  # type: ignore[no-unty
     assert item["rotulo"] == "Notificações push" and item["habilitado"] is True
     assert item["exige"] == []
     assert repo.config.notificacao_push is True
+
+
+# --- religar após logout/login (alternativa B, migration 20261206120000) -------------------------
+def reativar(cli: Any, auth: Any, quem: Any, json: Any) -> Any:
+    return cli.post("/api/push/reativar", headers=auth(quem.id), json=json)
+
+
+def test_reativar_exige_autenticacao(cli) -> None:  # type: ignore[no-untyped-def]
+    assert cli.post("/api/push/reativar", json={"endpoint": EP}).status_code == 401
+
+
+def test_logout_e_login_do_mesmo_usuario_religa_sem_novo_opt_in(cli, auth, repo, c, ligado) -> None:  # type: ignore[no-untyped-def]
+    assert post(cli, auth, c.sol, corpo()).status_code == 201
+    r = delete(cli, auth, c.sol, {"endpoint": EP, "logout": True})
+    assert r.status_code == 200 and r.get_json() == {"revogada": True}
+    assert repo.listar_inscricoes_push(c.sol.id) == []
+    r = reativar(cli, auth, c.sol, {"endpoint": EP})
+    assert r.status_code == 200 and r.get_json() == {"reativada": True}
+    assert [i["endpoint"] for i in repo.listar_inscricoes_push(c.sol.id)] == [EP]
+    # Idempotente: já ativa do próprio usuário continua True.
+    assert reativar(cli, auth, c.sol, {"endpoint": EP}).get_json() == {"reativada": True}
+
+
+def test_reativar_aparelho_de_outro_recusa_sem_reatribuir(cli, auth, repo, c, ligado) -> None:  # type: ignore[no-untyped-def]
+    post(cli, auth, c.sol, corpo())
+    delete(cli, auth, c.sol, {"endpoint": EP, "logout": True})
+    r = reativar(cli, auth, c.outro, {"endpoint": EP})
+    assert r.status_code == 200 and r.get_json() == {"reativada": False}
+    assert repo.inscricoes_push[EP]["usuario_id"] == c.sol.id
+    assert repo.listar_inscricoes_push(c.outro.id) == []
+    assert repo.listar_inscricoes_push(c.sol.id) == []
+    # Ativa de outro usuário também não é tomada.
+    post(cli, auth, c.sol, corpo())
+    assert reativar(cli, auth, c.outro, {"endpoint": EP}).get_json() == {"reativada": False}
+    assert repo.inscricoes_push[EP]["usuario_id"] == c.sol.id
+
+
+def test_desativar_manual_nao_religa(cli, auth, repo, c, ligado) -> None:  # type: ignore[no-untyped-def]
+    post(cli, auth, c.sol, corpo())
+    assert delete(cli, auth, c.sol, {"endpoint": EP}).status_code == 204  # sem marca de logout
+    assert reativar(cli, auth, c.sol, {"endpoint": EP}).get_json() == {"reativada": False}
+    assert repo.listar_inscricoes_push(c.sol.id) == []
+
+
+def test_reativar_endpoint_inexistente_e_false(cli, auth, c, ligado) -> None:  # type: ignore[no-untyped-def]
+    assert reativar(cli, auth, c.sol, {"endpoint": EP2}).get_json() == {"reativada": False}
+
+
+def test_reativar_com_flag_desligada_recusa(cli, auth, repo, c) -> None:  # type: ignore[no-untyped-def]
+    repo.config = Configuracoes(notificacao_push=True)
+    post(cli, auth, c.sol, corpo())
+    delete(cli, auth, c.sol, {"endpoint": EP, "logout": True})
+    repo.config = Configuracoes(notificacao_push=False)
+    r = reativar(cli, auth, c.sol, {"endpoint": EP})
+    assert r.status_code == 404 and r.get_json()["erro"]["codigo"] == "recurso_desligado"
+    assert repo.listar_inscricoes_push(c.sol.id) == []
+
+
+def test_logout_revoga_mesmo_com_flag_desligada(cli, auth, repo, c) -> None:  # type: ignore[no-untyped-def]
+    repo.config = Configuracoes(notificacao_push=True)
+    post(cli, auth, c.sol, corpo())
+    repo.config = Configuracoes(notificacao_push=False)
+    r = delete(cli, auth, c.sol, {"endpoint": EP, "logout": True})
+    assert r.status_code == 200 and r.get_json() == {"revogada": True}
+    assert repo.listar_inscricoes_push(c.sol.id) == []
+
+
+@pytest.mark.parametrize(
+    "json",
+    [
+        {"endpoint": EP, "logout": "sim"},
+        {"endpoint": EP, "logout": 1},
+        {"endpoint": EP, "usuario_id": "x"},
+    ],
+)
+def test_revogar_logout_invalido(cli, auth, c, ligado, json) -> None:  # type: ignore[no-untyped-def]
+    assert delete(cli, auth, c.sol, json).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "json", [None, {}, {"endpoint": ""}, {"endpoint": 5}, {"endpoint": EP, "keys": {}}]
+)
+def test_reativar_corpo_invalido(cli, auth, c, ligado, json) -> None:  # type: ignore[no-untyped-def]
+    assert reativar(cli, auth, c.sol, json).status_code == 400
+
+
+def test_reativar_usuario_vem_do_jwt(cli, auth, repo, c, ligado) -> None:  # type: ignore[no-untyped-def]
+    post(cli, auth, c.sol, corpo())
+    delete(cli, auth, c.sol, {"endpoint": EP, "logout": True})
+    r = reativar(cli, auth, c.outro, {"endpoint": EP, "usuario_id": c.sol.id})
+    assert r.status_code == 400
+    assert repo.listar_inscricoes_push(c.sol.id) == []
+
+
+def test_logout_endpoint_alheio_nao_revogada(cli, auth, repo, c, ligado) -> None:  # type: ignore[no-untyped-def]
+    # Aparelho da portaria: B ativou e a sessão dele caiu sem logout; A entra e sai.
+    post(cli, auth, c.outro, corpo())
+    r = delete(cli, auth, c.sol, {"endpoint": EP, "logout": True})
+    assert r.status_code == 200 and r.get_json() == {"revogada": False}
+    # Nada muda no servidor; o front cancela a inscrição local ao ver revogada=false.
+    assert [i["endpoint"] for i in repo.listar_inscricoes_push(c.outro.id)] == [EP]
+    # Inexistente e repetido também dão False.
+    assert delete(cli, auth, c.sol, {"endpoint": EP2, "logout": True}).get_json() == {
+        "revogada": False
+    }

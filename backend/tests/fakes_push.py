@@ -24,13 +24,31 @@ class PushMemoria:
                 "p256dh": p256dh,
                 "auth": auth,
                 "revogada": False,
+                "revogada_por_logout": False,
             }
 
-    def revogar_inscricao_push(self, usuario_id: str, endpoint: str) -> None:
+    def revogar_inscricao_push(self, usuario_id: str, endpoint: str, logout: bool = False) -> int:
         with self._lock_push:
             linha = self.inscricoes_push.get(endpoint)
-            if linha and linha["usuario_id"] == usuario_id:
+            if linha and linha["usuario_id"] == usuario_id and not linha["revogada"]:
                 linha["revogada"] = True
+                linha["revogada_por_logout"] = logout
+                return 1
+            return 0
+
+    def reativar_inscricao_push(self, usuario_id: str, endpoint: str) -> bool:
+        """Espelha a RPC (sem o prazo de 30 dias e o limite, cobertos na suíte SQL)."""
+        with self._lock_push:
+            linha = self.inscricoes_push.get(endpoint)
+            if not linha or linha["usuario_id"] != usuario_id:
+                return False
+            if not linha["revogada"]:
+                return True
+            if not linha["revogada_por_logout"]:
+                return False
+            linha["revogada"] = False
+            linha["revogada_por_logout"] = False
+            return True
 
     def listar_inscricoes_push(self, usuario_id: str) -> list[dict[str, Any]]:
         with self._lock_push:

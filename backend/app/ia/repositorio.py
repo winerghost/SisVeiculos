@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from supabase import Client, ClientOptions, create_client
+from supabase import Client
 
 from app.errors import ErroInterno
+from app.repositorios.cliente_http import criar_cliente_supabase
 from app.repositorios.supabase_repo import TIMEOUT_POSTGREST, _exec
 
 CAMPOS_CONFIG: tuple[str, ...] = (
@@ -105,13 +106,7 @@ class SupabaseRepositorioIA:
 
     @classmethod
     def criar(cls, url: str, service_role_key: str) -> SupabaseRepositorioIA:
-        return cls(
-            create_client(
-                url,
-                service_role_key,
-                options=ClientOptions(postgrest_client_timeout=TIMEOUT_POSTGREST),
-            )
-        )
+        return cls(criar_cliente_supabase(url, service_role_key, timeout=TIMEOUT_POSTGREST))
 
     def ler_config(self) -> ConfigIABanco:
         res = _exec(

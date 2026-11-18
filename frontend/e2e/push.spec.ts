@@ -221,35 +221,57 @@ for (const [nome, ajuste] of [
       await botaoDesativar(page).click();
       await expect(botaoAtivar(page)).toBeVisible();
       await expect(ativo(page)).toHaveCount(0);
+      // Desativar manual NÃO manda a marca de logout: o servidor nunca religa sozinho.
       expect(push.deletes).toEqual([{ endpoint: ENDPOINT }]);
       expect((await nav.estado()).unsubscribe).toBe(1);
-      // O único POST é o reenvio idempotente feito ao carregar a tela (aparelho já inscrito).
-      expect(push.posts).toHaveLength(1);
+      // Ao carregar, só a reativação (o servidor decide); nenhum POST de inscrição.
+      expect(push.posts).toHaveLength(0);
     });
 
-    test('aparelho já inscrito: ao carregar reenvia a inscrição (idempotente) sem pedir permissão', async ({
+    test('aparelho já inscrito: ao carregar pede a reativação ao servidor, sem POST nem permissão', async ({
       page,
     }) => {
       const { nav, push } = await abrir(page, { permissao: 'granted', jaInscrito: true });
       await expect(ativo(page)).toBeVisible();
-      expect(push.posts).toHaveLength(1);
-      expect(push.posts[0]!.corpo).toEqual({
-        endpoint: ENDPOINT,
-        keys: { p256dh: 'p256dh-de-teste', auth: 'auth-de-teste' },
-      });
+      expect(push.reativacoes.length).toBeGreaterThan(0);
+      expect(push.reativacoes[0]).toEqual({ endpoint: ENDPOINT });
+      expect(push.posts).toHaveLength(0);
       const e = await nav.estado();
       expect(e.requestPermission).toBe(0);
       expect(e.subscribe).toBe(0);
     });
 
-    test('aparelho já inscrito e API recusa o reenvio: erro exibido, não afirma "ativo"', async ({
+    test('aparelho de outro usuário (servidor não religa): mostra "Ativar", sem POST automático', async ({
+      page,
+    }) => {
+      const { nav, push } = await abrir(
+        page,
+        { permissao: 'granted', jaInscrito: true },
+        { reativada: false },
+      );
+      await expect(botaoAtivar(page)).toBeVisible();
+      await expect(ativo(page)).toHaveCount(0);
+      expect(push.posts).toHaveLength(0);
+      // A inscrição local não confirmada é cancelada (o aparelho para de receber avisos da outra conta).
+      await expect.poll(async () => (await nav.estado()).unsubscribe).toBe(1);
+
+      // O opt-in explícito cria uma inscrição nova e a registra para este usuário.
+      await ativarAteOFim(page);
+      await expect(ativo(page)).toBeVisible();
+      expect(push.posts).toHaveLength(1);
+    });
+
+    test('aparelho já inscrito e API recusa a reativação: erro exibido, não afirma "ativo"', async ({
       page,
     }) => {
       await abrir(
         page,
         { permissao: 'granted', jaInscrito: true },
         {
-          errosInscrever: [
+          errosReativar: [
+            // Login, religar ao abrir /notificacoes e o componente: todos recusados.
+            { status: 403, codigo: 'recurso_desligado', mensagem: 'Push desligado.' },
+            { status: 403, codigo: 'recurso_desligado', mensagem: 'Push desligado.' },
             { status: 403, codigo: 'recurso_desligado', mensagem: 'Push desligado.' },
           ],
         },
@@ -578,5 +600,99 @@ test.describe('service worker: notificationclick', () => {
     const sw = carregarSw([{ url: `${ORIGEM}/notificacoes` }]);
     await dispararClique(sw, { destino: 'https://outro.com' });
     expect(sw.navegadas).toEqual([`${ORIGEM}/`]);
+  });
+});
+
+test.describe('push sobrevive ao logout/login do mesmo usuário', () => {
+  async function entrar(page: Page) {
+    await page.getByLabel('E-mail').fill('solicitante@exemplo.com');
+    await page.getByLabel('Senha', { exact: true }).fill('senha-correta');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await expect(page.getByRole('link', { name: /^Notificações/ })).toBeVisible();
+  }
+
+  async function preparar(page: Page, api: ApiPush = {}) {
+    await mockarApi(page);
+    await mockarNotificacoes(page, { solicitante: [] });
+    const nav = await mockarNavegadorPush(page, { permissao: 'granted', jaInscrito: true });
+    const push = await mockarApiPush(page, api);
+    await page.goto('/login');
+    await entrar(page);
+    return { nav, push };
+  }
+
+  async function sair(page: Page) {
+    await page.getByRole('button', { name: 'Sair' }).first().click();
+    await expect(page).toHaveURL(/\/login/);
+  }
+
+  test('logout com o servidor confirmando: marca "logout", mantém a inscrição e o login religa sem clique', async ({
+    page,
+  }) => {
+    const { nav, push } = await preparar(page);
+    await expect.poll(() => push.reativacoes.length).toBe(1);
+
+    await sair(page);
+    expect(push.deletes).toEqual([{ endpoint: ENDPOINT, logout: true }]);
+    expect((await nav.estado()).unsubscribe).toBe(0);
+
+    await entrar(page);
+    // Religar no login: só a reativação, sem permissão, sem novo subscribe e sem POST.
+    await expect.poll(() => push.reativacoes.length).toBe(2);
+    expect(push.reativacoes[1]).toEqual({ endpoint: ENDPOINT });
+    const e = await nav.estado();
+    expect(e.requestPermission).toBe(0);
+    expect(e.subscribe).toBe(0);
+    expect(push.posts).toHaveLength(0);
+
+    await page
+      .getByRole('link', { name: /^Notificações/ })
+      .first()
+      .click();
+    await expect(ativo(page)).toBeVisible();
+    await expect(botaoAtivar(page)).toHaveCount(0);
+  });
+
+  test('logout com endpoint que não era deste usuário (revogada=false): cancela a inscrição local', async ({
+    page,
+  }) => {
+    const { nav, push } = await preparar(page, { revogadaNoLogout: false });
+    await sair(page);
+    expect(push.deletes).toEqual([{ endpoint: ENDPOINT, logout: true }]);
+    await expect.poll(async () => (await nav.estado()).unsubscribe).toBe(1);
+  });
+
+  test('logout sem confirmação do servidor (erro): cancela a inscrição local', async ({ page }) => {
+    const { nav, push } = await preparar(page, {
+      errosRevogar: [{ status: 500, codigo: 'erro_interno', mensagem: 'Falha.' }],
+    });
+    await sair(page);
+    expect(push.deletes).toEqual([{ endpoint: ENDPOINT, logout: true }]);
+    await expect.poll(async () => (await nav.estado()).unsubscribe).toBe(1);
+  });
+
+  test('logout com servidor lento (prazo estourado): cancela a inscrição local e não trava', async ({
+    page,
+  }) => {
+    const { nav } = await preparar(page, { atrasoRevogar: 5000 });
+    await page.getByRole('button', { name: 'Sair' }).first().click();
+    await expect(page).toHaveURL(/\/login/, { timeout: 4000 });
+    await expect.poll(async () => (await nav.estado()).unsubscribe).toBe(1);
+  });
+
+  test('outro usuário no mesmo aparelho: o servidor não religa e o botão continua', async ({
+    page,
+  }) => {
+    const { nav, push } = await preparar(page, { reativada: false });
+    await page
+      .getByRole('link', { name: /^Notificações/ })
+      .first()
+      .click();
+    await expect(botaoAtivar(page)).toBeVisible();
+    await expect(ativo(page)).toHaveCount(0);
+    expect(push.posts).toHaveLength(0);
+    expect((await nav.estado()).subscribe).toBe(0);
+    // Religar recusado no login: a inscrição local deixa de valer neste aparelho.
+    await expect.poll(async () => (await nav.estado()).unsubscribe).toBeGreaterThan(0);
   });
 });

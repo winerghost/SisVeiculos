@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.errors import ContaExistente, ErroInterno
+from app.errors import ContaExistente, ErroInterno, LimiteEmail
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +92,21 @@ def _falha(e: Exception) -> ErroInterno:
     return ErroInterno("Serviço de autenticação indisponível. Tente novamente.")
 
 
+MSG_LIMITE_EMAIL = (
+    "Limite de envio de e-mails atingido no provedor. Aguarde alguns minutos e tente novamente."
+)
+_CODIGOS_LIMITE = {"over_email_send_rate_limit", "over_request_rate_limit"}
+
+
+def _limite_email(status: Any, codigos: tuple[Any, ...]) -> LimiteEmail | None:
+    """Limite de envio do Auth: HTTP 429 ou código estruturado do GoTrue. Só o status vai ao
+    log (sem e-mail nem mensagem do provedor)."""
+    if status == 429 or any(str(c or "") in _CODIGOS_LIMITE for c in codigos):
+        log.warning("auth_admin_limite_email status=%s", status)
+        return LimiteEmail(MSG_LIMITE_EMAIL)
+    return None
+
+
 _CODIGOS_JA_EXISTE = {"email_exists", "user_already_exists"}
 
 
@@ -113,9 +128,11 @@ class SupabaseAuthAdmin:
     def __init__(
         self, url: str, service_role_key: str, *, http: httpx.Client | None = None
     ) -> None:
-        from supabase import create_client
+        from app.repositorios.cliente_http import criar_cliente_supabase
 
-        cliente = create_client(url, service_role_key)
+        # 10 s: o GoTrue envia o e-mail do convite (SMTP) de forma síncrona; com 5 s, SMTP lento
+        # dava 503 com o convite já criado (e "conta existente" na nova tentativa).
+        cliente = criar_cliente_supabase(url, service_role_key, timeout=TIMEOUT_HTTP)
         self._admin = cliente.auth.admin
         self._url_recover = f"{url.rstrip('/')}/auth/v1/recover"
         self._chave = service_role_key
@@ -134,6 +151,12 @@ class SupabaseAuthAdmin:
                 raise ContaExistente(
                     "Já existe uma conta com este e-mail. Não é possível convidar de novo."
                 ) from None
+            limite = _limite_email(
+                getattr(e, "status", None),
+                (getattr(e, "code", None), getattr(e, "error_code", None)),
+            )
+            if limite is not None:
+                raise limite from None
             raise _falha(e) from None
 
     def obter_conta(self, usuario_id: str) -> ContaAuth | None:
@@ -202,6 +225,16 @@ class SupabaseAuthAdmin:
         except Exception as e:
             raise _falha(e) from None
         if r.status_code >= 400:
+            try:
+                corpo = r.json()
+            except ValueError:
+                corpo = None
+            codigos = (
+                (corpo.get("error_code"), corpo.get("code")) if isinstance(corpo, dict) else ()
+            )
+            limite = _limite_email(r.status_code, codigos)
+            if limite is not None:
+                raise limite
             log.error("erro_auth_admin recover status=%d", r.status_code)
             raise ErroInterno("Serviço de autenticação indisponível. Tente novamente.")
 

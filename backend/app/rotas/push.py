@@ -41,9 +41,20 @@ def inscrever() -> Any:
     return resp
 
 
+@push.post("/reativar")
+@requer_auth()
+@limiter.limit(_limite, key_func=chave_usuario)
+def reativar() -> Any:
+    return jsonify({"reativada": _servico().reativar(g.perfil, request.get_json(silent=True))})
+
+
 @push.delete("/inscricoes")
 @requer_auth()
 @limiter.limit(_limite, key_func=chave_usuario)
 def revogar() -> Any:
-    _servico().revogar(g.perfil, request.get_json(silent=True))
+    logout, revogada = _servico().revogar(g.perfil, request.get_json(silent=True))
+    if logout:
+        # Só no logout: o aparelho mantém a inscrição local apenas se ela era deste usuário.
+        return jsonify({"revogada": revogada})
+    # "Desativar" manual: resposta igual sempre (não revela de quem é o endpoint).
     return Response(status=204)

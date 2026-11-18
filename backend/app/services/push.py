@@ -139,11 +139,38 @@ class ServicoPush:
         p256dh, auth = validar_chaves(dados)
         self._repo.registrar_inscricao_push(perfil.id, endpoint, p256dh, auth)
 
-    def revogar(self, perfil: Perfil, corpo: Any) -> None:
+    def revogar(self, perfil: Perfil, corpo: Any) -> tuple[bool, bool]:
         """Revoga só a inscrição do próprio usuário. Não exige a flag ligada: permite limpar
-        a inscrição no logout mesmo com o recurso desligado. Não valida DNS (só compara)."""
+        a inscrição no logout mesmo com o recurso desligado. Não valida DNS (só compara).
+
+        `logout: true` (opcional) marca a revogação como logout: só essa pode ser religada pelo
+        mesmo usuário em `reativar`. O "Desativar" manual não manda a marca e nunca religa.
+
+        Devolve (logout, revogada). No logout, `revogada` diz ao próprio aparelho se o endpoint
+        dele era do usuário logado e foi revogado agora; se não, o aparelho cancela a inscrição
+        local (nunca segue recebendo avisos de outra pessoa)."""
+        dados = _objeto(corpo, {"endpoint", "logout"})
+        endpoint = _endpoint_comparavel(dados.get("endpoint"))
+        logout = dados.get("logout", False)
+        if not isinstance(logout, bool):
+            raise RequisicaoInvalida("O campo 'logout' deve ser verdadeiro ou falso.")
+        n = self._repo.revogar_inscricao_push(perfil.id, endpoint, logout=logout)
+        return logout, n == 1
+
+    def reativar(self, perfil: Perfil, corpo: Any) -> bool:
+        """Religa, sem novo opt-in, a inscrição DESTE aparelho se ela for do próprio usuário e
+        tiver sido revogada pelo logout dele (o banco decide; ver reativar_inscricao_push).
+        Aparelho de outro usuário: False, sem revelar o dono; passar o aparelho a outra pessoa
+        continua exigindo o botão (registrar). Só compara o endpoint (já validado no registro)."""
+        self._exigir_ligado()
+        if not self._vapid_configurado():
+            raise RecursoDesligado(MSG_PUSH_DESLIGADO)
         dados = _objeto(corpo, {"endpoint"})
-        endpoint = dados.get("endpoint")
-        if not isinstance(endpoint, str) or not endpoint or len(endpoint) > MAX_ENDPOINT:
-            raise RequisicaoInvalida(MSG_ENDPOINT, "push_endpoint_invalido")
-        self._repo.revogar_inscricao_push(perfil.id, endpoint)
+        endpoint = _endpoint_comparavel(dados.get("endpoint"))
+        return self._repo.reativar_inscricao_push(perfil.id, endpoint)
+
+
+def _endpoint_comparavel(valor: Any) -> str:
+    if not isinstance(valor, str) or not valor or len(valor) > MAX_ENDPOINT:
+        raise RequisicaoInvalida(MSG_ENDPOINT, "push_endpoint_invalido")
+    return valor

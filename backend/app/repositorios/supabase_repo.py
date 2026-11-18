@@ -12,8 +12,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
+import httpx
 from postgrest.exceptions import APIError
-from supabase import Client, ClientOptions, create_client
+from supabase import Client
 
 from app.errors import (
     AutoAlteracaoProibida,
@@ -42,6 +43,7 @@ from app.errors import (
     VeiculoOcupado,
 )
 from app.modelos import Configuracoes, Perfil, Requisicao
+from app.repositorios.cliente_http import criar_cliente_supabase
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -475,6 +477,16 @@ def traduzir_erro_banco(e: APIError, *, admin: bool = False) -> ErroApi:
     return ErroInterno("Serviço de dados indisponível. Tente novamente.")
 
 
+# Falhas em que o pedido comprovadamente NÃO saiu (a conexão nem foi estabelecida): repetir é
+# seguro para qualquer método, inclusive escrita. Não entram aqui RemoteProtocolError ("Server
+# disconnected without sending a response"), ReadError nem ReadTimeout: o pedido já foi enviado e
+# a escrita pode ter sido aplicada (auditoria/notificação duplicada, transição dada como erro).
+# Os GET já são repetidos pelo próprio postgrest-py (send_with_retry); repetir de novo aqui só
+# somaria esperas. A causa raiz do "F5 resolve" (conexão HTTP/2 ociosa derrubada) é tratada em
+# `cliente_http` (HTTP/1.1 + keep-alive curto).
+_ERROS_SEM_ENVIO = (httpx.ConnectError, httpx.ConnectTimeout)
+
+
 def _exec(  # noqa: UP047
     fn: Callable[[], T], *, repetir_lock: bool = False, admin: bool = False
 ) -> T:
@@ -482,16 +494,29 @@ def _exec(  # noqa: UP047
     `admin`: usa a mensagem de ocupado das rotas administrativas.
 
     Cada tentativa é uma transação nova no PostgREST; a anterior foi desfeita, então repetir
-    o comando único é seguro. Só o código SQLSTATE vai ao log.
+    o comando único é seguro. Só o código SQLSTATE vai ao log. Falha de conexão em que o pedido
+    nem saiu (ver `_ERROS_SEM_ENVIO`) repete uma única vez por chamada.
     """
     tentativas = len(ESPERAS_LOCK) + 1 if repetir_lock else 1
-    for n in range(tentativas):
+    rede_repetida = False
+    n = 0
+    while n < tentativas:
         try:
             return fn()
+        except _ERROS_SEM_ENVIO as e:
+            # O pedido não chegou a ser enviado: repete UMA vez por chamada (conexão nova);
+            # a 2ª falha vira o erro genérico.
+            if not rede_repetida:
+                rede_repetida = True
+                log.warning("conexao_repetindo tipo=%s", type(e).__name__)
+                continue
+            log.error("erro_acesso_dados tipo=%s", type(e).__name__)
+            raise ErroInterno("Serviço de dados indisponível. Tente novamente.") from None
         except APIError as e:
             if str(getattr(e, "code", "") or "") in CODIGOS_LOCK and n < tentativas - 1:
                 log.warning("lock_repetindo tentativa=%d", n + 1)
                 _dormir(ESPERAS_LOCK[n])
+                n += 1
                 continue
             raise traduzir_erro_banco(e, admin=admin) from None
         except ErroApi:
@@ -508,11 +533,7 @@ def _so(linha: dict[str, Any], colunas: frozenset[str]) -> dict[str, Any]:
 
 class SupabaseRepositorio:
     def __init__(self, url: str, service_role_key: str) -> None:
-        self._c: Client = create_client(
-            url,
-            service_role_key,
-            options=ClientOptions(postgrest_client_timeout=TIMEOUT_POSTGREST),
-        )
+        self._c: Client = criar_cliente_supabase(url, service_role_key, timeout=TIMEOUT_POSTGREST)
 
     def obter_perfil(self, usuario_id: str) -> Perfil | None:
         res = _exec(
@@ -1193,12 +1214,22 @@ class SupabaseRepositorio:
             escrita=True,
         )
 
-    def revogar_inscricao_push(self, usuario_id: str, endpoint: str) -> None:
-        self._rpc_dict(
-            "revogar_inscricao_push",
+    def revogar_inscricao_push(self, usuario_id: str, endpoint: str, logout: bool = False) -> int:
+        dados = self._rpc_dict(
+            "revogar_inscricao_push_logout" if logout else "revogar_inscricao_push",
             {"p_usuario": usuario_id, "p_endpoint": endpoint},
             escrita=True,
         )
+        n = dados.get("revogadas") if isinstance(dados, dict) else None
+        return n if isinstance(n, int) and not isinstance(n, bool) else 0
+
+    def reativar_inscricao_push(self, usuario_id: str, endpoint: str) -> bool:
+        dados = self._rpc_dict(
+            "reativar_inscricao_push",
+            {"p_usuario": usuario_id, "p_endpoint": endpoint},
+            escrita=True,
+        )
+        return isinstance(dados, dict) and dados.get("reativada") is True
 
     def listar_inscricoes_push(self, usuario_id: str) -> list[dict[str, Any]]:
         dados = self._rpc_dict("listar_inscricoes_push", {"p_usuario": usuario_id})

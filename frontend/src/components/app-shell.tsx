@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3,
+  CalendarDays,
   ChevronLeft,
   Car,
   Clock,
@@ -50,12 +51,15 @@ export function AppShell({
   titulo,
   sobretitulo,
   voltarPara,
+  largo = false,
   children,
 }: {
   titulo: string;
   sobretitulo?: string;
   /** Tela interna (formulário): mostra seta de voltar e oculta o menu inferior. */
   voltarPara?: string;
+  /** Telas com tabela ou calendário: a partir de `md` a coluna alarga (no celular nada muda). */
+  largo?: boolean;
   children: React.ReactNode;
 }) {
   const { estado, eu, paineis, relatorios, aviso, sair, recarregar } = useAuth();
@@ -103,6 +107,10 @@ export function AppShell({
   if ((permissoes.has('registrar_chegada') || permissoes.has('registrar_saida')) && !comViagens) {
     itens.push({ href: '/viagem', rotulo: 'Viagem', icone: <Clock aria-hidden /> });
   }
+  // Calendário (somente leitura): só com `ver_calendario` devolvida pela API.
+  if (permissoes.has('ver_calendario')) {
+    itens.push({ href: '/calendario', rotulo: 'Calendário', icone: <CalendarDays aria-hidden /> });
+  }
   // Visível só se GET /api/dashboards respondeu com ao menos um painel.
   if (paineis && paineis.length > 0) {
     itens.push({ href: '/dashboards', rotulo: 'Dashboards', icone: <BarChart3 aria-hidden /> });
@@ -147,7 +155,9 @@ export function AppShell({
   }
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col bg-fundo">
+    <div
+      className={cn('mx-auto flex min-h-dvh max-w-md flex-col bg-fundo', largo && 'md:max-w-5xl')}
+    >
       <header className="flex items-start justify-between px-5 pt-5">
         <div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -206,7 +216,10 @@ export function AppShell({
 
       <nav
         aria-label="Navegação principal"
-        className="fixed inset-x-0 bottom-0 z-30 mx-auto flex h-16 max-w-md border-t border-borda bg-white"
+        className={cn(
+          'fixed inset-x-0 bottom-0 z-30 mx-auto flex h-16 max-w-md border-t border-borda bg-white',
+          largo && 'md:max-w-5xl',
+        )}
       >
         {itens.map((i) => {
           const ativo = caminho === i.href || caminho.startsWith(`${i.href}/`);

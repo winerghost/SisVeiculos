@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -29,6 +29,7 @@ from app.modelos import Configuracoes, Perfil, Requisicao
 from app.notificacoes import Notificador, NotificadorNulo
 from app.repositorios.auth_admin import AuthAdmin
 from app.repositorios.base import Repositorio
+from app.services.filtros_listagem import validar_filtros_listagem
 from app.services.fotos_exibicao import FotosExibicao
 from app.services.horario_saida import (
     horario_referencia,
@@ -727,11 +728,15 @@ class ServicoRequisicoes:
         limite: int,
         offset: int,
         arquivadas: bool | None = False,
+        args: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """`arquivadas`: False (padrão) oculta as que o usuário arquivou, True mostra só elas,
-        None mostra todas. O arquivamento é pessoal e o `total` segue o mesmo filtro."""
+        None mostra todas. O arquivamento é pessoal e o `total` segue o mesmo filtro.
+        `args`: query string com os filtros opcionais (q, ordenar, veiculo_id, unidade),
+        validados aqui por allowlist; só restringem o que o usuário já enxerga."""
         if status is not None and status not in STATUS_VALIDOS:
             raise RequisicaoInvalida("Status inválido.")
+        filtros = validar_filtros_listagem(args or {})
         limite = max(1, min(limite, 100))
         offset = max(0, offset)
         dono: str | None = None if perfil.role in STAFF else perfil.id
@@ -752,7 +757,9 @@ class ServicoRequisicoes:
             motorista_id=motorista,
             ou_status=ou_status,
             ou_registrada_por=ou_registrada_por,
+            ordem=filtros.ordem,
             **filtro_arquivo,
+            **filtros.para_repo(),
         )
         total = self._repo.contar_requisicoes(
             usuario_id=dono,
@@ -761,6 +768,7 @@ class ServicoRequisicoes:
             ou_status=ou_status,
             ou_registrada_por=ou_registrada_por,
             **filtro_arquivo,
+            **filtros.para_repo(),
         )
         return {"itens": self.apresentar_lote(perfil, itens), "total": total}
 

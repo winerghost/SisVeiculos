@@ -43,6 +43,7 @@ PAINEIS: dict[str, Painel] = {
     for p in (
         Painel("operacao", "Operação agora", janela=False),
         Painel("volume", "Volume e desfecho", granularidade=True),
+        Painel("movimentacao", "Movimentação e km", granularidade=True),
         Painel("tempos", "Tempos do fluxo"),
         Painel("unidades", "Uso por unidade"),
         Painel("veiculos", "Uso por veículo"),
@@ -145,7 +146,7 @@ class ServicoDashboards:
         if perfil.role not in STAFF:
             raise SemPermissao("Você não tem permissão para esta ação.")
         config = self._repo.ler_configuracoes()
-        chaves = ["operacao", "volume", "tempos", "unidades", "veiculos"]
+        chaves = ["operacao", "volume", "movimentacao", "tempos", "unidades", "veiculos"]
         if config.quilometragem or config.checklist:
             chaves.append("opcionais")
         if perfil.role == "admin":
@@ -229,6 +230,8 @@ class ServicoDashboards:
         }
         if chave == "volume":
             return r.dash_volume_desfecho(**janela, granularidade=f.granularidade)
+        if chave == "movimentacao":
+            return self._movimentacao(janela, f.granularidade)
         consulta = {
             "tempos": r.dash_tempos_fluxo,
             "unidades": r.dash_uso_unidade,
@@ -236,6 +239,20 @@ class ServicoDashboards:
             "opcionais": r.dash_opcionais,
         }[chave]
         return consulta(**janela)
+
+    def _movimentacao(self, janela: dict[str, Any], granularidade: str) -> dict[str, Any]:
+        """Saídas/chegadas reais e km rodado. Com Quilometragem DESLIGADA o km some da resposta
+        (chave ausente, mesmo que a RPC o devolva) e `quilometragem_habilitada` é false: o
+        backend é a fonte da verdade (a RPC repete a regra, defesa em profundidade)."""
+        dados = self._repo.dash_movimentacao_km(**janela, granularidade=granularidade)
+        km = self._repo.ler_configuracoes().quilometragem
+        if not km:
+            for lista in ("serie", "por_veiculo"):
+                for item in dados.get(lista) or []:
+                    if isinstance(item, dict):
+                        item.pop("km_rodado", None)
+        dados["quilometragem_habilitada"] = km
+        return dados
 
     def _itens_operacao(self, perfil: Perfil, dados: dict[str, Any]) -> list[dict[str, Any]]:
         """Requisições abertas, na ordem de urgência da RPC, em uma só consulta (sem N+1)."""

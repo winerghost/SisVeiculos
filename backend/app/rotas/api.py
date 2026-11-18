@@ -9,6 +9,7 @@ from flask import Blueprint, g, jsonify, request
 from app.auth.decoradores import requer_auth
 from app.errors import RequisicaoInvalida
 from app.extensions import chave_usuario, deps, limiter
+from app.services.calendario import ServicoCalendario
 from app.services.checklist import ServicoChecklist
 from app.services.foto_perfil import ServicoFotoPerfil
 from app.services.fotos_exibicao import FotosExibicao
@@ -151,8 +152,17 @@ def listar_requisicoes() -> Any:
         limite=_inteiro("limite", 50),
         offset=_inteiro("offset", 0),
         arquivadas=_booleano("arquivadas", False),
+        args=request.args,  # filtros opcionais: validados no service
     )
     return jsonify(resultado)
+
+
+@api.get("/calendario")
+@requer_auth()  # permissão `ver_calendario` e visibilidade checadas no service
+def calendario() -> Any:
+    resposta = jsonify(ServicoCalendario(deps().repo).listar(g.perfil, request.args))
+    resposta.headers["Cache-Control"] = "no-store"
+    return resposta
 
 
 @api.get("/requisicoes/horario-referencia")

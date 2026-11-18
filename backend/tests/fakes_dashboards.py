@@ -93,6 +93,29 @@ class DashboardsMemoria:
         self._janela("volume", {**p, "granularidade": granularidade}, granularidade)
         return {"inicio": inicio, "fim": fim, "granularidade": granularidade, "serie": []}
 
+    def dash_movimentacao_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        granularidade: str,
+    ) -> dict[str, Any]:
+        """Espelha o contrato da RPC (migration 20261208120000). `movimentacao_km_sempre`
+        simula uma RPC que devolve km mesmo desligado (o service tem de remover)."""
+        p = {"inicio": inicio, "fim": fim, "unidade": unidade, "veiculo": veiculo}
+        self._janela("movimentacao", {**p, "granularidade": granularidade}, granularidade)
+        km = self.config.quilometragem or getattr(self, "movimentacao_km_sempre", False)
+        extra = {"km_rodado": 120.5} if km else {}
+        return {
+            "serie": [{"periodo": inicio[:10], "saidas": 3, "chegadas": 2, **extra}],
+            "por_veiculo": [{"veiculo_id": veiculo or "v1", "saidas": 3, "chegadas": 2, **extra}],
+            "quilometragem_habilitada": self.config.quilometragem,
+            "granularidade": granularidade,
+            "fuso": "America/Sao_Paulo",
+        }
+
     def _painel_janela(
         self, nome: str, inicio: str, fim: str, unidade: str | None, veiculo: str | None
     ) -> dict[str, Any]:

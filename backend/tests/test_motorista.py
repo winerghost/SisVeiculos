@@ -307,7 +307,10 @@ def test_motorista_nao_cria_autoriza_nem_cancela(client, auth, c, m, repo):  # t
 
 def test_eu_informa_permissoes_do_motorista(client, auth, m, repo):  # type: ignore[no-untyped-def]
     repo.config = LIGADO
-    assert get(client, auth, m.a, "/api/eu").get_json()["permissoes"] == ["ver_viagens_atribuidas"]
+    assert get(client, auth, m.a, "/api/eu").get_json()["permissoes"] == [
+        "ver_viagens_atribuidas",
+        "ver_calendario",
+    ]
     repo.config = LIGADO_REGISTRA
     j = get(client, auth, m.a, "/api/eu").get_json()
     assert j["role"] == "motorista" and "registrar_saida" in j["permissoes"]

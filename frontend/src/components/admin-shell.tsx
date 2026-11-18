@@ -70,15 +70,18 @@ function Corpo({ comAbas, children }: { comAbas: boolean; children: React.ReactN
 export function AdminShell({
   titulo,
   voltarPara,
+  largo = false,
   children,
 }: {
   titulo: string;
   /** Tela interna (formulário): seta de voltar, sem abas. */
   voltarPara?: string;
+  /** Repassado ao AppShell: coluna larga a partir de `md`. */
+  largo?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <AppShell titulo={titulo} sobretitulo="Administração" voltarPara={voltarPara}>
+    <AppShell titulo={titulo} sobretitulo="Administração" voltarPara={voltarPara} largo={largo}>
       <Corpo comAbas={!voltarPara}>{children}</Corpo>
     </AppShell>
   );

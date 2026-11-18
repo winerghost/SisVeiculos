@@ -447,3 +447,34 @@ export const ACOES: Record<
   registrar_chegada: { rota: 'chegada', rotulo: 'Registrar chegada agora', variante: 'primario' },
   cancelar: { rota: 'cancelar', rotulo: 'Cancelar requisição', variante: 'contorno' },
 };
+
+// ---- calendario ----
+
+/**
+ * GET /api/calendario (somente leitura). `inicio` e `fim` em YYYY-MM-DD, fim inclusivo; a janela
+ * máxima, a visibilidade e os status incluídos são decididos pela API.
+ */
+export const calendario = {
+  listar: (p: { inicio: string; fim: string }) =>
+    chamar<import('./tipos').RespostaCalendario>(`/calendario${query(p)}`),
+};
+
+// ---- tabela ----
+
+/**
+ * Listagem paginada e filtrada pelo servidor (GET /api/requisicoes). Só monta a query: busca,
+ * filtros, ordenação e visibilidade são da API. Campos vazios não são enviados.
+ */
+export const listarRequisicoes = (f: import('./tipos').FiltrosRequisicoes) =>
+  chamar<ListaRequisicoes>(
+    `/requisicoes${query({
+      q: f.q?.trim() || undefined,
+      status: f.status,
+      veiculo_id: f.veiculo_id,
+      unidade: f.unidade,
+      ordenar: f.ordenar,
+      arquivadas: f.arquivadas ? 'true' : undefined,
+      limite: f.limite,
+      offset: f.offset,
+    })}`,
+  );

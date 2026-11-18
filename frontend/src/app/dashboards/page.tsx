@@ -17,6 +17,7 @@ const CHAVES: PainelId[] = [
   'tempos',
   'unidades',
   'veiculos',
+  'movimentacao',
   'governanca',
   'opcionais',
 ];

@@ -16,7 +16,7 @@ from app.services.requisicoes import ServicoRequisicoes
 from tests.fakes_admin import erro_db
 from tests.test_requisicoes import acao, criar
 
-PAINEIS_STAFF = ["operacao", "volume", "tempos", "unidades", "veiculos"]
+PAINEIS_STAFF = ["operacao", "volume", "movimentacao", "tempos", "unidades", "veiculos"]
 PAINEIS_JANELA = ["volume", "tempos", "unidades", "veiculos", "opcionais"]
 
 

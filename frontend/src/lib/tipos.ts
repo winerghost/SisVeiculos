@@ -484,7 +484,14 @@ export interface LinhaDoTempo {
 // ---- Dashboards (GET /api/dashboards e /api/dashboards/<painel>) ----
 
 export type PainelId =
-  'operacao' | 'volume' | 'tempos' | 'unidades' | 'veiculos' | 'governanca' | 'opcionais';
+  | 'operacao'
+  | 'volume'
+  | 'tempos'
+  | 'unidades'
+  | 'veiculos'
+  | 'governanca'
+  | 'opcionais'
+  | PainelIdMovimentacao;
 
 /** Item do menu de painéis: `chave` vai na rota; `rotulo` (texto) vem do servidor. */
 export interface PainelMenu {
@@ -806,4 +813,83 @@ export type RecursoTempoReal =
 export interface RespostaAtualizacoes {
   recursos: Partial<Record<RecursoTempoReal, string>>;
   nao_lidas: number;
+}
+
+// ---- GRAFICOS (painel "movimentacao", GET /api/dashboards/movimentacao) ----
+
+/** Chave do painel "Movimentação e km" (entra na união `PainelId`). */
+export type PainelIdMovimentacao = 'movimentacao';
+
+export interface PontoMovimentacao {
+  /** Mesmo formato de `periodo` do painel `volume`. */
+  periodo: string;
+  saidas: number;
+  chegadas: number;
+  /** Ausente quando a Quilometragem está desligada. */
+  km_rodado?: number;
+}
+
+export interface MovimentacaoVeiculo {
+  veiculo_id: string;
+  saidas: number;
+  chegadas: number;
+  /** Ausente quando a Quilometragem está desligada. */
+  km_rodado?: number;
+}
+
+export interface DadosMovimentacao {
+  serie: PontoMovimentacao[];
+  por_veiculo: MovimentacaoVeiculo[];
+  quilometragem_habilitada: boolean;
+  granularidade: string;
+  fuso: string;
+}
+
+// ---- calendario ----
+
+/** Status que GET /api/calendario devolve (a API decide quais entram). */
+export type StatusCalendario = Extract<
+  Status,
+  'solicitada' | 'autorizada' | 'em_uso' | 'concluida'
+>;
+
+/** Item mínimo do calendário (LGPD: sem nome, contato, trajeto, observação, km ou localização). */
+export interface ItemCalendario {
+  id: string;
+  status: StatusCalendario;
+  veiculo_id: string;
+  /** Rótulo pronto do veículo, montado pela API (ex.: "Veículo 01 · ABC1D23"). */
+  veiculo_rotulo: string;
+  unidade: string;
+  /** Calculado no backend: saída real ou prevista (ISO com fuso). */
+  inicio: string;
+  /** Calculado no backend: chegada real ou null. */
+  fim: string | null;
+  hora_saida: string;
+  saida_real_em: string | null;
+  chegada_real_em: string | null;
+}
+
+/** Resposta de GET /api/calendario. `truncado` indica que a API cortou no limite de itens. */
+export interface RespostaCalendario {
+  itens: ItemCalendario[];
+  truncado: boolean;
+}
+
+// ---- tabela ----
+
+/** Ordenações aceitas por GET /api/requisicoes (`ordenar`); a API recusa outras (400). */
+export type OrdenacaoRequisicoes =
+  '-criado_em' | 'criado_em' | 'hora_saida' | '-hora_saida' | 'status' | '-status';
+
+/** Parâmetros opcionais de GET /api/requisicoes. A API valida todos (erro `filtro_invalido`). */
+export interface FiltrosRequisicoes {
+  q?: string;
+  status?: Status;
+  veiculo_id?: string;
+  unidade?: string;
+  ordenar?: OrdenacaoRequisicoes;
+  arquivadas?: boolean;
+  limite?: number;
+  offset?: number;
 }

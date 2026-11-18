@@ -1,0 +1,81 @@
+/*
+ * Calendário (FullCalendar v7, tema classic) com os tokens da AGU.
+ * Escopado em .calendario-agu: nada daqui vaza para outras telas. As variáveis do tema são
+ * redefinidas no contêiner (vencem as de :root do palette.css por herança).
+ * CSS sem camada (como o do tema), de propósito: utilitários do Tailwind ficam em @layer e
+ * perderiam para o CSS do FullCalendar.
+ */
+.calendario-agu {
+  --fc-classic-button: #0f3d75;
+  --fc-classic-button-border: #0f3d75;
+  --fc-classic-button-strong: #0b2f5a;
+  --fc-classic-button-strong-border: #0b2f5a;
+  --fc-classic-button-outline: #1a5fb4;
+  --fc-classic-button-foreground: #ffffff;
+  --fc-classic-primary: #0f3d75;
+  --fc-classic-primary-foreground: #ffffff;
+  --fc-classic-highlight: #dcebff66;
+  --fc-classic-today: #dcebff80;
+  --fc-classic-now: #b3261e;
+  --fc-classic-background: #ffffff;
+  --fc-classic-foreground: #0e1b2e;
+  --fc-classic-faint-foreground: #55627a;
+  --fc-classic-muted-foreground: #55627a;
+  --fc-classic-border: #dde3ec;
+  --fc-classic-strong-border: #8493ab;
+
+  font-family: inherit;
+  color: #0e1b2e;
+  background: #ffffff;
+  border: 1px solid #dde3ec;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Eventos de linha (mês) e da lista: alvo de toque >= 44px. */
+.calendario-agu .cal-evento-linha,
+.calendario-agu .cal-evento-lista,
+.calendario-agu .cal-mais {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.calendario-agu .cal-evento-linha {
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  padding-inline: 4px;
+  white-space: normal;
+  overflow: hidden;
+}
+
+.calendario-agu .cal-mais {
+  justify-content: center;
+  font-weight: 600;
+  color: #0f3d75;
+  text-decoration: underline;
+}
+
+/* Foco visível (WCAG 2.4.7) também dentro do calendário, por cima do estilo do tema. */
+.calendario-agu .cal-evento-linha:focus-visible,
+.calendario-agu .cal-evento-lista:focus-visible,
+.calendario-agu .cal-evento-coluna:focus-visible,
+.calendario-agu .cal-mais:focus-visible {
+  outline: 3px solid #1a5fb4;
+  outline-offset: 2px;
+}
+
+.calendario-agu .cal-evento-coluna {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.calendario-agu .cal-sem-eventos {
+  color: #55627a;
+  padding: 24px 16px;
+  text-align: center;
+}

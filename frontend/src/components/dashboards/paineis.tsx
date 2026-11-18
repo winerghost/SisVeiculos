@@ -18,6 +18,7 @@ import { useAcao } from '@/lib/use-acao';
 import { useCarga } from '@/lib/use-carga';
 import type {
   DadosGovernanca,
+  DadosMovimentacao,
   DadosOperacao,
   DadosOpcionais,
   DadosTempos,
@@ -34,6 +35,8 @@ import { CartaoRequisicao } from '@/components/cartao-requisicao';
 import { ExportarPainel } from '@/components/dashboards/exportar';
 import { BarraFiltros } from '@/components/dashboards/filtros';
 import {
+  AreaSerie,
+  BarrasAgrupadas,
   BarrasEmpilhadas,
   BarrasHorizontais,
   ComTabela,
@@ -303,9 +306,13 @@ function Unidades({ d }: { d: DadosUnidades }) {
   );
 }
 
+/** Nome do veículo pela lista já carregada; sem correspondência, mostra o próprio id. */
+const nomeVeiculo = (veiculos: Veiculo[], id: string) =>
+  veiculos.find((v) => v.id === id)?.descricao ?? id;
+
 function Veiculos({ d, veiculos }: { d: DadosVeiculos; veiculos: Veiculo[] }) {
   if (d.itens.length === 0) return <Vazio />;
-  const nome = (id: string) => veiculos.find((v) => v.id === id)?.descricao ?? id;
+  const nome = (id: string) => nomeVeiculo(veiculos, id);
   return (
     <ComTabela
       titulo="Taxa de ocupação por veículo"
@@ -315,6 +322,7 @@ function Veiculos({ d, veiculos }: { d: DadosVeiculos; veiculos: Veiculo[] }) {
             Horas no período: {decimal(d.horas_periodo)} h
           </p>
           <BarrasHorizontais
+            maximo={1}
             itens={d.itens.map((i) => ({
               rotulo: `${nome(i.veiculo_id)}${i.ativo ? '' : ' (inativo)'}`,
               valor: i.taxa_ocupacao,
@@ -334,6 +342,114 @@ function Veiculos({ d, veiculos }: { d: DadosVeiculos; veiculos: Veiculo[] }) {
         ]),
       }}
     />
+  );
+}
+
+const km = (n: number) => `${decimal(n)} km`;
+const temKm = <T extends { km_rodado?: number }>(x: T): x is T & { km_rodado: number } =>
+  typeof x.km_rodado === 'number';
+
+const NotaKm = ({ titulo }: { titulo: string }) => (
+  <section className="rounded-xl border border-borda bg-white p-4">
+    <h3 className="text-lg font-semibold">{titulo}</h3>
+    <p className="mt-1 text-texto-2">Quilometragem desligada: sem dados de km.</p>
+  </section>
+);
+
+/** "Movimentação e km": saídas x chegadas e km por período e por veículo (dados da API). */
+function Movimentacao({ d, veiculos }: { d: DadosMovimentacao; veiculos: Veiculo[] }) {
+  if (d.serie.length === 0 && d.por_veiculo.length === 0) return <Vazio />;
+  // Só exibe km se a API o enviou (com o recurso desligado a chave nem vem).
+  const kmPeriodo = d.quilometragem_habilitada && d.serie.every(temKm);
+  const kmVeiculo = d.quilometragem_habilitada && d.por_veiculo.every(temKm);
+  const nome = (id: string) => nomeVeiculo(veiculos, id);
+  return (
+    <div className="flex flex-col gap-4">
+      <ComTabela
+        titulo="Saídas e chegadas por período"
+        grafico={
+          d.serie.length === 0 ? (
+            <Vazio />
+          ) : (
+            <BarrasAgrupadas
+              descricao="Barras de saídas e chegadas por período, com o valor escrito em cada barra. Use Ver como tabela para todos os valores."
+              series={[
+                { nome: 'Saídas', padrao: 'solido' },
+                { nome: 'Chegadas', padrao: 'pontos' },
+              ]}
+              pontos={d.serie.map((s) => ({
+                rotulo: rotuloPeriodo(s.periodo),
+                partes: [s.saidas, s.chegadas],
+              }))}
+            />
+          )
+        }
+        tabela={{
+          colunas: ['Período', 'Saídas', 'Chegadas'],
+          linhas: d.serie.map((s) => [
+            rotuloPeriodo(s.periodo),
+            numero(s.saidas),
+            numero(s.chegadas),
+          ]),
+        }}
+      />
+      {kmPeriodo ? (
+        <ComTabela
+          titulo="Km rodado por período"
+          grafico={
+            d.serie.length === 0 ? (
+              <Vazio />
+            ) : (
+              <AreaSerie
+                descricao="Linha do km rodado por período, com o valor escrito em cada ponto. Use Ver como tabela para todos os valores."
+                pontos={d.serie.filter(temKm).map((s) => ({
+                  rotulo: rotuloPeriodo(s.periodo),
+                  valor: s.km_rodado,
+                  texto: km(s.km_rodado),
+                }))}
+              />
+            )
+          }
+          tabela={{
+            colunas: ['Período', 'Km rodado'],
+            linhas: d.serie.filter(temKm).map((s) => [rotuloPeriodo(s.periodo), km(s.km_rodado)]),
+          }}
+        />
+      ) : (
+        <NotaKm titulo="Km rodado por período" />
+      )}
+      {kmVeiculo ? (
+        <ComTabela
+          titulo="Km rodado por veículo"
+          grafico={
+            d.por_veiculo.length === 0 ? (
+              <Vazio />
+            ) : (
+              <BarrasHorizontais
+                itens={d.por_veiculo.filter(temKm).map((v) => ({
+                  rotulo: nome(v.veiculo_id),
+                  valor: v.km_rodado,
+                  texto: `${km(v.km_rodado)} · ${numero(v.saidas)} saídas · ${numero(v.chegadas)} chegadas`,
+                }))}
+              />
+            )
+          }
+          tabela={{
+            colunas: ['Veículo', 'Saídas', 'Chegadas', 'Km rodado'],
+            linhas: d.por_veiculo
+              .filter(temKm)
+              .map((v) => [
+                nome(v.veiculo_id),
+                numero(v.saidas),
+                numero(v.chegadas),
+                km(v.km_rodado),
+              ]),
+          }}
+        />
+      ) : (
+        <NotaKm titulo="Km rodado por veículo" />
+      )}
+    </div>
   );
 }
 
@@ -451,7 +567,7 @@ function Opcionais({ d }: { d: DadosOpcionais }) {
   );
 }
 
-/** Painéis com filtros (volume, tempos, unidades, veículos, governança e opcionais). */
+/** Painéis com filtros (volume, tempos, unidades, veículos, movimentação, governança e opcionais). */
 export function PainelComFiltros({
   painel,
   unidades,
@@ -483,7 +599,7 @@ export function PainelComFiltros({
           efetivos={r.dados?.filtros}
           unidades={unidades}
           veiculos={veiculos}
-          comGranularidade={painel === 'volume'}
+          comGranularidade={painel === 'volume' || painel === 'movimentacao'}
           onAplicar={setFiltros}
         />
       ) : null}
@@ -506,6 +622,8 @@ export function PainelComFiltros({
           <Unidades d={d as DadosUnidades} />
         ) : painel === 'veiculos' ? (
           <Veiculos d={d as DadosVeiculos} veiculos={veiculos} />
+        ) : painel === 'movimentacao' ? (
+          <Movimentacao d={d as DadosMovimentacao} veiculos={veiculos} />
         ) : painel === 'governanca' ? (
           <Governanca d={d as DadosGovernanca} />
         ) : (

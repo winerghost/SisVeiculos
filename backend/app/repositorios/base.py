@@ -57,13 +57,21 @@ class Repositorio(Protocol):
         ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
+        busca: str | None = None,
+        veiculo_id: str | None = None,
+        unidade: str | None = None,
+        ordem: tuple[str, bool] = ("criado_em", True),
     ) -> list[Requisicao]:
         """`usuario_id` não nulo restringe ao dono e `motorista_id` ao motorista atribuído
         (anti-IDOR aplicado na consulta). `ou_status` (vigilante) amplia o filtro de dono para
         "dono OU status na lista"; `ou_registrada_por` (vigilante) soma as CONCLUÍDAS cuja saída
         ou chegada foi registrada por esse usuário. `arquivadas` (com `arquivador_id`, o usuário
         do JWT): False
-        exclui as arquivadas por ele, True devolve só elas, None não filtra."""
+        exclui as arquivadas por ele, True devolve só elas, None não filtra.
+        Filtros opcionais (já validados no service): `busca` é um padrão `ilike` neutralizado
+        (só `*` como curinga) aplicado a `nome_solicitante` OU `trajeto`, sem diferenciar
+        maiúsculas; `veiculo_id`/`unidade` por igualdade; `ordem` = (coluna da allowlist,
+        descendente), com `id` como desempate estável."""
         ...
 
     def contar_requisicoes(
@@ -76,8 +84,33 @@ class Repositorio(Protocol):
         ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
+        busca: str | None = None,
+        veiculo_id: str | None = None,
+        unidade: str | None = None,
     ) -> int:
         """Total com os mesmos filtros de `listar_requisicoes` (sem paginação)."""
+        ...
+
+    def listar_calendario(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        usuario_id: str | None,
+        motorista_id: str | None,
+        ou_status: tuple[str, ...] | None,
+        ou_registrada_por: str | None,
+        limite: int,
+    ) -> list[dict[str, Any]]:
+        """Calendário (somente leitura). Janela [inicio, fim) em UTC ISO. Mesma visibilidade de
+        `listar_requisicoes` (sem arquivamento). Entram: solicitada/autorizada com `hora_saida`
+        na janela; em_uso com saída antes do fim (ainda aberta); concluída cujo intervalo
+        [saida_real_em, chegada_real_em] toca a janela. Só as colunas id, status, veiculo_id,
+        unidade, hora_saida, saida_real_em, chegada_real_em; ordem hora_saida, id."""
+        ...
+
+    def rotulos_veiculos(self, ids: set[str]) -> dict[str, str]:
+        """Rótulo de exibição por id: "descrição · placa" (só descrição se não houver placa)."""
         ...
 
     def arquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
@@ -354,6 +387,19 @@ class Repositorio(Protocol):
         veiculo: str | None,
         granularidade: str,
     ) -> dict[str, Any]: ...
+
+    def dash_movimentacao_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        granularidade: str,
+    ) -> dict[str, Any]:
+        """RPC `dash_movimentacao_km` (migration 20261208120000): saídas, chegadas e km rodado
+        por balde e por veículo. Só ids, contagens e km (sem dado pessoal)."""
+        ...
 
     def dash_tempos_fluxo(
         self, *, inicio: str, fim: str, unidade: str | None, veiculo: str | None

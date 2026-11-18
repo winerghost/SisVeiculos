@@ -79,19 +79,21 @@ COLUNAS_CONFIG = (
 )
 
 
-def _filtro_dono(
-    q: Any,
+def rotulo_veiculo(v: dict[str, Any]) -> str:
+    placa = v.get("placa")
+    return f"{v['descricao']} · {placa}" if placa else str(v["descricao"])
+
+
+def _expr_dono(
     usuario_id: str | None,
     ou_status: tuple[str, ...] | None,
     ou_registrada_por: str | None = None,
-) -> Any:
-    """Dono; com `ou_status` (vigilante): dono OU status na lista, e com `ou_registrada_por`
+) -> str | None:
+    """Com `ou_status` (vigilante): dono OU status na lista, e com `ou_registrada_por`
     também as concluídas em que esse usuário registrou saída ou chegada. Os valores são
-    UUID/enum gerados no servidor (nunca texto livre do cliente)."""
-    if usuario_id is None:
-        return q
-    if not ou_status:
-        return q.eq("usuario_id", usuario_id)
+    UUID/enum gerados no servidor (nunca texto livre do cliente). None = sem cláusula OR."""
+    if usuario_id is None or not ou_status:
+        return None
     partes = [f"usuario_id.eq.{usuario_id}", f"status.in.({','.join(ou_status)})"]
     if ou_registrada_por:
         partes.append(
@@ -99,10 +101,77 @@ def _filtro_dono(
             f"saida_registrada_por.eq.{ou_registrada_por},"
             f"chegada_registrada_por.eq.{ou_registrada_por}))"
         )
-    return q.or_(",".join(partes))
+    return ",".join(partes)
+
+
+def _expr_busca(busca: str | None) -> str | None:
+    """`busca` chega NEUTRALIZADA do service (filtros_listagem): sem vírgula, parênteses, aspas,
+    barra invertida, dois-pontos, `%` nem `_`; o único curinga é `*`. Por isso não altera a
+    estrutura do `or=(...)`."""
+    if not busca:
+        return None
+    return f"nome_solicitante.ilike.*{busca}*,trajeto.ilike.*{busca}*"
+
+
+def _aplicar_ou(q: Any, *expressoes: str | None) -> Any:
+    """Aplica as cláusulas OR em UM único parâmetro `or` (cada uma com 2+ termos). Duas ou
+    mais viram `or=(and(or(A),or(B)))`: todas precisam valer, sem depender de como o
+    PostgREST combina parâmetros `or` repetidos (a visibilidade nunca é ampliada)."""
+    ativas = [e for e in expressoes if e]
+    if not ativas:
+        return q
+    if len(ativas) == 1:
+        return q.or_(ativas[0])
+    return q.or_("and(" + ",".join(f"or({e})" for e in ativas) + ")")
+
+
+def _filtros_lista(
+    q: Any,
+    *,
+    usuario_id: str | None,
+    status: str | None,
+    motorista_id: str | None,
+    ou_status: tuple[str, ...] | None,
+    ou_registrada_por: str | None,
+    busca: str | None = None,
+    veiculo_id: str | None = None,
+    unidade: str | None = None,
+    extra_ou: str | None = None,
+) -> Any:
+    """Visibilidade (anti-IDOR) + filtros opcionais; compartilhado por listar, contar e
+    calendário (`extra_ou`: cláusula OR gerada no servidor, combinada por AND)."""
+    if usuario_id is not None and not ou_status:
+        q = q.eq("usuario_id", usuario_id)
+    q = _aplicar_ou(
+        q, _expr_dono(usuario_id, ou_status, ou_registrada_por), _expr_busca(busca), extra_ou
+    )
+    if motorista_id is not None:
+        q = q.eq("motorista_id", motorista_id)
+    if status is not None:
+        q = q.eq("status", status)
+    if veiculo_id is not None:
+        q = q.eq("veiculo_id", veiculo_id)
+    if unidade is not None:
+        q = q.eq("unidade", unidade)
+    return q
+
+
+COLUNAS_CALENDARIO = "id,status,veiculo_id,unidade,hora_saida,saida_real_em,chegada_real_em"
+_SET_CALENDARIO = frozenset(COLUNAS_CALENDARIO.split(","))
+
+
+def _expr_janela_calendario(inicio: str, fim: str) -> str:
+    """Intervalo que toca [inicio, fim). `inicio`/`fim` são carimbos UTC gerados no servidor
+    (formato AAAA-MM-DDTHH:MM:SSZ, sem vírgula nem parênteses)."""
+    return (
+        f"and(status.in.(solicitada,autorizada),hora_saida.gte.{inicio},hora_saida.lt.{fim}),"
+        f"and(status.eq.em_uso,saida_real_em.lt.{fim}),"
+        f"and(status.eq.concluida,saida_real_em.lt.{fim},chegada_real_em.gte.{inicio})"
+    )
 
 
 TABELA_ARQUIVADAS = "requisicoes_arquivadas"
+_COLUNAS_ORDEM = frozenset({"criado_em", "hora_saida", "status"})
 
 
 def _filtro_arquivadas(q: Any, arquivador_id: str | None, arquivadas: bool | None) -> Any:
@@ -654,18 +723,35 @@ class SupabaseRepositorio:
         ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
+        busca: str | None = None,
+        veiculo_id: str | None = None,
+        unidade: str | None = None,
+        ordem: tuple[str, bool] = ("criado_em", True),
     ) -> list[Requisicao]:
+        coluna, desc = ordem
+        if coluna not in _COLUNAS_ORDEM:  # defesa em profundidade: o service já usa allowlist
+            raise ValueError("ordenação fora da allowlist")
+
         def consulta() -> Any:
             q = self._c.table("requisicoes").select(
                 _colunas_arquivadas(COLUNAS_REQ, arquivador_id, arquivadas)
             )
             q = _filtro_arquivadas(q, arquivador_id, arquivadas)
-            q = _filtro_dono(q, usuario_id, ou_status, ou_registrada_por)
-            if motorista_id is not None:
-                q = q.eq("motorista_id", motorista_id)
-            if status is not None:
-                q = q.eq("status", status)
-            return q.order("criado_em", desc=True).range(offset, offset + limite - 1).execute()
+            q = _filtros_lista(
+                q,
+                usuario_id=usuario_id,
+                status=status,
+                motorista_id=motorista_id,
+                ou_status=ou_status,
+                ou_registrada_por=ou_registrada_por,
+                busca=busca,
+                veiculo_id=veiculo_id,
+                unidade=unidade,
+            )
+            q = q.order(coluna, desc=desc)
+            if coluna != "criado_em":
+                q = q.order("criado_em", desc=True)
+            return q.order("id").range(offset, offset + limite - 1).execute()
 
         return [filtrar_colunas(r) for r in _exec(consulta).data]
 
@@ -679,6 +765,9 @@ class SupabaseRepositorio:
         ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
+        busca: str | None = None,
+        veiculo_id: str | None = None,
+        unidade: str | None = None,
     ) -> int:
         def consulta() -> Any:
             q = (
@@ -687,14 +776,57 @@ class SupabaseRepositorio:
                 .limit(1)
             )
             q = _filtro_arquivadas(q, arquivador_id, arquivadas)
-            q = _filtro_dono(q, usuario_id, ou_status, ou_registrada_por)
-            if motorista_id is not None:
-                q = q.eq("motorista_id", motorista_id)
-            if status is not None:
-                q = q.eq("status", status)
-            return q.execute()
+            return _filtros_lista(
+                q,
+                usuario_id=usuario_id,
+                status=status,
+                motorista_id=motorista_id,
+                ou_status=ou_status,
+                ou_registrada_por=ou_registrada_por,
+                busca=busca,
+                veiculo_id=veiculo_id,
+                unidade=unidade,
+            ).execute()
 
         return int(_exec(consulta).count or 0)
+
+    def listar_calendario(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        usuario_id: str | None,
+        motorista_id: str | None,
+        ou_status: tuple[str, ...] | None,
+        ou_registrada_por: str | None,
+        limite: int,
+    ) -> list[dict[str, Any]]:
+        def consulta() -> Any:
+            q = self._c.table("requisicoes").select(COLUNAS_CALENDARIO)
+            q = _filtros_lista(
+                q,
+                usuario_id=usuario_id,
+                status=None,
+                motorista_id=motorista_id,
+                ou_status=ou_status,
+                ou_registrada_por=ou_registrada_por,
+                extra_ou=_expr_janela_calendario(inicio, fim),
+            )
+            q = q.in_("status", ["solicitada", "autorizada", "em_uso", "concluida"])
+            return q.order("hora_saida").order("id").limit(limite).execute()
+
+        return [_so(r, _SET_CALENDARIO) for r in _exec(consulta).data]
+
+    def rotulos_veiculos(self, ids: set[str]) -> dict[str, str]:
+        if not ids:
+            return {}
+        res = _exec(
+            lambda: self._c.table("veiculos")
+            .select("id,descricao,placa")
+            .in_("id", sorted(ids))
+            .execute()
+        )
+        return {r["id"]: rotulo_veiculo(r) for r in res.data}
 
     def arquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:
         # INSERT ... ON CONFLICT DO NOTHING: toque duplo ou corrida entre duas chamadas não
@@ -804,6 +936,26 @@ class SupabaseRepositorio:
     ) -> dict[str, Any]:
         return self._rpc_painel(
             "dash_volume_desfecho",
+            {
+                "p_inicio": inicio,
+                "p_fim": fim,
+                "p_unidade": unidade,
+                "p_veiculo": veiculo,
+                "p_granularidade": granularidade,
+            },
+        )
+
+    def dash_movimentacao_km(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        unidade: str | None,
+        veiculo: str | None,
+        granularidade: str,
+    ) -> dict[str, Any]:
+        return self._rpc_painel(
+            "dash_movimentacao_km",
             {
                 "p_inicio": inicio,
                 "p_fim": fim,

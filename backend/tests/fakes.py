@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from typing import Any
 
 from app.errors import VeiculoOcupado
 from app.modelos import ESTADOS_ABERTOS, Configuracoes, Perfil, Requisicao
-from app.repositorios.supabase_repo import filtrar_colunas
+from app.repositorios.supabase_repo import filtrar_colunas, rotulo_veiculo
 from tests.fakes_admin import ANTES, AdminMemoria, erro_db
 from tests.fakes_atualizacoes import AtualizacoesMemoria
 from tests.fakes_checklist import ChecklistMemoria
@@ -25,6 +26,22 @@ from tests.fakes_foto import FotoPerfilMemoria
 from tests.fakes_notificacoes import NotificacoesMemoria
 from tests.fakes_push import PushMemoria
 from tests.fakes_relatorios import RelatoriosMemoria
+
+
+def _instante(valor: Any) -> datetime:
+    """timestamptz ISO (com Z ou deslocamento) -> datetime ciente, para comparar no fake."""
+    if isinstance(valor, datetime):
+        return valor
+    return datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+
+
+# Ordem do enum public.status_requisicao (é a ordem do ORDER BY no Postgres).
+ORDEM_STATUS = {
+    s: i
+    for i, s in enumerate(
+        ("solicitada", "autorizada", "em_uso", "concluida", "negada", "cancelada")
+    )
+}
 
 CARIMBOS = {
     "autorizada": "autorizado_em",
@@ -57,6 +74,8 @@ class RepoMemoria(
         self._init_push()
         self._init_atualizacoes()
         self._seq_eventos = 0
+        self.chamadas_listagem: list[dict[str, Any]] = []  # busca/ordem recebidas
+        self.chamadas_calendario: list[dict[str, str]] = []
         self.perfis: dict[str, Perfil] = {}
         self.veiculos: dict[str, dict[str, Any]] = {}
         self.requisicoes: dict[str, Requisicao] = {}
@@ -177,7 +196,12 @@ class RepoMemoria(
         ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
+        busca: str | None = None,
+        veiculo_id: str | None = None,
+        unidade: str | None = None,
+        ordem: tuple[str, bool] = ("criado_em", True),
     ) -> list[Requisicao]:
+        self.chamadas_listagem.append({"busca": busca, "ordem": ordem})
         itens = [
             dict(r)
             for r in self.requisicoes.values()
@@ -191,8 +215,32 @@ class RepoMemoria(
                 arquivadas,
                 ou_registrada_por,
             )
+            and self._casa_opcionais(r, busca, veiculo_id, unidade)
         ]
+        if ordem != ("criado_em", True):
+            # Ordenação explícita (o padrão mantém a ordem de inserção dos testes antigos).
+            coluna, desc = ordem
+            chave = (lambda r: ORDEM_STATUS[r["status"]]) if coluna == "status" else None
+            itens.sort(key=chave or (lambda r: str(r.get(coluna) or "")), reverse=desc)
         return itens[offset : offset + limite]
+
+    @staticmethod
+    def _casa_opcionais(
+        r: Requisicao, busca: str | None, veiculo_id: str | None, unidade: str | None
+    ) -> bool:
+        """Emula `ilike` (`*` = qualquer sequência, sem maiúsculas) em nome OU trajeto."""
+        if veiculo_id is not None and r.get("veiculo_id") != veiculo_id:
+            return False
+        if unidade is not None and r.get("unidade") != unidade:
+            return False
+        if busca:
+            padrao = re.compile(
+                ".*".join(re.escape(p) for p in f"*{busca}*".split("*")),
+                re.IGNORECASE | re.DOTALL,
+            )
+            campos = (r.get("nome_solicitante") or "", r.get("trajeto") or "")
+            return any(padrao.fullmatch(c) for c in campos)
+        return True
 
     def _casa(
         self,
@@ -234,6 +282,9 @@ class RepoMemoria(
         ou_registrada_por: str | None = None,
         arquivador_id: str | None = None,
         arquivadas: bool | None = None,
+        busca: str | None = None,
+        veiculo_id: str | None = None,
+        unidade: str | None = None,
     ) -> int:
         return sum(
             1
@@ -248,7 +299,49 @@ class RepoMemoria(
                 arquivadas,
                 ou_registrada_por,
             )
+            and self._casa_opcionais(r, busca, veiculo_id, unidade)
         )
+
+    def listar_calendario(
+        self,
+        *,
+        inicio: str,
+        fim: str,
+        usuario_id: str | None,
+        motorista_id: str | None,
+        ou_status: tuple[str, ...] | None,
+        ou_registrada_por: str | None,
+        limite: int,
+    ) -> list[dict[str, Any]]:
+        """Emula a consulta real (visibilidade + janela + colunas mínimas + ordem)."""
+        self.chamadas_calendario.append({"inicio": inicio, "fim": fim})
+        j0, j1 = _instante(inicio), _instante(fim)
+
+        def toca(r: Requisicao) -> bool:
+            st = r["status"]
+            if st in ("solicitada", "autorizada"):
+                return j0 <= _instante(r["hora_saida"]) < j1
+            if st == "em_uso":
+                return _instante(r["saida_real_em"]) < j1
+            if st == "concluida":
+                return _instante(r["saida_real_em"]) < j1 and _instante(r["chegada_real_em"]) >= j0
+            return False
+
+        colunas = ("id", "status", "veiculo_id", "unidade", "hora_saida")
+        colunas += ("saida_real_em", "chegada_real_em")
+        linhas = [
+            {c: r.get(c) for c in colunas}
+            for r in self.requisicoes.values()
+            if self._casa(
+                r, usuario_id, None, motorista_id, ou_status, None, None, ou_registrada_por
+            )
+            and toca(r)
+        ]
+        linhas.sort(key=lambda r: (_instante(r["hora_saida"]), r["id"]))
+        return linhas[:limite]
+
+    def rotulos_veiculos(self, ids: set[str]) -> dict[str, str]:
+        return {i: rotulo_veiculo(self.veiculos[i]) for i in ids if i in self.veiculos}
 
     # -- arquivamento pessoal (emula a tabela e o gatilho AG041) -------------------------------
     def arquivar_requisicao(self, usuario_id: str, requisicao_id: str) -> None:

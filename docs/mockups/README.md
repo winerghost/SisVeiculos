@@ -63,6 +63,14 @@ Regerar: `cd frontend && npx serve out -l 3100` e `npx playwright test -c playwr
 
 As telas do Motorista, da localização e das Saudações agora têm mockup (59–76); a observação "sem mockup" abaixo vale só para o banner sazonal e o "Resumir com IA", que seguem como estavam.
 
+## Telas sem mockup (18/11/2026, pendentes de validação visual e captura)
+
+| Tela | Observação |
+|---|---|
+| Requisições, Autorizar e Admin › Veículos em telas largas (≥ 768 px) | Tabela (TanStack Table) com busca, filtros, ordenação e paginação vindas da API; no celular seguem os cartões das telas 02, 04 e 06 |
+| `/calendario` | Calendário informativo (FullCalendar): mês, semana e lista (lista no celular); cores dos chips de status; sem criar reservas |
+| Dashboards › Movimentação e km | Gráficos Recharts no padrão da tela 51 (cartão, "Ver como tabela", textura além da cor) |
+
 ## Como usar
 
 - A biblioteca de componentes é o shadcn/ui com Tailwind. Reproduza a estrutura, a hierarquia e o espaçamento das telas.

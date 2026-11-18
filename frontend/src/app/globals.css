@@ -24,11 +24,24 @@
 html {
   background: var(--color-fundo);
   color: var(--color-texto);
+  /* Campo focado não fica escondido atrás do menu inferior fixo (teclado no celular). */
+  scroll-padding-bottom: calc(5rem + env(safe-area-inset-bottom));
 }
 
 body {
   font-family: var(--font-sans);
   min-height: 100dvh;
+  /* viewport-fit=cover: margens laterais seguras (notch em paisagem). Topo e base ficam nos shells. */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Imagens e mídia nunca passam da largura do contêiner. */
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
 }
 
 /* Foco visível em todo elemento interativo (WCAG 2.4.7). */

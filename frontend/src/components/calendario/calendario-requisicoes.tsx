@@ -160,7 +160,7 @@ export function CalendarioRequisicoes() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => controller.prev()}
@@ -186,7 +186,7 @@ export function CalendarioRequisicoes() {
           </button>
           <h2
             aria-live="polite"
-            className="min-w-0 flex-1 text-right text-lg font-semibold first-letter:uppercase"
+            className="min-w-40 flex-1 text-right text-lg font-semibold break-words first-letter:uppercase"
           >
             {controller.view?.title ?? ''}
           </h2>

@@ -60,7 +60,7 @@ export function ResumoIA({
             {aviso}
           </p>
           {resumo.escopo ? <p className="mb-2 text-sm text-texto-2">{resumo.escopo}</p> : null}
-          <p className="text-base whitespace-pre-line">{resumo.texto}</p>
+          <p className="text-base break-words whitespace-pre-line">{resumo.texto}</p>
         </div>
       ) : null}
     </section>

@@ -20,13 +20,13 @@ export function DrawerContent({
       <Vaul.Overlay className="fixed inset-0 z-40 bg-black/50" />
       <Vaul.Content
         className={cn(
-          'fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[95dvh] max-w-md flex-col rounded-t-2xl bg-white p-4 outline-none',
+          'fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[95dvh] max-w-md flex-col rounded-t-2xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] outline-none',
           className,
         )}
         {...props}
       >
         <div aria-hidden className="mx-auto mb-3 h-1.5 w-11 rounded-full bg-borda-campo/40" />
-        <div className="overflow-y-auto">{children}</div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain">{children}</div>
       </Vaul.Content>
     </Vaul.Portal>
   );

@@ -71,7 +71,7 @@ function Conteudo() {
           {p.itens.map((k) => (
             <li key={k.id} className="flex flex-col gap-2 rounded-padrao border border-borda p-3">
               <div>
-                <p className="font-medium">{k.apelido || 'Passkey sem apelido'}</p>
+                <p className="font-medium break-words">{k.apelido || 'Passkey sem apelido'}</p>
                 <p className="text-sm text-texto-2">Criada em {dataHora(k.criada_em)}</p>
                 <p className="text-sm text-texto-2">
                   {k.ultimo_uso_em ? `Último uso: ${dataHora(k.ultimo_uso_em)}` : 'Ainda não usada'}

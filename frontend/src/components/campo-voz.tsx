@@ -87,7 +87,7 @@ function Revisao({
               ? `Substituir tudo o que já foi digitado em ${destino.rotulo} pelo texto reconhecido?`
               : 'Substituir tudo o que já foi digitado no campo pelo texto reconhecido?'}
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 [&>button]:h-auto [&>button]:min-h-12 [&>button]:py-2 [&>button]:leading-tight">
             <Button
               type="button"
               variante="perigo"
@@ -312,7 +312,7 @@ export function CampoVoz({
             O SisVeiculos não grava nem armazena o áudio e não o envia ao n8n. Só o texto
             reconhecido volta para você revisar; nada é enviado sem você confirmar o formulário.
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 [&>button]:h-auto [&>button]:min-h-12 [&>button]:py-2 [&>button]:leading-tight">
             <Button type="button" onClick={voz.consentir}>
               Concordar e usar
             </Button>

@@ -32,7 +32,7 @@ export default function RedefinirSenha() {
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-5 p-6">
       <div className="abertura-logo mx-auto">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-24 w-auto" />
+        <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-24 w-auto max-w-full" />
       </div>
       <h1
         className="abertura-item text-center text-2xl font-semibold"

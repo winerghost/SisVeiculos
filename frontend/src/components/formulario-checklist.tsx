@@ -185,9 +185,10 @@ export function FormularioChecklist({
       <h3 className="text-lg font-semibold">Checklist de {rotuloMomento(momento)}</h3>
       {erro ? <Alerta>{erro}</Alerta> : null}
 
-      <fieldset className={grupo}>
+      <fieldset className={cn(grupo, '@container')}>
         <legend className="mb-2 font-medium">Combustível</legend>
-        <div className="grid grid-cols-5 gap-2">
+        {/* Cabe em 5 colunas só a partir de ~320px de largura do próprio formulário. */}
+        <div className="grid grid-cols-3 gap-2 @xs:grid-cols-5">
           {COMBUSTIVEIS.map((c) => (
             <label
               key={c.valor}
@@ -251,10 +252,10 @@ export function FormularioChecklist({
         </div>
       ) : null}
 
-      <fieldset className={grupo}>
+      <fieldset className={cn(grupo, '@container')}>
         <legend className="mb-2 font-medium">Fotos (até {MAX_FOTOS_UI})</legend>
         {fotos.length > 0 ? (
-          <ul className="grid grid-cols-2 gap-3">
+          <ul className="grid grid-cols-1 gap-3 @xs:grid-cols-2">
             {fotos.map((f) => (
               <li key={f.chave} className="rounded-padrao border border-borda p-2">
                 {f.preview ? (
@@ -280,7 +281,7 @@ export function FormularioChecklist({
                   disabled={enviando}
                   onClick={() => remover(f)}
                   aria-label={`Remover foto ${f.nome}`}
-                  className="mt-1"
+                  className="mt-1 px-2"
                 >
                   <X aria-hidden className="size-4" /> Remover
                 </Button>

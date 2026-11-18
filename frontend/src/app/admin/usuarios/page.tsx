@@ -136,18 +136,20 @@ function Conteudo() {
       <div className="mt-4 flex items-center justify-between gap-3">
         <Button
           variante="contorno"
+          className="shrink-0 px-3"
           disabled={offset === 0}
           onClick={() => setOffset(Math.max(0, offset - LIMITE))}
         >
           Anterior
         </Button>
-        <p role="status" className="text-center text-texto-2">
+        <p role="status" className="min-w-0 flex-1 text-center text-texto-2">
           {total === 0
             ? '0 usuários'
             : `${offset + 1}–${offset + (lista.dados?.itens.length ?? 0)} de ${total}`}
         </p>
         <Button
           variante="contorno"
+          className="shrink-0 px-3"
           disabled={offset + LIMITE >= total}
           onClick={() => setOffset(offset + LIMITE)}
         >

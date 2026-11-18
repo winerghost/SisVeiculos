@@ -84,20 +84,22 @@ export function BarraFiltros({
           </DrawerDescription>
           <form onSubmit={aplicar} className="flex flex-col gap-3">
             <div className="grid grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <Label htmlFor="filtro-inicio">Início</Label>
                 <Input
                   id="filtro-inicio"
                   type="date"
+                  className="min-w-0"
                   value={rascunho.inicio ?? ''}
                   onChange={mudar('inicio')}
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <Label htmlFor="filtro-fim">Fim</Label>
                 <Input
                   id="filtro-fim"
                   type="date"
+                  className="min-w-0"
                   value={rascunho.fim ?? ''}
                   onChange={mudar('fim')}
                 />

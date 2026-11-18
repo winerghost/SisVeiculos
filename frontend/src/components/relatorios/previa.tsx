@@ -58,7 +58,11 @@ export function Previa({
             <thead>
               <tr className="border-b border-borda bg-fundo">
                 {previa.colunas.map((c) => (
-                  <th key={c.chave} scope="col" className="px-3 py-2 font-semibold">
+                  <th
+                    key={c.chave}
+                    scope="col"
+                    className="px-3 py-2 font-semibold whitespace-nowrap"
+                  >
                     {c.rotulo}
                   </th>
                 ))}
@@ -69,7 +73,8 @@ export function Previa({
                 <tr key={i} className="border-b border-borda last:border-0">
                   {previa.colunas.map((c) => (
                     <td key={c.chave} className="px-3 py-2 align-top">
-                      {l[c.chave] ?? ''}
+                      {/* Texto longo quebra em até ~20rem em vez de esticar a linha inteira. */}
+                      <span className="block max-w-xs break-words">{l[c.chave] ?? ''}</span>
                     </td>
                   ))}
                 </tr>

@@ -115,7 +115,7 @@ function Edicao({
     <div className="flex flex-col gap-5">
       <section className="flex items-center gap-4 rounded-xl border border-borda bg-white p-4">
         <Avatar nome={u.nome} fotoUrl={u.foto_url} decorativo className="size-14 text-lg" />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-semibold">{u.nome}</h2>
           {u.email ? <p className="truncate text-texto-2">{u.email}</p> : null}
           <p className="text-texto-2">{rotuloUltimoAcesso(u.ultimo_acesso_em)}</p>
@@ -234,12 +234,17 @@ function Edicao({
             />
           ) : null}
           {!podeRemoverFoto ? null : confirmandoFoto ? (
-            <div className="grid grid-cols-2 gap-3">
-              <Button variante="contorno" onClick={() => setConfirmandoFoto(false)}>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variante="contorno"
+                className="flex-1 basis-28 whitespace-nowrap"
+                onClick={() => setConfirmandoFoto(false)}
+              >
                 Cancelar
               </Button>
               <Button
                 variante="perigo"
+                className="flex-1 basis-28 whitespace-nowrap"
                 carregando={clicado === 'foto'}
                 disabled={envio.ocupado}
                 onClick={() => void removerFoto()}
@@ -273,12 +278,17 @@ function Edicao({
             </Button>
           ) : null}
           {!podeDesativar ? null : confirmando ? (
-            <div className="grid grid-cols-2 gap-3">
-              <Button variante="contorno" onClick={() => setConfirmando(false)}>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variante="contorno"
+                className="flex-1 basis-28 whitespace-nowrap"
+                onClick={() => setConfirmando(false)}
+              >
                 Cancelar
               </Button>
               <Button
                 variante="perigo"
+                className="flex-1 basis-28 whitespace-nowrap"
                 carregando={clicado === 'desativar'}
                 disabled={envio.ocupado}
                 onClick={() => void mudarSituacao('desativar')}

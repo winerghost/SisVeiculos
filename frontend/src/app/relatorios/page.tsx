@@ -235,7 +235,8 @@ function Conteudo() {
           {clicado !== 'visualizar' ? <Eye aria-hidden className="size-5" /> : null}{' '}
           {clicado === 'visualizar' ? 'Visualizando...' : 'Visualizar'}
         </Button>
-        <div className="grid grid-cols-2 gap-3">
+        {/* Uma coluna em telas estreitas: "Compartilhar" não cabe em meia largura a 320 px. */}
+        <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2">
           {canais.download
             ? FORMATOS.map((f) => (
                 <Button
@@ -331,7 +332,7 @@ function Conteudo() {
 export default function Relatorios() {
   const { eu } = useAuth();
   return (
-    <AppShell titulo="Relatórios" sobretitulo={eu?.rotulo_perfil}>
+    <AppShell titulo="Relatórios" sobretitulo={eu?.rotulo_perfil} largo>
       <Suspense fallback={null}>
         <Conteudo />
       </Suspense>

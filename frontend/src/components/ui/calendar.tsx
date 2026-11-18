@@ -24,11 +24,11 @@ export function Calendar({ className, ...props }: DayPickerProps) {
           'inline-flex size-11 items-center justify-center rounded-padrao border border-borda',
         button_next:
           'inline-flex size-11 items-center justify-center rounded-padrao border border-borda',
-        month_grid: 'mt-2 w-full border-collapse',
+        month_grid: 'mt-2 w-full table-fixed border-collapse',
         weekday: 'h-9 text-sm font-medium text-texto-2',
         day: 'p-0 text-center',
         day_button:
-          'mx-auto inline-flex size-11 items-center justify-center rounded-padrao text-base hover:bg-fundo',
+          'mx-auto inline-flex h-11 w-full max-w-11 items-center justify-center rounded-padrao text-base hover:bg-fundo',
         selected: '[&>button]:bg-primaria [&>button]:text-white [&>button]:hover:bg-primaria',
         today: '[&>button]:border [&>button]:border-borda-campo',
       }}

@@ -61,7 +61,7 @@ export function Dialogo({
         if (e.target === e.currentTarget && !bloqueado) onFechar();
       }}
       className={cn(
-        'dialogo-entra m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-borda bg-white p-0 text-texto',
+        'dialogo-entra m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto overscroll-contain rounded-xl border border-borda bg-white p-0 text-texto',
       )}
     >
       {aberto ? (

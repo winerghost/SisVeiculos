@@ -40,7 +40,9 @@ function Detalhe({ id }: { id: string }) {
 
       <section aria-label="Resumo" className="rounded-xl border border-borda bg-white p-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="font-medium text-texto-2">{v.veiculo_descricao ?? 'Veículo'}</p>
+          <p className="min-w-0 font-medium break-words text-texto-2">
+            {v.veiculo_descricao ?? 'Veículo'}
+          </p>
           <StatusChip status={v.status} />
         </div>
         <p className="mt-2 text-xl font-semibold break-words">{v.trajeto}</p>

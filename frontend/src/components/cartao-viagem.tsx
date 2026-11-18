@@ -11,7 +11,7 @@ import { StatusChip } from '@/components/ui/status-chip';
 /** Horários e veículo da viagem (previsto x real), usados no cartão e no detalhe. */
 export function DadosViagem({ viagem }: { viagem: Requisicao }) {
   return (
-    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+    <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm break-words">
       <dt className="text-texto-2">Veículo</dt>
       <dd>{viagem.veiculo_descricao ?? 'Veículo'}</dd>
       <dt className="text-texto-2">Saída prevista</dt>

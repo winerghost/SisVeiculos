@@ -48,6 +48,8 @@ export const viewport: Viewport = {
   themeColor: '#0F3D75',
   width: 'device-width',
   initialScale: 1,
+  // Ocupa a tela toda (notch e barra de gestos); as margens seguras ficam no CSS (env(safe-area-inset-*)).
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

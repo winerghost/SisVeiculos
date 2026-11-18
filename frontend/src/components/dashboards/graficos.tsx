@@ -27,7 +27,7 @@ export function Kpi({
   className?: string;
 }) {
   return (
-    <div className={cn('rounded-xl border border-borda bg-white p-4', className)}>
+    <div className={cn('min-w-0 rounded-xl border border-borda bg-white p-4', className)}>
       <dt className="text-sm font-medium text-texto-2">{rotulo}</dt>
       <dd className="mt-1 text-2xl font-semibold break-words">{valor}</dd>
       {detalhe ? <dd className="mt-0.5 text-sm text-texto-2">{detalhe}</dd> : null}
@@ -48,7 +48,7 @@ export function TabelaSimples({ titulo, colunas, linhas }: Tabela & { titulo: st
         <thead>
           <tr className="border-b border-borda">
             {colunas.map((c) => (
-              <th key={c} scope="col" className="px-2 py-2 font-semibold">
+              <th key={c} scope="col" className="px-2 py-2 font-semibold whitespace-nowrap">
                 {c}
               </th>
             ))}
@@ -93,8 +93,8 @@ export function ComTabela({
   const id = React.useId();
   return (
     <section aria-labelledby={id} className="rounded-xl border border-borda bg-white p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 id={id} className="text-lg font-semibold">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 id={id} className="min-w-0 text-lg font-semibold break-words">
           {titulo}
         </h3>
         <Button

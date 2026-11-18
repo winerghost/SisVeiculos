@@ -245,7 +245,7 @@ export function ColunasRelatorio({
                     </button>
                     <label
                       htmlFor={id}
-                      className="flex min-h-11 flex-1 cursor-pointer items-center gap-3 px-3"
+                      className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3 px-3"
                     >
                       <input
                         id={id}
@@ -260,7 +260,7 @@ export function ColunasRelatorio({
                         }
                         className="size-5 shrink-0 accent-primaria"
                       />
-                      <span>
+                      <span className="min-w-0 break-words">
                         <span className="block text-base">{col.rotulo}</span>
                         {col.exige_flag ? (
                           <span className="block text-sm text-texto-2">

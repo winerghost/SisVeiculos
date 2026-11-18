@@ -92,7 +92,7 @@ function Conteudo() {
 export default function Dashboards() {
   const { eu } = useAuth();
   return (
-    <AppShell titulo="Dashboards" sobretitulo={eu?.rotulo_perfil}>
+    <AppShell titulo="Dashboards" sobretitulo={eu?.rotulo_perfil} largo>
       <Conteudo />
     </AppShell>
   );

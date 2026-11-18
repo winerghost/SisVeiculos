@@ -108,10 +108,10 @@ function Conteudo() {
               aria-label={v.descricao}
               className="mb-5 flex items-center gap-4 rounded-xl border border-borda bg-white p-4"
             >
-              <span className="flex size-14 items-center justify-center rounded-xl bg-[#d9f2e6] text-sucesso">
+              <span className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[#d9f2e6] text-sucesso">
                 <Car aria-hidden />
               </span>
-              <div>
+              <div className="min-w-0 break-words">
                 <p className="text-lg font-semibold">
                   {v.descricao} {v.disponivel ? 'livre agora' : 'indisponível'}
                 </p>
@@ -217,7 +217,7 @@ function Conteudo() {
 
       {podeCriar ? <div aria-hidden className="h-24" /> : null}
       {podeCriar ? (
-        <div className="fixed inset-x-0 bottom-16 z-20 mx-auto max-w-md md:max-w-5xl bg-gradient-to-t from-fundo via-fundo to-transparent px-5 pt-4 pb-3">
+        <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 mx-auto max-w-md md:max-w-5xl bg-gradient-to-t from-fundo via-fundo to-transparent px-5 pt-4 pb-3">
           <Button asChild tamanho="cheio">
             <Link href="/requisicoes/nova">
               <Plus aria-hidden /> Nova requisição

@@ -81,7 +81,11 @@ export default function Login() {
         {/* Após a splash a logo já foi animada: aqui ela só aparece. Sem splash, anima aqui. */}
         <div className={veioDaSplash ? 'mx-auto' : 'abertura-logo mx-auto'}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-24 w-auto" />
+          <img
+            src="/logo-agu.webp"
+            alt="AGU - Advocacia-Geral da União"
+            className="h-24 w-auto max-w-full"
+          />
         </div>
         <div className={`${anima} text-center`} style={atraso(veioDaSplash ? 0.1 : 0.7)}>
           <h1 className="text-3xl font-semibold">Controle de veículos</h1>

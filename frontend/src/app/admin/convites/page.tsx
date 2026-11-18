@@ -100,10 +100,11 @@ function Conteudo() {
                 </p>
                 <p className="text-texto-2">Válido até {dataHora(c.expira_em)}</p>
                 {c.acoes_permitidas.length > 0 ? (
-                  <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="mt-3 flex flex-wrap gap-3">
                     {c.acoes_permitidas.includes('reenviar') ? (
                       <Button
                         variante="contorno"
+                        className="flex-1 basis-28 whitespace-nowrap"
                         carregando={clicado === `${c.id}:reenviar`}
                         disabled={envio.ocupado}
                         onClick={() => void executar(c.id, 'reenviar')}
@@ -115,6 +116,7 @@ function Conteudo() {
                     {c.acoes_permitidas.includes('revogar') ? (
                       <Button
                         variante="perigo"
+                        className="flex-1 basis-28 whitespace-nowrap"
                         carregando={clicado === `${c.id}:revogar`}
                         disabled={envio.ocupado}
                         onClick={() => void executar(c.id, 'revogar')}
@@ -134,16 +136,18 @@ function Conteudo() {
       <div className="mt-4 flex items-center justify-between gap-3">
         <Button
           variante="contorno"
+          className="shrink-0 px-3"
           disabled={offset === 0}
           onClick={() => setOffset(Math.max(0, offset - LIMITE))}
         >
           Anterior
         </Button>
-        <p role="status" className="text-center text-texto-2">
+        <p role="status" className="min-w-0 flex-1 text-center text-texto-2">
           {total} no total
         </p>
         <Button
           variante="contorno"
+          className="shrink-0 px-3"
           disabled={offset + LIMITE >= total}
           onClick={() => setOffset(offset + LIMITE)}
         >

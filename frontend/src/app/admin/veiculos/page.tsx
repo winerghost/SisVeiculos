@@ -117,13 +117,21 @@ function FormularioVeiculo({
               onChange={(e) => setPlaca(e.target.value)}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-wrap gap-3">
             <DrawerClose asChild>
-              <Button type="button" variante="contorno" tamanho="cheio">
+              <Button
+                type="button"
+                variante="contorno"
+                className="flex-1 basis-28 whitespace-nowrap"
+              >
                 Cancelar
               </Button>
             </DrawerClose>
-            <Button type="submit" tamanho="cheio" carregando={envio.ocupado}>
+            <Button
+              type="submit"
+              className="flex-1 basis-28 whitespace-nowrap"
+              carregando={envio.ocupado}
+            >
               {envio.ocupado ? 'Salvando...' : 'Salvar'}
             </Button>
           </div>
@@ -159,7 +167,7 @@ function BlocoQr({ v, aoRotacionar }: { v: VeiculoAdmin; aoRotacionar: () => Pro
           descricao={v.descricao}
           className="size-32 shrink-0 rounded-padrao border border-borda"
         />
-        <p className="text-sm text-texto-2">
+        <p className="min-w-0 text-sm text-texto-2">
           QR Code do veículo. Ler o código não autoriza nada; imprima e fixe no veículo.
         </p>
       </div>
@@ -197,16 +205,21 @@ function BlocoQr({ v, aoRotacionar }: { v: VeiculoAdmin; aoRotacionar: () => Pro
         onFechar={() => setConfirmando(false)}
       >
         {envio.erro ? <Alerta>{envio.erro}</Alerta> : null}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-wrap gap-3">
           <Button
             data-autofocus
             variante="contorno"
+            className="flex-1 basis-28 whitespace-nowrap"
             disabled={envio.ocupado}
             onClick={() => setConfirmando(false)}
           >
             Voltar
           </Button>
-          <Button carregando={envio.ocupado} onClick={() => void rotacionar()}>
+          <Button
+            className="flex-1 basis-28 whitespace-nowrap"
+            carregando={envio.ocupado}
+            onClick={() => void rotacionar()}
+          >
             {envio.ocupado ? 'Rotacionando...' : 'Rotacionar'}
           </Button>
         </div>

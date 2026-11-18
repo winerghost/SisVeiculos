@@ -29,7 +29,7 @@ function Indicador() {
         role="status"
         aria-live="polite"
         className={cn(
-          'flex items-center gap-1.5 text-sm font-medium transition-colors',
+          'flex min-w-0 items-center gap-1.5 text-sm font-medium transition-colors',
           falha ? 'text-[#B3261E]' : estado === 'restabelecida' ? 'text-primaria' : 'text-texto-2',
         )}
       >

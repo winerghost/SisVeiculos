@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
 
 const botao = cva(
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-padrao px-4 text-base font-semibold transition-colors disabled:pointer-events-none disabled:opacity-60',
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-padrao px-4 text-center text-base font-semibold transition-colors disabled:pointer-events-none disabled:opacity-60',
   {
     variants: {
       variante: {

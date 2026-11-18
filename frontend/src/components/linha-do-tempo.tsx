@@ -94,7 +94,7 @@ function EtapaCompacta({
       <Marcador situacao={etapa.situacao} compacto />
       <span
         className={cn(
-          'mt-1 px-0.5 text-xs leading-tight break-words',
+          'mt-1 px-0.5 text-xs leading-tight break-words hyphens-auto',
           etapa.situacao === 'atual' && 'font-semibold text-foco',
           etapa.situacao === 'concluida' && 'font-medium text-texto',
           ehErro(etapa.situacao) && 'font-semibold text-erro',

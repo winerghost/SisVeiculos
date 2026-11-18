@@ -111,7 +111,7 @@ export function PainelOperacao() {
       {op.carregando ? <Carregando /> : null}
       {d ? (
         <>
-          <dl className="grid grid-cols-2 gap-3">
+          <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Kpi
               rotulo="Livres"
               valor={d.veiculos.livres}
@@ -179,7 +179,7 @@ function Volume({ d }: { d: DadosVolume }) {
   if (t.total === 0 && d.serie.length === 0) return <Vazio />;
   return (
     <div className="flex flex-col gap-4">
-      <dl className="grid grid-cols-2 gap-3">
+      <dl className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <Kpi rotulo="Total" valor={numero(t.total)} />
         <Kpi
           rotulo="Autorizadas"

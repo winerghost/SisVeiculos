@@ -56,7 +56,11 @@ export function Splash({ aoTerminar }: { aoTerminar: (exibiu: boolean) => void }
     >
       <div className="splash-logo">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-28 w-auto" />
+        <img
+          src="/logo-agu.webp"
+          alt="AGU - Advocacia-Geral da União"
+          className="h-28 w-auto max-w-[80vw]"
+        />
       </div>
     </div>
   );

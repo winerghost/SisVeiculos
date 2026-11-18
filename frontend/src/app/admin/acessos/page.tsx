@@ -78,7 +78,7 @@ function Conteudo() {
             ))}
           </Select>
         </div>
-        <div>
+        <div className="min-w-0">
           <Label htmlFor="filtro-de">Data inicial</Label>
           <Input
             id="filtro-de"
@@ -90,7 +90,7 @@ function Conteudo() {
             }}
           />
         </div>
-        <div>
+        <div className="min-w-0">
           <Label htmlFor="filtro-ate">Data final</Label>
           <Input
             id="filtro-ate"
@@ -123,9 +123,9 @@ function Conteudo() {
         >
           {itens.map((a) => (
             <li key={a.id} className="border-b border-borda p-4 last:border-b-0">
-              <p className="font-semibold">{a.nome ?? 'Usuário sem nome'}</p>
+              <p className="font-semibold break-words">{a.nome ?? 'Usuário sem nome'}</p>
               <p className="text-texto-2">{dataHoraNumerica(a.ocorrido_em)}</p>
-              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+              <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 [&_dd]:[overflow-wrap:anywhere]">
                 <dt className="text-texto-2">Método</dt>
                 <dd>{rotuloMetodo(a.metodo)}</dd>
                 <dt className="text-texto-2">Verificação</dt>
@@ -145,16 +145,18 @@ function Conteudo() {
       <div className="mt-4 flex items-center justify-between gap-3">
         <Button
           variante="contorno"
+          className="shrink-0 px-3"
           disabled={offset === 0}
           onClick={() => setOffset(Math.max(0, offset - LIMITE))}
         >
           Anterior
         </Button>
-        <p role="status" className="text-center text-texto-2">
+        <p role="status" className="min-w-0 flex-1 text-center text-texto-2">
           {total === 0 ? '0 acessos' : `${offset + 1}–${offset + itens.length} de ${total}`}
         </p>
         <Button
           variante="contorno"
+          className="shrink-0 px-3"
           disabled={offset + LIMITE >= total}
           onClick={() => setOffset(offset + LIMITE)}
         >

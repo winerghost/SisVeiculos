@@ -130,7 +130,7 @@ export function AppShell({
   if (voltarPara) {
     return (
       <div className="mx-auto flex min-h-dvh max-w-md flex-col bg-white">
-        <header className="flex items-center gap-2 px-3 pt-5">
+        <header className="flex items-center gap-2 px-3 pt-[max(1.25rem,env(safe-area-inset-top))]">
           <Link
             href={voltarPara}
             aria-label="Voltar"
@@ -141,7 +141,7 @@ export function AppShell({
           <h1
             id={ID_TITULO_PAGINA}
             tabIndex={-1}
-            className="min-w-0 flex-1 text-2xl font-semibold outline-none"
+            className="min-w-0 flex-1 text-2xl font-semibold break-words outline-none"
           >
             {titulo}
           </h1>
@@ -158,10 +158,14 @@ export function AppShell({
     <div
       className={cn('mx-auto flex min-h-dvh max-w-md flex-col bg-fundo', largo && 'md:max-w-5xl')}
     >
-      <header className="flex items-start justify-between px-5 pt-5">
-        <div>
+      <header className="flex items-start justify-between gap-2 px-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
+        <div className="min-w-0">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-agu.webp" alt="AGU - Advocacia-Geral da União" className="h-10 w-auto" />
+          <img
+            src="/logo-agu.webp"
+            alt="AGU - Advocacia-Geral da União"
+            className="h-10 w-auto max-w-full"
+          />
           {sobretitulo ? (
             <p className="mt-3 text-sm font-medium tracking-wide text-texto-2 uppercase">
               {sobretitulo}
@@ -171,7 +175,7 @@ export function AppShell({
             id={ID_TITULO_PAGINA}
             tabIndex={-1}
             className={cn(
-              'mt-1 font-semibold outline-none',
+              'mt-1 font-semibold break-words outline-none',
               // Títulos longos ficam numa linha só ao lado dos ícones do cabeçalho.
               titulo.length > 12 ? 'text-2xl' : 'text-3xl',
             )}
@@ -207,7 +211,7 @@ export function AppShell({
       <IndicadorConexao />
       <FaixaAtualizacao />
 
-      <main className="flex-1 px-5 pt-5 pb-28">
+      <main className="flex-1 px-5 pt-5 pb-[calc(7rem+env(safe-area-inset-bottom))]">
         <Saudacao />
         <div key={caminho} className="pagina-entra">
           {children}
@@ -217,7 +221,7 @@ export function AppShell({
       <nav
         aria-label="Navegação principal"
         className={cn(
-          'fixed inset-x-0 bottom-0 z-30 mx-auto flex h-16 max-w-md border-t border-borda bg-white',
+          'fixed inset-x-0 bottom-0 z-30 mx-auto flex h-[calc(4rem+env(safe-area-inset-bottom))] max-w-md overflow-x-auto border-t border-borda bg-white pb-[env(safe-area-inset-bottom)] [scrollbar-width:none]',
           largo && 'md:max-w-5xl',
         )}
       >
@@ -229,13 +233,13 @@ export function AppShell({
               href={i.href}
               aria-current={ativo ? 'page' : undefined}
               className={cn(
-                'flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 font-medium [&_svg]:size-6',
+                'flex min-h-11 min-w-[3.75rem] flex-1 shrink-0 flex-col items-center justify-center gap-0.5 px-0.5 font-medium [&_svg]:size-6',
                 itens.length > 5 ? 'text-[0.6875rem] tracking-tight' : 'text-sm',
                 ativo ? 'font-semibold text-primaria' : 'text-texto-2',
               )}
             >
               {i.icone}
-              {i.rotulo}
+              <span className="max-w-full truncate">{i.rotulo}</span>
             </Link>
           );
         })}

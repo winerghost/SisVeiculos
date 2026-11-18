@@ -510,6 +510,8 @@ export function BotoesAcao({
               variante={ACOES[a].variante}
               disabled={ocupado}
               carregando={acaoEmAndamento === a}
+              // Em 2 colunas no celular estreito o rótulo quebra em 2 linhas sem estourar.
+              className="h-auto min-h-12 py-2 leading-tight"
               onClick={() => (ehDecisao(a) ? setPedido([a]) : enviar(req, a))}
             >
               {acaoEmAndamento === a ? (ROTULO_ANDAMENTO[a] ?? ACOES[a].rotulo) : ACOES[a].rotulo}
@@ -689,7 +691,7 @@ export function CartaoRequisicao({
               <span className="min-w-0 break-words">{req.nome_solicitante}</span>
             </p>
           ) : (
-            <p className="text-lg font-semibold">
+            <p className="min-w-0 text-lg font-semibold">
               <HoraSaida texto={dataCurta(req.hora_saida)} situacao={req.situacao_horario} />
             </p>
           )}
@@ -718,7 +720,7 @@ export function CartaoRequisicao({
           <p className="mt-1 text-sm text-texto-2">Motorista: {req.motorista.nome}</p>
         ) : null}
         {mostrarSolicitante && req.observacao ? (
-          <p className="mt-1 text-texto-2">Obs.: {req.observacao}</p>
+          <p className="mt-1 break-words text-texto-2">Obs.: {req.observacao}</p>
         ) : null}
         <LinhaDoTempo linhaDoTempo={req.linha_do_tempo} variante="compacta" className="mt-3" />
       </Link>

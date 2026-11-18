@@ -112,6 +112,8 @@ for (const situacao of ['no_prazo', 'proximo', 'atrasado'] as const) {
 test('sem situação (em uso, concluída etc.) a data fica sem destaque', async ({ page }) => {
   await mockarApi(page, { sementes: [{ status: 'em_uso', situacao_horario: null }] });
   await entrar(page, 'solicitante@exemplo.com');
-  await expect(page.getByText('Em uso', { exact: true }).first()).toBeVisible();
+  await expect(
+    page.locator('ul.lista-animada').getByText('Em uso', { exact: true }).first(),
+  ).toBeVisible();
   await expect(page.locator('[data-situacao-horario]')).toHaveCount(0);
 });

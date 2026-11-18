@@ -66,19 +66,33 @@ for (const [nome, viewport] of [
 ] as const) {
   test.describe(`arquivar com loading (${nome})`, () => {
     test.use({ viewport });
+    const desktop = nome === 'desktop';
+
+    // Desktop: linha da tabela -> "Mais" -> diálogo "Mais ações" -> Arquivar. Mobile: botão no cartão.
+    const item = desktop ? 'tbody tr' : CARTAO;
+    const dialogo = (page: Page) => page.getByRole('dialog', { name: 'Mais ações' });
+    /** Contêiner onde fica o botão Arquivar do item (o diálogo no desktop, o cartão no mobile). */
+    async function abrirAcoes(page: Page, alvo: Locator) {
+      if (!desktop) return alvo;
+      await alvo.getByRole('button', { name: /^Mais ações/ }).click();
+      const d = dialogo(page);
+      await expect(d).toBeVisible();
+      return d;
+    }
 
     test('botão: mostra Arquivando..., fica desabilitado e clique duplo gera 1 só chamada', async ({
       page,
     }) => {
       const { mock, gate } = await entrar(page, { sementes: [{ status: 'concluida' }] });
-      const cartao = page.locator(CARTAO).first();
-      await cartao.getByRole('button', { name: 'Arquivar' }).click();
+      const cartao = page.locator(item).first();
+      const acoes = await abrirAcoes(page, cartao);
+      await acoes.getByRole('button', { name: 'Arquivar' }).click();
 
-      const ocupado = cartao.getByRole('button', { name: /Arquivando/ });
+      const ocupado = acoes.getByRole('button', { name: /Arquivando/ });
       await expect(ocupado).toBeVisible();
       await expect(ocupado).toBeDisabled();
       await expect(ocupado).toHaveAttribute('aria-busy', 'true');
-      await expect(cobertura(cartao)).toBeVisible();
+      if (!desktop) await expect(cobertura(cartao)).toBeVisible();
 
       // Dois cliques síncronos no mesmo tick: a guarda do hook (useRef) precisa barrar o 2º.
       await ocupado.evaluate((el) => {
@@ -90,14 +104,16 @@ for (const [nome, viewport] of [
       expect(gate.chamadas).toHaveLength(1);
 
       gate.liberar(0);
-      await expect(page.locator(CARTAO)).toHaveCount(0);
+      await expect(page.locator(item)).toHaveCount(0);
       await expect(page.getByRole('status').getByText('Requisição arquivada.')).toBeVisible();
       expect(mock.organizacoes.map((o) => o.acao)).toEqual(['arquivar']);
     });
 
+    // Gestos de arrastar só existem nos cartões (mobile).
     test('swipe para a direita: cobertura imediata, gestos repetidos não geram 2ª chamada', async ({
       page,
     }) => {
+      test.skip(desktop, 'swipe só nos cartões do mobile');
       const { mock, gate } = await entrar(page, { sementes: [{ status: 'concluida' }] });
       const cartao = page.locator(CARTAO).first();
       const xAntes = (await cartao.getByRole('link').first().boundingBox())!.x;
@@ -125,26 +141,30 @@ for (const [nome, viewport] of [
     });
 
     for (const status of [409, 500]) {
-      test(`erro ${status} no botão: indicador some, cartão fica, mensagem aparece e dá para tentar de novo`, async ({
+      test(`erro ${status} no botão: indicador some, item fica, mensagem aparece e dá para tentar de novo`, async ({
         page,
       }) => {
         const { mock, gate } = await entrar(page, { sementes: [{ status: 'concluida' }] });
-        const cartao = page.locator(CARTAO).first();
-        await cartao.getByRole('button', { name: 'Arquivar' }).click();
-        await expect(cobertura(cartao)).toBeVisible();
+        const cartao = page.locator(item).first();
+        let acoes = await abrirAcoes(page, cartao);
+        await acoes.getByRole('button', { name: 'Arquivar' }).click();
+        if (!desktop) await expect(cobertura(cartao)).toBeVisible();
+        await expect.poll(() => gate.chamadas.length).toBe(1);
 
         gate.falhar(0, status);
-        await expect(cobertura(cartao)).toHaveCount(0);
+        if (desktop) await expect(dialogo(page)).toBeHidden();
+        else await expect(cobertura(cartao)).toHaveCount(0);
         await expect(page.getByText(MSG_ERRO)).toBeVisible();
-        await expect(page.locator(CARTAO)).toHaveCount(1);
-        const botao = cartao.getByRole('button', { name: 'Arquivar' });
-        await expect(botao).toBeEnabled();
+        await expect(page.locator(item)).toHaveCount(1);
         expect(mock.organizacoes).toEqual([]);
 
+        acoes = await abrirAcoes(page, cartao);
+        const botao = acoes.getByRole('button', { name: 'Arquivar' });
+        await expect(botao).toBeEnabled();
         await botao.click();
         await expect.poll(() => gate.chamadas.length).toBe(2);
         gate.liberar(1);
-        await expect(page.locator(CARTAO)).toHaveCount(0);
+        await expect(page.locator(item)).toHaveCount(0);
         expect(mock.organizacoes.map((o) => o.acao)).toEqual(['arquivar']);
       });
     }
@@ -152,6 +172,7 @@ for (const [nome, viewport] of [
     test('erro 500 no swipe: cobertura some, cartão no lugar e novo swipe funciona', async ({
       page,
     }) => {
+      test.skip(desktop, 'swipe só nos cartões do mobile');
       const { mock, gate } = await entrar(page, { sementes: [{ status: 'concluida' }] });
       const cartao = page.locator(CARTAO).first();
       await arrastar(page, cartao, 0.7);
@@ -169,16 +190,34 @@ for (const [nome, viewport] of [
       expect(mock.organizacoes.map((o) => o.acao)).toEqual(['arquivar']);
     });
 
-    test('dois cartões: processar um não bloqueia o outro', async ({ page }) => {
+    test('dois itens: processar um não bloqueia o outro', async ({ page }) => {
       const { mock, gate } = await entrar(page, {
         sementes: [{ status: 'concluida' }, { status: 'negada' }],
       });
-      const lista = page.locator(CARTAO);
+      const lista = page.locator(item);
       await expect(lista).toHaveCount(2);
       const primeiro = lista.nth(0);
       const segundo = lista.nth(1);
 
-      await primeiro.getByRole('button', { name: 'Arquivar' }).click();
+      const acoes1 = await abrirAcoes(page, primeiro);
+      await acoes1.getByRole('button', { name: 'Arquivar' }).click();
+      await expect.poll(() => gate.chamadas.length).toBe(1);
+
+      if (desktop) {
+        // O diálogo do 1º é modal e fica aberto até a resposta; o "Mais" do 2º segue habilitado
+        // (o bloqueio é só da linha em processamento).
+        await expect(segundo.getByRole('button', { name: /^Mais ações/ })).toBeEnabled();
+        gate.liberar(0);
+        await expect(page.locator(item)).toHaveCount(1);
+        const acoes2 = await abrirAcoes(page, page.locator(item).first());
+        await acoes2.getByRole('button', { name: 'Arquivar' }).click();
+        await expect.poll(() => gate.chamadas.length).toBe(2);
+        gate.liberar(1);
+        await expect(page.locator(item)).toHaveCount(0);
+        expect(mock.organizacoes.map((o) => o.acao)).toEqual(['arquivar', 'arquivar']);
+        return;
+      }
+
       await expect(cobertura(primeiro)).toBeVisible();
       // O segundo segue livre: botão habilitado, sem cobertura.
       await expect(cobertura(segundo)).toHaveCount(0);

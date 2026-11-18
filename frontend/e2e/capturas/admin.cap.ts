@@ -48,8 +48,8 @@ test('08-convidar-usuario', async ({ page }) => {
   await page.getByLabel('E-mail').fill('pedro.alves@gmail.com');
   await page.getByLabel('Nome completo').fill('Pedro Alves');
   await page.getByLabel('Unidade').selectOption('CJU');
-  await page.getByLabel('Perfil').selectOption('autorizador');
-  await page.getByLabel('Perfil').blur();
+  await page.getByLabel('Perfil', { exact: true }).selectOption('autorizador');
+  await page.getByLabel('Perfil', { exact: true }).blur();
   await foto(page, '08-convidar-usuario');
 });
 

@@ -170,6 +170,7 @@ function Painel() {
             ocupado={acao.ocupado}
             onAcao={(req, a, c) => void acao.executar(req, a, c)}
             acaoEmAndamento={acao.emAndamento}
+            erroAcao={acao.erro}
             aoRegistrarChecklist={listas.recarregar}
             motoristas={motoristas}
             motoristaPadrao={padrao}

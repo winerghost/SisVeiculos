@@ -25,6 +25,7 @@ import { Alerta } from '@/components/ui/alert';
 import { Avatar } from '@/components/avatar';
 import { TelaMfa } from '@/components/tela-mfa';
 import { SinoNotificacoes } from '@/components/sino-notificacoes';
+import { PerfilLogado, descricaoConta } from '@/components/perfil-logado';
 import { Saudacao } from '@/components/saudacao';
 import { IndicadorConexao } from '@/components/indicador-conexao';
 import { FaixaAtualizacao } from '@/components/faixa-atualizacao';
@@ -50,12 +51,15 @@ interface ItemNav {
 export function AppShell({
   titulo,
   sobretitulo,
+  subtitulo,
   voltarPara,
   largo = false,
   children,
 }: {
   titulo: string;
   sobretitulo?: string;
+  /** Linha sob o título, só de `md` para cima e só em telas `largo` (no celular não aparece). */
+  subtitulo?: string;
   /** Tela interna (formulário): mostra seta de voltar e oculta o menu inferior. */
   voltarPara?: string;
   /** Telas com tabela ou calendário: a partir de `md` a coluna alarga (no celular nada muda). */
@@ -158,38 +162,68 @@ export function AppShell({
     <div
       className={cn('mx-auto flex min-h-dvh max-w-md flex-col bg-fundo', largo && 'md:max-w-5xl')}
     >
-      <header className="flex items-start justify-between gap-2 px-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
-        <div className="min-w-0">
+      <header
+        className={cn(
+          'flex items-start justify-between gap-2 px-5 pt-[max(1.25rem,env(safe-area-inset-top))]',
+          largo && 'md:items-center',
+        )}
+      >
+        <div className={cn('min-w-0', largo && 'md:flex md:items-center md:gap-4')}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/logo-agu.webp"
             alt="AGU - Advocacia-Geral da União"
             className="h-10 w-auto max-w-full"
           />
-          {sobretitulo ? (
-            <p className="mt-3 text-sm font-medium tracking-wide text-texto-2 uppercase">
-              {sobretitulo}
-            </p>
+          {largo ? (
+            <>
+              <span aria-hidden className="hidden h-10 w-px shrink-0 bg-borda md:block" />
+              <span
+                aria-hidden
+                className="hidden size-12 shrink-0 items-center justify-center rounded-padrao bg-[#dcebff] text-primaria md:flex"
+              >
+                <Car className="size-6" />
+              </span>
+            </>
           ) : null}
-          <h1
-            id={ID_TITULO_PAGINA}
-            tabIndex={-1}
-            className={cn(
-              'mt-1 font-semibold break-words outline-none',
-              // Títulos longos ficam numa linha só ao lado dos ícones do cabeçalho.
-              titulo.length > 12 ? 'text-2xl' : 'text-3xl',
-            )}
-          >
-            {titulo}
-          </h1>
+          <div className={cn(largo && 'md:flex md:flex-col')}>
+            {sobretitulo ? (
+              <p
+                className={cn(
+                  'mt-3 text-sm font-medium tracking-wide text-texto-2 uppercase',
+                  largo && 'md:order-2 md:mt-0 md:tracking-normal md:normal-case',
+                )}
+              >
+                {sobretitulo}
+              </p>
+            ) : null}
+            <h1
+              id={ID_TITULO_PAGINA}
+              tabIndex={-1}
+              className={cn(
+                'mt-1 font-semibold break-words outline-none',
+                // Títulos longos ficam numa linha só ao lado dos ícones do cabeçalho.
+                titulo.length > 12 ? 'text-2xl' : 'text-3xl',
+                largo && 'md:mt-0 md:text-2xl',
+              )}
+            >
+              {titulo}
+            </h1>
+            {largo && subtitulo && !sobretitulo ? (
+              <p className="hidden text-sm text-texto-2 md:order-2 md:block">{subtitulo}</p>
+            ) : null}
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <SinoNotificacoes />
           <Link
             href="/seguranca"
-            className="flex size-11 items-center justify-center rounded-full"
-            title="Segurança da conta"
-            aria-label={`Conta: ${eu.nome} (segurança)`}
+            className={cn(
+              'flex size-11 items-center justify-center rounded-full',
+              largo && 'md:w-auto md:gap-2 md:rounded-padrao md:px-1',
+            )}
+            title={descricaoConta(eu)}
+            aria-label={descricaoConta(eu)}
           >
             <Avatar
               nome={eu.nome}
@@ -197,6 +231,7 @@ export function AppShell({
               decorativo
               className="bg-primaria text-white"
             />
+            {largo ? <PerfilLogado /> : null}
           </Link>
           <button
             type="button"

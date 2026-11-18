@@ -46,7 +46,8 @@ export const ajudanteColunas = <T extends RowData>() => createColumnHelper<Recur
 export type { PaginationState, SortingState };
 
 // Clique em controles internos da linha não abre o detalhe.
-const INTERATIVO = 'a,button,input,select,textarea,label,[role="button"],[role="dialog"]';
+const INTERATIVO =
+  'a,button,input,select,textarea,label,dialog,[role="button"],[role="dialog"],[role="alertdialog"]';
 
 export function TabelaDados<T extends RowData>({
   legenda,
@@ -63,9 +64,15 @@ export function TabelaDados<T extends RowData>({
   total,
   hrefDaLinha,
   linhaExtra,
+  classeDaLinha,
+  compacta = false,
   ocupado,
   aoMudarTamanho,
 }: {
+  /** Classe extra (só visual) de cada linha, ex.: destaque de linhas pendentes. */
+  classeDaLinha?: (item: T) => string | undefined;
+  /** Menos espaço lateral nas células (só visual), para tabelas com muitas colunas. */
+  compacta?: boolean;
   /** `<caption>` da tabela (leitor de tela); visível só com `legendaVisivel`. */
   legenda: string;
   legendaVisivel?: boolean;
@@ -147,7 +154,10 @@ export function TabelaDados<T extends RowData>({
                               ? 'descending'
                               : 'none'
                       }
-                      className="border-b border-borda px-3 py-1 font-semibold whitespace-nowrap text-texto"
+                      className={cn(
+                        'border-b border-borda py-1 font-semibold whitespace-nowrap text-texto',
+                        compacta ? 'px-2' : 'px-3',
+                      )}
                     >
                       {podeOrdenar ? (
                         <button
@@ -158,11 +168,11 @@ export function TabelaDados<T extends RowData>({
                         >
                           {conteudo}
                           {sentido === 'asc' ? (
-                            <ArrowUp aria-hidden className="size-4" />
+                            <ArrowUp aria-hidden className="size-4 shrink-0" />
                           ) : sentido === 'desc' ? (
-                            <ArrowDown aria-hidden className="size-4" />
+                            <ArrowDown aria-hidden className="size-4 shrink-0" />
                           ) : (
-                            <ChevronsUpDown aria-hidden className="size-4 text-texto-2" />
+                            <ChevronsUpDown aria-hidden className="size-4 shrink-0 text-texto-2" />
                           )}
                         </button>
                       ) : (
@@ -193,10 +203,11 @@ export function TabelaDados<T extends RowData>({
                     className={cn(
                       'border-b border-borda align-middle last:border-b-0',
                       href && 'cursor-pointer hover:bg-fundo',
+                      classeDaLinha?.(linha.original),
                     )}
                   >
                     {linha.getAllCells().map((celula) => (
-                      <td key={celula.id} className="px-3 py-2">
+                      <td key={celula.id} className={cn('py-2', compacta ? 'px-2' : 'px-3')}>
                         <tabela.FlexRender cell={celula} />
                       </td>
                     ))}

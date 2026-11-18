@@ -22,7 +22,9 @@ export function AbasArquivadas({
       onClick={() => aoMudar(ativa)}
       className={cn(
         'flex min-h-11 flex-1 items-center justify-center rounded-padrao px-3 text-base font-medium',
-        arquivadas === ativa ? 'bg-white font-semibold text-texto' : 'text-texto-2',
+        arquivadas === ativa
+          ? 'bg-white font-semibold text-texto md:bg-primaria md:text-white'
+          : 'text-texto-2',
       )}
     >
       {rotulo}

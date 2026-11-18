@@ -820,6 +820,8 @@ test.describe('viewport desktop', () => {
     await page.getByRole('button', { name: 'Entrar' }).click();
     await expect(page).toHaveURL(/\/requisicoes$/);
     await page.goto('/admin/veiculos');
+    // Na tabela (desktop) o QR fica recolhido atrás do botão de cada linha.
+    await page.getByRole('button', { name: 'QR Code de Veículo 01' }).click();
     await expect(page.getByRole('img', { name: 'QR Code do veículo Veículo 01' })).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Rotacionar código de Veículo 01' }),

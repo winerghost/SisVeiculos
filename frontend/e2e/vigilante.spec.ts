@@ -20,7 +20,7 @@ test('admin: convite e edição oferecem Motorista e Vigilante em pt-BR', async 
   const mock = await mockarAdmin(page);
   await entrar(page, 'admin@agu.gov.br');
   await page.goto('/admin/usuarios/novo');
-  await expect(page.getByLabel('Perfil').locator('option')).toHaveText([
+  await expect(page.getByLabel('Perfil', { exact: true }).locator('option')).toHaveText([
     'Solicitante',
     'Autorizador',
     'Administrador',
@@ -29,7 +29,7 @@ test('admin: convite e edição oferecem Motorista e Vigilante em pt-BR', async 
   ]);
   await page.getByLabel('E-mail').fill('paulo@gmail.com');
   await page.getByLabel('Nome completo').fill('Paulo Reis');
-  await page.getByLabel('Perfil').selectOption('vigilante');
+  await page.getByLabel('Perfil', { exact: true }).selectOption('vigilante');
   await page.getByRole('button', { name: 'Enviar convite' }).click();
   await expect(page.getByText('Convite enviado para')).toBeVisible();
   expect(mock.corpos.convidar[0]).toMatchObject({ email: 'paulo@gmail.com', role: 'vigilante' });
@@ -38,7 +38,7 @@ test('admin: convite e edição oferecem Motorista e Vigilante em pt-BR', async 
   await page.goto('/admin/usuarios');
   const href = await page.getByRole('link', { name: /Ana Souza/ }).getAttribute('href');
   await page.goto(href ?? '/');
-  await page.getByLabel('Perfil').selectOption('motorista');
+  await page.getByLabel('Perfil', { exact: true }).selectOption('motorista');
   await page.getByRole('button', { name: 'Salvar alterações' }).click();
   await expect(page.getByText('Alterações salvas.')).toBeVisible();
   await expect(page.getByText('Motorista', { exact: true }).first()).toBeVisible();

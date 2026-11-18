@@ -36,16 +36,16 @@ test('admin: convida usuário e desativa outra conta conforme acoes_permitidas',
   expect(estilo).toBe('ellipsis');
 
   // Filtro por role vai à API como query.
-  await page.getByLabel('Perfil').selectOption('admin');
+  await page.getByLabel('Perfil', { exact: true }).selectOption('admin');
   await expect(linhaAna).toHaveCount(0);
-  await page.getByLabel('Perfil').selectOption('');
+  await page.getByLabel('Perfil', { exact: true }).selectOption('');
 
   // Convidar.
   await abrir(page, page.getByRole('link', { name: 'Convidar usuário' }));
   await page.getByLabel('E-mail').fill('pedro.alves@gmail.com');
   await page.getByLabel('Nome completo').fill('Pedro Alves');
   await page.getByLabel('Unidade').selectOption('CJU');
-  await page.getByLabel('Perfil').selectOption('autorizador');
+  await page.getByLabel('Perfil', { exact: true }).selectOption('autorizador');
   await page.getByRole('button', { name: 'Enviar convite' }).click();
   await expect(page.getByText('Convite enviado para')).toBeVisible();
   expect(mock.corpos.convidar[0]).toMatchObject({
@@ -73,7 +73,7 @@ test('admin: convida usuário e desativa outra conta conforme acoes_permitidas',
   await abrir(page, page.getByRole('link', { name: /^Marcos Silva/ }));
   await expect(page.getByRole('button', { name: 'Salvar alterações' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Desativar conta' })).toHaveCount(0);
-  await expect(page.getByLabel('Perfil')).toBeDisabled();
+  await expect(page.getByLabel('Perfil', { exact: true })).toBeDisabled();
 });
 
 test('admin: configurações exibem 409 dependencia_recurso como veio e respeitam acoes_permitidas', async ({

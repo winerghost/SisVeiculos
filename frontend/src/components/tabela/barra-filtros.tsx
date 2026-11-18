@@ -102,7 +102,7 @@ export function BarraFiltros({
     select('ordenar', 'Ordenar por', '', ordenacoes),
   ];
   const selects = campos.some(Boolean) ? (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 md:shrink-0 md:grid-cols-[repeat(4,minmax(8rem,10rem))]">
       {campos.map((c, i) => (c ? <React.Fragment key={i}>{c}</React.Fragment> : null))}
     </div>
   ) : null;
@@ -111,8 +111,12 @@ export function BarraFiltros({
 
   const busca = `${id}-q`;
   return (
-    <div role="search" aria-label="Busca e filtros" className="mb-4 flex flex-col gap-3">
-      <div>
+    <div
+      role="search"
+      aria-label="Busca e filtros"
+      className="mb-4 flex flex-col gap-3 md:flex-row md:items-end"
+    >
+      <div className="md:min-w-56 md:flex-1">
         <Label htmlFor={busca}>{rotuloBusca}</Label>
         <div className="relative">
           <Search

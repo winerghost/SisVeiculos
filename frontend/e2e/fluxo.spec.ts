@@ -55,7 +55,9 @@ test('login -> solicitar -> autorizar -> saída -> chegada', async ({ page }) =>
   await expect(page.getByText('Nenhuma viagem em uso.')).toBeVisible();
 
   await page.getByRole('link', { name: 'Requisições' }).click();
-  await expect(page.getByText('Concluída', { exact: true })).toBeVisible();
+  await expect(
+    page.locator('ul.lista-animada').getByText('Concluída', { exact: true }),
+  ).toBeVisible();
   expect(mock.reqs[0]?.status).toBe('concluida');
 });
 

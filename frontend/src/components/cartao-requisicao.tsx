@@ -249,7 +249,7 @@ function TrocarMotorista({
 }
 
 /** Confirmação de negar/cancelar: só as ações que a API liberou, mais "Voltar". */
-function DialogoDecidir({
+export function DialogoDecidir({
   acoes,
   ocupado,
   acaoEmAndamento,
@@ -392,10 +392,13 @@ export function BotoesAcao({
   motoristaPadrao,
   arquivando,
   acaoEmAndamento,
+  ocultar,
 }: {
   req: Requisicao;
   ocupado: boolean;
   onAcao: OnAcao;
+  /** Ações que já têm botão em outro lugar (tabela): não são exibidas aqui. Sem isto, nada muda. */
+  ocultar?: readonly Acao[];
   /** Ação em andamento na API (vem do pai): o botão correspondente mostra spinner e o gerúndio. */
   acaoEmAndamento?: Acao | null;
   /** Arquivar/desarquivar em andamento: o botão mostra o spinner e fica desabilitado. */
@@ -417,7 +420,9 @@ export function BotoesAcao({
     motoristas && motoristas.length > 0 ? motoristas : (campoAutorizar?.motoristas ?? []);
   const padrao = motoristaPadrao ?? campoAutorizar?.motorista_padrao ?? null;
   const motoristaId = escolha ?? padrao ?? '';
-  const permitidas = req.acoes_permitidas;
+  const permitidas = ocultar
+    ? req.acoes_permitidas.filter((a) => !(ocultar as readonly string[]).includes(a))
+    : req.acoes_permitidas;
   const temOrganizar = !!onOrganizar && permitidas.some(ehOrganizar);
   const podeTrocarMotorista = permitidas.includes('atribuir_motorista');
   if (!permitidas.some((a) => a in ACOES) && !podeTrocarMotorista && !temOrganizar) return null;

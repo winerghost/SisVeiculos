@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -15,8 +16,17 @@ export function Dialogo({
   onFechar,
   role = 'alertdialog',
   bloqueado = false,
+  icone,
+  comBotaoFechar = false,
+  larga = false,
   children,
 }: {
+  /** Opcional: ícone decorativo ao lado do título (cabeçalho em linha). */
+  icone?: React.ReactNode;
+  /** Opcional: botão X (aria-label "Fechar") no cabeçalho; desabilitado com `bloqueado`. */
+  comBotaoFechar?: boolean;
+  /** Opcional: caixa um pouco mais larga (max-w-lg). */
+  larga?: boolean;
   aberto: boolean;
   titulo: string;
   descricao?: string;
@@ -61,19 +71,49 @@ export function Dialogo({
         if (e.target === e.currentTarget && !bloqueado) onFechar();
       }}
       className={cn(
-        'dialogo-entra m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto overscroll-contain rounded-xl border border-borda bg-white p-0 text-texto',
+        'dialogo-entra m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-borda bg-white p-0 text-texto',
+        larga ? 'max-w-lg' : 'max-w-md',
       )}
     >
       {aberto ? (
         <div className="flex flex-col gap-4 p-5">
-          <h2 id={tituloId} className="text-lg font-semibold">
-            {titulo}
-          </h2>
-          {descricao ? (
-            <p id={descId} className="text-texto-2">
-              {descricao}
-            </p>
-          ) : null}
+          {icone || comBotaoFechar ? (
+            <div className="flex items-start gap-3">
+              {icone}
+              <div className="min-w-0 flex-1">
+                <h2 id={tituloId} className="text-lg font-semibold">
+                  {titulo}
+                </h2>
+                {descricao ? (
+                  <p id={descId} className="text-texto-2">
+                    {descricao}
+                  </p>
+                ) : null}
+              </div>
+              {comBotaoFechar ? (
+                <button
+                  type="button"
+                  aria-label="Fechar"
+                  disabled={bloqueado}
+                  onClick={onFechar}
+                  className="-mt-1 -mr-2 inline-flex size-11 shrink-0 items-center justify-center rounded-padrao text-texto hover:bg-fundo disabled:opacity-60"
+                >
+                  <X aria-hidden className="size-5" />
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <h2 id={tituloId} className="text-lg font-semibold">
+                {titulo}
+              </h2>
+              {descricao ? (
+                <p id={descId} className="text-texto-2">
+                  {descricao}
+                </p>
+              ) : null}
+            </>
+          )}
           {children}
         </div>
       ) : null}

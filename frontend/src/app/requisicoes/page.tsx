@@ -106,7 +106,7 @@ function Conteudo() {
             <section
               key={v.id}
               aria-label={v.descricao}
-              className="mb-5 flex items-center gap-4 rounded-xl border border-borda bg-white p-4"
+              className="mb-5 flex items-center gap-4 rounded-xl border border-borda bg-white p-4 md:border-[#bfe3cd] md:bg-[#e8f6ee]"
             >
               <span className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[#d9f2e6] text-sucesso">
                 <Car aria-hidden />
@@ -193,6 +193,7 @@ function Conteudo() {
           onOrganizar={(req, a) => void aoOrganizar(req.id, a)}
           processando={organizar.processando}
           acaoEmAndamento={acao.emAndamento}
+          erroAcao={acao.erro}
         />
       ) : (
         <ul className="lista-animada flex flex-col gap-3">
@@ -231,7 +232,7 @@ function Conteudo() {
 
 export default function MinhasRequisicoes() {
   return (
-    <AppShell titulo="Requisições" largo>
+    <AppShell titulo="Requisições" subtitulo="Gestão de solicitações de veículos" largo>
       <Conteudo />
     </AppShell>
   );

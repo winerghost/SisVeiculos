@@ -60,8 +60,10 @@ export function Paginacao({
   return (
     <nav aria-label={rotulo} className={cn('mt-4 flex flex-wrap items-center gap-3', className)}>
       <p className="min-w-0 flex-1 text-sm text-texto-2" aria-live="polite">
-        {numero(de)}–{numero(ate)} de {numero(total)} · página {numero(atual + 1)} de{' '}
-        {numero(paginas)}
+        {numero(de)}–{numero(ate)} de {numero(total)} {total === 1 ? 'registro' : 'registros'}
+        <span className="sr-only">
+          , página {numero(atual + 1)} de {numero(paginas)}
+        </span>
       </p>
       {aoMudarTamanho ? (
         <label className="flex items-center gap-2 text-sm text-texto-2">
@@ -83,6 +85,12 @@ export function Paginacao({
       <div className="flex items-center gap-2">
         {botao('Primeira página', 0, podeVoltar, ChevronsLeft)}
         {botao('Página anterior', atual - 1, podeVoltar, ChevronLeft)}
+        <span
+          aria-hidden
+          className="inline-flex size-11 items-center justify-center rounded-padrao bg-primaria font-semibold text-white"
+        >
+          {numero(atual + 1)}
+        </span>
         {botao('Próxima página', atual + 1, podeAvancar, ChevronRight)}
         {botao('Última página', paginas - 1, podeAvancar, ChevronsRight)}
       </div>

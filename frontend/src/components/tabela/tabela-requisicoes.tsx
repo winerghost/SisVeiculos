@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { Ban, Check, ChevronDown, FileText } from 'lucide-react';
-import { ACOES } from '@/lib/api';
 import { dataCurta, dataHoraNumerica } from '@/lib/formato';
 import type {
   Acao,
@@ -16,7 +15,7 @@ import type {
 import {
   BotoesAcao,
   DialogoDecidir,
-  ehOrganizar,
+  temAcoesVisiveis,
   ROTULO_ANDAMENTO,
   type OnOrganizar,
 } from '@/components/cartao-requisicao';
@@ -81,38 +80,13 @@ type OnAcao = (req: Requisicao, acao: Acao, corpo?: CorpoAcao) => void;
 /** Ações com botão direto na célula (as demais vão para "Mais"). */
 const DIRETAS: readonly Acao[] = ['autorizar', 'negar'];
 
-/** Mesmo critério de exibição de BotoesAcao, descontadas as ações ocultas. */
-function temAcoes(r: Requisicao, comOrganizar: boolean, ocultar: readonly Acao[] = []): boolean {
-  const p = r.acoes_permitidas.filter((a) => !(ocultar as readonly string[]).includes(a));
-  return (
-    p.some((a) => a in ACOES) ||
-    p.includes('atribuir_motorista') ||
-    (comOrganizar && p.some(ehOrganizar))
-  );
-}
-
 const CLASSE_BOTAO = 'h-11 shrink-0 gap-1.5 px-2.5 text-sm whitespace-nowrap [&_svg]:shrink-0';
 
-/**
- * Ações da linha (desktop), sempre vindas de `acoes_permitidas`. Autorizar só abre o modal; Negar
- * usa a confirmação existente; o resto (cancelar, arquivar, motorista, saída, chegada, checklist)
- * fica em "Mais", que reaproveita BotoesAcao. Com campos ou checklist exigidos para autorizar, o
- * fluxo completo fica em "Mais" (nada é exigido ou validado aqui).
- */
-function AcoesDaLinha({
-  req,
-  comOrganizar,
-  ocupado,
-  onAcao,
-  onOrganizar,
-  processando,
-  acaoEmAndamento,
-  aoRegistrarChecklist,
-  motoristas,
-  motoristaPadrao,
-  erroAcao,
-}: {
-  req: Requisicao;
+type TipoModal = 'autorizar' | 'negar' | 'mais';
+/** Um só conjunto de diálogos para a tabela toda: qual linha e qual tipo estão abertos. */
+type Modal = { id: string; tipo: TipoModal; aberto: boolean } | null;
+
+type PropsAcoes = {
   comOrganizar: boolean;
   ocupado: boolean;
   onAcao: OnAcao;
@@ -123,35 +97,46 @@ function AcoesDaLinha({
   motoristas?: Motorista[];
   motoristaPadrao?: string | null;
   erroAcao?: string | null;
-}) {
-  const [modal, setModal] = React.useState<'autorizar' | 'negar' | 'mais' | null>(null);
-  const permitidas = req.acoes_permitidas;
+};
+
+/** Valores de apresentação da linha, todos derivados do que a API devolveu (`acoes_permitidas`). */
+function derivar(req: Requisicao, p: PropsAcoes) {
   const campoAutorizar = req.campos_acao?.autorizar;
   const exigeFluxoCompleto =
     !!campoAutorizar?.checklist_pendente || (campoAutorizar?.campos_obrigatorios ?? []).length > 0;
-  const diretas = permitidas.includes('autorizar') && !exigeFluxoCompleto;
+  const diretas = req.acoes_permitidas.includes('autorizar') && !exigeFluxoCompleto;
   const ocultar = diretas ? DIRETAS : [];
-  const candidatos =
-    motoristas && motoristas.length > 0 ? motoristas : (campoAutorizar?.motoristas ?? []);
-  const padrao = motoristaPadrao ?? campoAutorizar?.motorista_padrao ?? null;
-  const arquivando = !!processando?.has(req.id);
-  const meuAndamento = acaoEmAndamento?.id === req.id ? acaoEmAndamento.acao : null;
-  const autorizando = meuAndamento === 'autorizar';
-  const bloqueada = ocupado || arquivando;
-  const mostrarMais = temAcoes(req, comOrganizar, ocultar);
+  const arquivando = !!p.processando?.has(req.id);
+  const meuAndamento = p.acaoEmAndamento?.id === req.id ? p.acaoEmAndamento.acao : null;
+  return {
+    diretas,
+    ocultar,
+    candidatos:
+      p.motoristas && p.motoristas.length > 0 ? p.motoristas : (campoAutorizar?.motoristas ?? []),
+    padrao: p.motoristaPadrao ?? campoAutorizar?.motorista_padrao ?? null,
+    arquivando,
+    meuAndamento,
+    autorizando: meuAndamento === 'autorizar',
+    bloqueada: p.ocupado || arquivando,
+    emCurso: meuAndamento !== null || arquivando,
+    mostrarMais: temAcoesVisiveis(req, p.comOrganizar, ocultar),
+  };
+}
+
+/**
+ * Botões da linha (desktop), sempre vindos de `acoes_permitidas`. Autorizar só abre o modal; Negar
+ * usa a confirmação existente; o resto (cancelar, arquivar, motorista, saída, chegada, checklist)
+ * fica em "Mais", que reaproveita BotoesAcao. Com campos ou checklist exigidos para autorizar, o
+ * fluxo completo fica em "Mais" (nada é exigido ou validado aqui). Os diálogos não ficam aqui:
+ * existe um único conjunto para a tabela (DialogosDaTabela).
+ */
+function AcoesDaLinha({
+  req,
+  abrir,
+  ...p
+}: PropsAcoes & { req: Requisicao; abrir: (id: string, tipo: TipoModal) => void }) {
+  const { diretas, meuAndamento, autorizando, bloqueada, mostrarMais } = derivar(req, p);
   const nome = req.nome_solicitante;
-
-  // Ao terminar a chamada os diálogos fecham, exceto o de Autorizar com erro da API: esse fica
-  // aberto (motorista preservado) e mostra a mensagem dentro dele.
-  const emCurso = meuAndamento !== null || arquivando;
-  // Só mostra o erro depois de uma tentativa feita neste modal (evita erro antigo de outra ação).
-  const [tentou, setTentou] = React.useState(false);
-  const [emCursoAntes, setEmCursoAntes] = React.useState(emCurso);
-  if (emCursoAntes !== emCurso) {
-    setEmCursoAntes(emCurso);
-    if (emCursoAntes && !(modal === 'autorizar' && erroAcao)) setModal(null);
-  }
-
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap">
       {diretas ? (
@@ -163,15 +148,12 @@ function AcoesDaLinha({
             className={CLASSE_BOTAO}
             disabled={bloqueada}
             carregando={autorizando}
-            onClick={() => {
-              setTentou(false);
-              setModal('autorizar');
-            }}
+            onClick={() => abrir(req.id, 'autorizar')}
           >
             {autorizando ? null : <Check aria-hidden className="size-4" />}
             {autorizando ? (ROTULO_ANDAMENTO.autorizar ?? 'Autorizando...') : 'Autorizar'}
           </Button>
-          {permitidas.includes('negar') ? (
+          {req.acoes_permitidas.includes('negar') ? (
             <Button
               type="button"
               variante="perigo"
@@ -180,7 +162,7 @@ function AcoesDaLinha({
               className={CLASSE_BOTAO}
               disabled={bloqueada}
               carregando={meuAndamento === 'negar'}
-              onClick={() => setModal('negar')}
+              onClick={() => abrir(req.id, 'negar')}
             >
               {meuAndamento === 'negar' ? null : <Ban aria-hidden className="size-4" />}
               {meuAndamento === 'negar' ? (ROTULO_ANDAMENTO.negar ?? 'Negando...') : 'Negar'}
@@ -206,71 +188,94 @@ function AcoesDaLinha({
           aria-haspopup="dialog"
           className={CLASSE_BOTAO}
           disabled={bloqueada}
-          onClick={() => setModal('mais')}
+          onClick={() => abrir(req.id, 'mais')}
         >
           Mais
           <ChevronDown aria-hidden className="size-4" />
         </Button>
       ) : null}
-      {diretas ? (
-        <>
-          <DialogoAutorizarRequisicao
-            req={req}
-            aberto={modal === 'autorizar'}
-            motoristas={candidatos}
-            motoristaPadrao={padrao}
-            ocupado={bloqueada}
-            autorizando={autorizando}
-            erro={modal === 'autorizar' && tentou ? erroAcao : null}
-            onFechar={() => setModal(null)}
-            onConfirmar={(id) => {
-              setTentou(true);
-              onAcao(req, 'autorizar', id ? { motorista_id: id } : undefined);
-            }}
-          />
-          <DialogoDecidir
-            acoes={modal === 'negar' ? ['negar'] : null}
-            ocupado={bloqueada}
-            acaoEmAndamento={meuAndamento}
-            onFechar={() => setModal(null)}
-            onEscolher={(a) => {
-              setModal(null);
-              onAcao(req, a);
-            }}
-          />
-        </>
-      ) : null}
-      {mostrarMais ? (
-        <Dialogo
-          aberto={modal === 'mais'}
-          role="dialog"
-          comBotaoFechar
-          bloqueado={emCurso}
-          titulo="Mais ações"
-          descricao={`Requisição de ${nome}`}
-          onFechar={() => setModal(null)}
-        >
-          <BotoesAcao
-            req={req}
-            ocultar={ocultar}
-            ocupado={bloqueada}
-            onAcao={onAcao}
-            onOrganizar={onOrganizar}
-            arquivando={arquivando}
-            acaoEmAndamento={meuAndamento}
-            aoRegistrarChecklist={aoRegistrarChecklist}
-            motoristas={motoristas}
-            motoristaPadrao={motoristaPadrao}
-          />
-        </Dialogo>
-      ) : null}
     </div>
   );
 }
 
-type PropsAcoes = Omit<Parameters<typeof AcoesDaLinha>[0], 'req'>;
-// Contexto estável: a célula não é recriada (e o modal aberto não é perdido) a cada mudança de props.
-const ContextoAcoes = React.createContext<PropsAcoes | null>(null);
+/** Diálogos da linha escolhida (Autorizar, Negar e Mais), montados uma única vez para a tabela. */
+function DialogosDaTabela({
+  req,
+  modal,
+  tentou,
+  aoTentar,
+  aoFechar,
+  ...p
+}: PropsAcoes & {
+  req: Requisicao;
+  modal: NonNullable<Modal>;
+  tentou: boolean;
+  aoTentar: () => void;
+  aoFechar: () => void;
+}) {
+  const d = derivar(req, p);
+  return (
+    <>
+      {d.diretas ? (
+        <>
+          <DialogoAutorizarRequisicao
+            key={req.id}
+            req={req}
+            aberto={modal.aberto && modal.tipo === 'autorizar'}
+            motoristas={d.candidatos}
+            motoristaPadrao={d.padrao}
+            ocupado={d.bloqueada}
+            autorizando={d.autorizando}
+            erro={modal.tipo === 'autorizar' && tentou ? p.erroAcao : null}
+            onFechar={aoFechar}
+            onConfirmar={(id) => {
+              aoTentar();
+              p.onAcao(req, 'autorizar', id ? { motorista_id: id } : undefined);
+            }}
+          />
+          <DialogoDecidir
+            acoes={modal.aberto && modal.tipo === 'negar' ? ['negar'] : null}
+            ocupado={d.bloqueada}
+            acaoEmAndamento={d.meuAndamento}
+            onFechar={aoFechar}
+            onEscolher={(a) => {
+              aoFechar();
+              p.onAcao(req, a);
+            }}
+          />
+        </>
+      ) : null}
+      {d.mostrarMais ? (
+        <Dialogo
+          aberto={modal.aberto && modal.tipo === 'mais'}
+          role="dialog"
+          comBotaoFechar
+          bloqueado={d.emCurso}
+          titulo="Mais ações"
+          descricao={`Requisição de ${req.nome_solicitante}`}
+          onFechar={aoFechar}
+        >
+          <BotoesAcao
+            req={req}
+            ocultar={d.ocultar}
+            ocupado={d.bloqueada}
+            onAcao={p.onAcao}
+            onOrganizar={p.onOrganizar}
+            arquivando={d.arquivando}
+            acaoEmAndamento={d.meuAndamento}
+            aoRegistrarChecklist={p.aoRegistrarChecklist}
+            motoristas={p.motoristas}
+            motoristaPadrao={p.motoristaPadrao}
+          />
+        </Dialogo>
+      ) : null}
+    </>
+  );
+}
+
+// Contexto estável: a célula não é recriada a cada mudança de props.
+type PropsCelula = PropsAcoes & { abrir: (id: string, tipo: TipoModal) => void };
+const ContextoAcoes = React.createContext<PropsCelula | null>(null);
 
 function CelulaAcoes({ req }: { req: Requisicao }) {
   const props = React.useContext(ContextoAcoes);
@@ -392,7 +397,7 @@ export function TabelaRequisicoes({
     return lista;
   }, [mostrarSolicitante, ordenarPorStatus]);
 
-  const contexto: PropsAcoes = {
+  const propsAcoes: PropsAcoes = {
     comOrganizar,
     ocupado,
     onAcao,
@@ -404,6 +409,27 @@ export function TabelaRequisicoes({
     motoristaPadrao,
     erroAcao,
   };
+
+  // Estado dos diálogos (um conjunto só). Ao terminar a chamada eles fecham, exceto o de Autorizar
+  // com erro da API: esse fica aberto (motorista preservado) e mostra a mensagem dentro dele.
+  const [modal, setModal] = React.useState<Modal>(null);
+  // Só mostra o erro depois de uma tentativa feita neste modal (evita erro antigo de outra ação).
+  const [tentou, setTentou] = React.useState(false);
+  const reqModal = modal ? itens.find((r) => r.id === modal.id) : undefined;
+  const emCursoModal = reqModal ? derivar(reqModal, propsAcoes).emCurso : false;
+  const [emCursoAntes, setEmCursoAntes] = React.useState(emCursoModal);
+  const fechar = () => setModal((m) => (m ? { ...m, aberto: false } : m));
+  if (emCursoAntes !== emCursoModal) {
+    setEmCursoAntes(emCursoModal);
+    if (emCursoAntes && !(modal?.tipo === 'autorizar' && erroAcao)) fechar();
+  }
+  // A linha saiu da lista (arquivada, recarregada): o diálogo some junto.
+  if (modal && !reqModal) setModal(null);
+  const abrir = (id: string, tipo: TipoModal) => {
+    setTentou(false);
+    setModal({ id, tipo, aberto: true });
+  };
+  const contexto: PropsCelula = { ...propsAcoes, abrir };
 
   return (
     <ContextoAcoes.Provider value={contexto}>
@@ -424,6 +450,16 @@ export function TabelaRequisicoes({
         compacta
         classeDaLinha={(r) => (r.status === 'solicitada' ? 'bg-[#fffaf0]' : undefined)}
       />
+      {modal && reqModal ? (
+        <DialogosDaTabela
+          {...propsAcoes}
+          req={reqModal}
+          modal={modal}
+          tentou={tentou}
+          aoTentar={() => setTentou(true)}
+          aoFechar={fechar}
+        />
+      ) : null}
     </ContextoAcoes.Provider>
   );
 }

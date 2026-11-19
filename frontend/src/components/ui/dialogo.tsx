@@ -55,9 +55,16 @@ export function Dialogo({
     <dialog
       ref={ref}
       role={role}
-      aria-labelledby={tituloId}
+      aria-labelledby={aberto ? tituloId : undefined}
       aria-describedby={descricao ? descId : undefined}
-      onClose={onFechar}
+      onClose={() => {
+        // O Chrome ignora preventDefault no 2º Esc seguido: durante o envio, reabre em vez de fechar.
+        if (bloqueado && aberto) {
+          ref.current?.showModal();
+          return;
+        }
+        onFechar();
+      }}
       onCancel={(e) => {
         // Esc: o <dialog> fecharia sozinho; durante o envio, fica aberto.
         if (bloqueado) e.preventDefault();

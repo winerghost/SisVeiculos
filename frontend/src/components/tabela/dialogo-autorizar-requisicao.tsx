@@ -131,7 +131,7 @@ function Conteudo({
       </dl>
       {motoristas.length > 0 ? (
         <div>
-          <Label htmlFor={id}>{motoristaPadrao ? 'Motorista' : 'Motorista (opcional)'}</Label>
+          <Label htmlFor={id}>Motorista</Label>
           <Select
             id={id}
             value={valor}

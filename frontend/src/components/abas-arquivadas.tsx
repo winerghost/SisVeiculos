@@ -31,7 +31,11 @@ export function AbasArquivadas({
     </button>
   );
   return (
-    <div role="group" aria-label="Exibir" className="mb-4 flex rounded-xl bg-[#e8ecf2] p-1">
+    <div
+      role="group"
+      aria-label="Exibir"
+      className="mb-4 flex rounded-xl bg-[#e8ecf2] p-1 md:max-w-xl"
+    >
       {aba(false, rotuloAtivas)}
       {aba(true, totalArquivadas === undefined ? 'Arquivadas' : `Arquivadas · ${totalArquivadas}`)}
     </div>

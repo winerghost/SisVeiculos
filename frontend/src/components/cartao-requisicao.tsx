@@ -60,6 +60,23 @@ export const ROTULO_ANDAMENTO: Partial<Record<Acao, string>> = {
 export const ehOrganizar = (a: string): a is AcaoOrganizar =>
   a === 'arquivar' || a === 'desarquivar';
 
+/**
+ * Critério único de "há algo para mostrar" em BotoesAcao, reaproveitado pela tabela para decidir o
+ * botão "Mais" (só apresentação: as ações vêm sempre de `acoes_permitidas`).
+ */
+export function temAcoesVisiveis(
+  req: Pick<Requisicao, 'acoes_permitidas'>,
+  comOrganizar: boolean,
+  ocultar: readonly Acao[] = [],
+): boolean {
+  const p = req.acoes_permitidas.filter((a) => !(ocultar as readonly string[]).includes(a));
+  return (
+    p.some((a) => a in ACOES) ||
+    p.includes('atribuir_motorista') ||
+    (comOrganizar && p.some(ehOrganizar))
+  );
+}
+
 // Negar e cancelar sempre passam por diálogo de confirmação.
 type Decisao = Extract<Acao, 'negar' | 'cancelar'>;
 const ehDecisao = (a: string): a is Decisao => a === 'negar' || a === 'cancelar';
@@ -423,9 +440,7 @@ export function BotoesAcao({
   const permitidas = ocultar
     ? req.acoes_permitidas.filter((a) => !(ocultar as readonly string[]).includes(a))
     : req.acoes_permitidas;
-  const temOrganizar = !!onOrganizar && permitidas.some(ehOrganizar);
-  const podeTrocarMotorista = permitidas.includes('atribuir_motorista');
-  if (!permitidas.some((a) => a in ACOES) && !podeTrocarMotorista && !temOrganizar) return null;
+  if (!temAcoesVisiveis(req, !!onOrganizar, ocultar)) return null;
 
   const camposDe = (a: Acao) => req.campos_acao?.[a]?.campos_obrigatorios ?? [];
   // Ação com checklist pendente: o formulário vem antes e o botão só reaparece depois dele.
